@@ -108,6 +108,8 @@
 }
 
 .chat-msg__content {
+	user-select: text;
+	-webkit-user-select: text;
 	font-size: 14px;
 	line-height: 1.6;
 
@@ -188,6 +190,8 @@
 	}
 
 	pre {
+		user-select: text;
+		-webkit-user-select: text;
 		margin: 4px 0;
 		padding: 4px 6px;
 		font-size: 11px;
@@ -197,6 +201,8 @@
 }
 
 .chat-msg__tool-result {
+	user-select: text;
+	-webkit-user-select: text;
 	color: var(--b3-theme-on-surface);
 	opacity: 0.7;
 	border-top: 1px solid var(--b3-border-color);
