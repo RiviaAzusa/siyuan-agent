@@ -83,7 +83,7 @@ module.exports = (env, argv) => {
                         {
                             loader: "esbuild-loader",
                             options: {
-                                target: "es6",
+                                target: "es2020",
                             }
                         },
                     ],

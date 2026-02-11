@@ -1,51 +1,34 @@
 {
-  "name": "plugin-sample",
-  "author": "Vanessa",
-  "url": "https://github.com/siyuan-note/plugin-sample",
-  "version": "0.4.5",
+  "name": "siyuan-agent",
+  "author": "azusa",
+  "url": "https://github.com/azusa/siyuan-agent",
+  "version": "0.1.0",
   "minAppVersion": "3.5.3",
   "backends": [
-    "windows",
-    "linux",
-    "darwin",
-    "ios",
-    "android",
-    "harmony",
-    "docker",
     "all"
   ],
   "frontends": [
-    "desktop",
-    "mobile",
-    "browser-desktop",
-    "browser-mobile",
-    "desktop-window",
     "all"
   ],
   "disabledInPublish": false,
   "displayName": {
-    "default": "Plugin Sample",
-    "zh_CN": "插件示例"
+    "default": "SiYuan Agent",
+    "zh_CN": "思源 AI 助手"
   },
   "description": {
-    "default": "This is a plugin development sample",
-    "zh_CN": "这是一个插件开发示例"
+    "default": "AI agent assistant for SiYuan with chat panel, streaming output, and tool calling",
+    "zh_CN": "思源笔记 AI 智能助手，支持对话面板、流式输出和工具调用"
   },
   "readme": {
     "default": "README.md",
     "zh_CN": "README_zh_CN.md"
   },
-  "funding": {
-    "openCollective": "",
-    "patreon": "",
-    "github": "",
-    "custom": [
-      "https://ld246.com/sponsor"
-    ]
-  },
+  "funding": {},
   "keywords": [
-    "开发者参考",
-    "developer reference",
-    "示例插件"
+    "AI",
+    "agent",
+    "chat",
+    "智能助手",
+    "对话"
   ]
 }
