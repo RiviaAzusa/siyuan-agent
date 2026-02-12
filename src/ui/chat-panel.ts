@@ -346,14 +346,18 @@ export class ChatPanel {
 				lastToolEl = el;
 				this.scrollToBottom();
 			},
-			onToolEnd: (_name, result) => {
+			onToolEnd: (name, result) => {
 				if (lastToolEl) {
 					const details = lastToolEl.querySelector("details");
 					if (details) {
-						const pre = document.createElement("pre");
-						pre.className = "chat-msg__tool-result";
-						pre.textContent = result.length > 500 ? result.slice(0, 500) + "..." : result;
-						details.appendChild(pre);
+						if (name === "edit_blocks") {
+							details.appendChild(this.renderEditBlocksDiff(result));
+						} else {
+							const pre = document.createElement("pre");
+							pre.className = "chat-msg__tool-result";
+							pre.textContent = result.length > 500 ? result.slice(0, 500) + "..." : result;
+							details.appendChild(pre);
+						}
 					}
 					lastToolEl = null;
 				}
@@ -439,7 +443,15 @@ export class ChatPanel {
 		let contentHtml = "";
 		
 		if (msg.role === "tool") {
-			/* Tool Result */
+			/* Tool Result — check for edit_blocks diff */
+			if (msg.name === "edit_blocks") {
+				const diffEl = this.renderEditBlocksDiff(msg.content);
+				el.innerHTML = `<div class="chat-msg__content"></div>`;
+				el.querySelector(".chat-msg__content").appendChild(diffEl);
+				this.messagesEl.appendChild(el);
+				this.scrollToBottom();
+				return;
+			}
 			contentHtml = `<div class="chat-msg__tool-result">
 				<div class="chat-msg__tool-header">🔧 Result${msg.name ? `: ${this.escapeHtml(msg.name)}` : ""}</div>
 				<pre style="max-height: 200px; overflow-y: auto;">${this.escapeHtml(msg.content)}</pre>
@@ -487,6 +499,128 @@ export class ChatPanel {
 		const div = document.createElement("div");
 		div.textContent = text;
 		return div.innerHTML;
+	}
+
+	/* --- Edit blocks diff rendering --- */
+
+	private renderEditBlocksDiff(resultJson: string): HTMLElement {
+		const container = document.createElement("div");
+		container.className = "chat-msg__edit-diff";
+
+		let parsed: any;
+		try {
+			parsed = JSON.parse(resultJson);
+		} catch {
+			const pre = document.createElement("pre");
+			pre.className = "chat-msg__tool-result";
+			pre.textContent = resultJson;
+			container.appendChild(pre);
+			return container;
+		}
+
+		const results = parsed.results || [];
+		for (const r of results) {
+			const blockEl = document.createElement("div");
+			blockEl.className = "chat-msg__edit-block";
+
+			if (r.status === "error") {
+				blockEl.innerHTML = `
+					<div class="chat-msg__edit-header chat-msg__edit-header--error">
+						Block <code>${this.escapeHtml(r.id)}</code>: Error
+					</div>
+					<div class="chat-msg__edit-error">${this.escapeHtml(r.error)}</div>`;
+			} else {
+				const oldClean = this.stripIAL(r.original || "");
+				const newClean = r.updated || "";
+				const diffHtml = this.computeLineDiff(oldClean, newClean);
+
+				blockEl.innerHTML = `
+					<div class="chat-msg__edit-header">
+						Block <code>${this.escapeHtml(r.id.slice(-7))}</code>
+					</div>
+					<div class="chat-msg__edit-lines">${diffHtml}</div>`;
+
+				const undoBtn = document.createElement("button");
+				undoBtn.className = "chat-msg__edit-undo b3-button b3-button--outline";
+				undoBtn.textContent = "Undo";
+				undoBtn.addEventListener("click", async () => {
+					try {
+						undoBtn.disabled = true;
+						undoBtn.textContent = "Undoing...";
+						await this.undoBlockEdit(r.id, r.original);
+						undoBtn.textContent = "Undone";
+						undoBtn.classList.add("chat-msg__edit-undo--done");
+					} catch {
+						undoBtn.textContent = "Failed";
+						undoBtn.classList.add("chat-msg__edit-undo--error");
+					}
+				});
+				blockEl.appendChild(undoBtn);
+			}
+
+			container.appendChild(blockEl);
+		}
+
+		return container;
+	}
+
+	private stripIAL(kramdown: string): string {
+		return kramdown.replace(/\{:.*?\}\s*$/gm, "").trimEnd();
+	}
+
+	private computeLineDiff(oldText: string, newText: string): string {
+		const oldLines = oldText.split("\n");
+		const newLines = newText.split("\n");
+		const lcs = this.lcsLines(oldLines, newLines);
+		const html: string[] = [];
+
+		let oi = 0, ni = 0, li = 0;
+		while (oi < oldLines.length || ni < newLines.length) {
+			if (li < lcs.length && oi < oldLines.length && oldLines[oi] === lcs[li]
+				&& ni < newLines.length && newLines[ni] === lcs[li]) {
+				html.push(`<div class="diff-line diff-line--context">${this.escapeHtml(oldLines[oi])}&nbsp;</div>`);
+				oi++; ni++; li++;
+			} else if (oi < oldLines.length && (li >= lcs.length || oldLines[oi] !== lcs[li])) {
+				html.push(`<div class="diff-line diff-line--del">- ${this.escapeHtml(oldLines[oi])}</div>`);
+				oi++;
+			} else if (ni < newLines.length && (li >= lcs.length || newLines[ni] !== lcs[li])) {
+				html.push(`<div class="diff-line diff-line--add">+ ${this.escapeHtml(newLines[ni])}</div>`);
+				ni++;
+			}
+		}
+
+		return html.join("\n");
+	}
+
+	private lcsLines(a: string[], b: string[]): string[] {
+		const m = a.length, n = b.length;
+		const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+		for (let i = 1; i <= m; i++)
+			for (let j = 1; j <= n; j++)
+				dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+		const result: string[] = [];
+		let i = m, j = n;
+		while (i > 0 && j > 0) {
+			if (a[i - 1] === b[j - 1]) { result.unshift(a[i - 1]); i--; j--; }
+			else if (dp[i - 1][j] > dp[i][j - 1]) i--;
+			else j--;
+		}
+		return result;
+	}
+
+	private undoBlockEdit(blockId: string, originalContent: string): Promise<void> {
+		return new Promise((resolve, reject) => {
+			fetchPost("/api/block/updateBlock", {
+				id: blockId,
+				data: originalContent,
+				dataType: "markdown",
+			}, (resp: any) => {
+				if (resp.code !== 0)
+					reject(new Error(resp.msg || `Undo failed: code ${resp.code}`));
+				else
+					resolve();
+			});
+		});
 	}
 
 	/* --- Persistence --- */

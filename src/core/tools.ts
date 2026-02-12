@@ -125,6 +125,80 @@ const searchFulltextTool = tool(
 	}
 );
 
+const getDocumentBlocksTool = tool(
+	async ({ id }) => {
+		const data = await siyuanFetch("/api/block/getChildBlocks", { id });
+		const blocks = (data || []).map((b: any) => ({
+			id: b.id,
+			type: b.type,
+			subType: b.subType || undefined,
+			markdown: b.markdown || b.content || "",
+		}));
+		return JSON.stringify(blocks, null, 2);
+	},
+	{
+		name: "get_document_blocks",
+		description: "Get all child blocks of a document with their block IDs and markdown content. Use this when you need to edit specific blocks — it returns block IDs needed for edit_blocks. Each block has: id (block ID for editing), type (h=heading, p=paragraph, c=code, l=list, etc.), markdown (block content). For large documents, prefer search_fulltext to locate specific blocks first.",
+		schema: z.object({
+			id: z.string().describe("Document block ID. Get this from list_documents or search results."),
+		}),
+	}
+);
+
+const editBlocksTool = tool(
+	async ({ blocks }) => {
+		const ids = blocks.map((b: { id: string }) => b.id);
+		const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
+
+		const results: any[] = [];
+
+		for (const block of blocks) {
+			const original = originals[block.id];
+			if (original === undefined) {
+				results.push({
+					id: block.id,
+					status: "error",
+					error: `Block ${block.id} not found`,
+				});
+				continue;
+			}
+
+			try {
+				await siyuanFetch("/api/block/updateBlock", {
+					id: block.id,
+					data: block.content,
+					dataType: "markdown",
+				});
+				results.push({
+					id: block.id,
+					status: "ok",
+					original,
+					updated: block.content,
+				});
+			} catch (err: any) {
+				results.push({
+					id: block.id,
+					status: "error",
+					error: err.message,
+					original,
+				});
+			}
+		}
+
+		return JSON.stringify({ __tool_type: "edit_blocks", results });
+	},
+	{
+		name: "edit_blocks",
+		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. Changes are applied immediately. The tool returns a diff showing what changed for each block, and users can undo from the chat panel. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
+		schema: z.object({
+			blocks: z.array(z.object({
+				id: z.string().describe("Block ID to edit (from get_document_blocks)"),
+				content: z.string().min(1).describe("New markdown content for this block"),
+			})).describe("Array of blocks to edit"),
+		}),
+	}
+);
+
 const appendBlockTool = tool(
 	async ({ parentID, markdown }) => {
 		const data = await siyuanFetch("/api/block/appendBlock", {
@@ -148,9 +222,10 @@ const defaultTools: StructuredToolInterface[] = [
 	getWeatherTool,
 	listNotebooksTool,
 	listDocumentsTool,
-	getDocumentTool,
+	getDocumentBlocksTool,
 	searchFulltextTool,
 	appendBlockTool,
+	editBlocksTool,
 ];
 
 export function getDefaultTools(): StructuredToolInterface[] {
