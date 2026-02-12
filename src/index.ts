@@ -104,13 +104,28 @@ export default class SiYuanAgent extends Plugin {
 		this.addCommand({
 			langKey: "sendToChat",
 			hotkey: "⌥⌘L",
-			editorCallback: () => {
+			editorCallback: (protyle) => {
+				let text = "";
 				const sel = window.getSelection();
-				if (sel && sel.toString().trim()) {
-					this.chatPanel?.addContext(sel.toString().trim());
-				} else {
-					showMessage(this.i18n.noSelection || "No text selected");
+				if (sel && sel.rangeCount > 0) {
+					const range = sel.getRangeAt(0);
+					const wysiwyg = protyle.wysiwyg?.element;
+					if (wysiwyg && wysiwyg.contains(range.startContainer))
+						text = range.toString().trim();
 				}
+				if (!text) {
+					/* block-level selection: .protyle-wysiwyg--select */
+					const selected = protyle.wysiwyg?.element
+						?.querySelectorAll(".protyle-wysiwyg--select");
+					if (selected && selected.length)
+						text = Array.from(selected)
+							.map(el => (el as HTMLElement).innerText)
+							.join("\n").trim();
+				}
+				if (text)
+					this.chatPanel?.addContext(text);
+				else
+					showMessage(this.i18n.noSelection || "No text selected");
 			},
 		});
 
@@ -150,10 +165,18 @@ export default class SiYuanAgent extends Plugin {
 		maxRoundsInput.min = "1";
 		maxRoundsInput.max = "50";
 
+		const lsEnabledInput = document.createElement("input");
+		lsEnabledInput.type = "checkbox";
+		lsEnabledInput.className = "b3-switch";
+
 		const lsKeyInput = document.createElement("input");
 		lsKeyInput.className = "b3-text-field fn__block";
 		lsKeyInput.type = "password";
 		lsKeyInput.placeholder = "lsv2_...";
+
+		const lsEndpointInput = document.createElement("input");
+		lsEndpointInput.className = "b3-text-field fn__block";
+		lsEndpointInput.placeholder = "https://api.smith.langchain.com";
 
 		const lsProjectInput = document.createElement("input");
 		lsProjectInput.className = "b3-text-field fn__block";
@@ -167,7 +190,9 @@ export default class SiYuanAgent extends Plugin {
 					model: modelInput.value || DEFAULT_CONFIG.model,
 					systemPrompt: systemPromptInput.value || DEFAULT_CONFIG.systemPrompt,
 					maxToolRounds: parseInt(maxRoundsInput.value, 10) || DEFAULT_CONFIG.maxToolRounds,
+					langSmithEnabled: lsEnabledInput.checked,
 					langSmithApiKey: lsKeyInput.value || "",
+					langSmithEndpoint: lsEndpointInput.value || DEFAULT_CONFIG.langSmithEndpoint,
 					langSmithProject: lsProjectInput.value || DEFAULT_CONFIG.langSmithProject,
 				};
 				this.saveData(CONFIG_STORAGE, config);
@@ -201,13 +226,23 @@ export default class SiYuanAgent extends Plugin {
 		});
 
 		this.setting.addItem({
+			title: "LangSmith Tracing",
+			description: "Enable LangSmith tracing for debugging and evaluation",
+			actionElement: lsEnabledInput,
+		});
+		this.setting.addItem({
 			title: "LangSmith API Key",
-			description: "Optional: LangChain LangSmith API Key for tracing",
+			description: "LangSmith API Key (lsv2_...)",
 			actionElement: lsKeyInput,
 		});
 		this.setting.addItem({
+			title: "LangSmith Endpoint",
+			description: "LangSmith API endpoint. EU region: https://eu.api.smith.langchain.com",
+			actionElement: lsEndpointInput,
+		});
+		this.setting.addItem({
 			title: "LangSmith Project",
-			description: "Optional: LangSmith Project Name",
+			description: "Project name for grouping traces (default: SiYuan-Agent)",
 			actionElement: lsProjectInput,
 		});
 
@@ -223,7 +258,9 @@ export default class SiYuanAgent extends Plugin {
 			modelInput.value = config.model;
 			systemPromptInput.value = config.systemPrompt;
 			maxRoundsInput.value = String(config.maxToolRounds);
+			lsEnabledInput.checked = config.langSmithEnabled || false;
 			lsKeyInput.value = config.langSmithApiKey || "";
+			lsEndpointInput.value = config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint;
 			lsProjectInput.value = config.langSmithProject || "";
 			origOpen(name);
 		};

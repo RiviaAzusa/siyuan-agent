@@ -4,88 +4,68 @@
 
 ## 项目概况
 
-- **构建**: Webpack 5 + TypeScript + SCSS, `npm run dev` 开发 / `npm run build` 生产
+- **构建**: Webpack 5 + TypeScript + SCSS, `npm run dev` / `npm run build`
 - **SDK**: `siyuan` npm 包 (v1.1.7), 外部引用不打包
-- **LangChain**: 集成 `@langchain/core`, `@langchain/openai`, `@langchain/community` 构建 Agent
-- **产物**: `index.js` + `index.css`, 部署在 `{workspace}/data/plugins/siyuan-agent/`
-- **思源源码参考**: `/Users/azusa/projects/research/siyuan/` (API 路由、内核实现)
+- **LangChain**: `@langchain/core` + `@langchain/openai` 构建 Agent
+- **产物**: `dist/index.js` + `dist/index.css`
+- **思源源码参考**: `/Users/azusa/projects/research/siyuan/`
 
 ## 架构
 
 ```
 src/
-  index.ts              # 插件入口: onload/onunload, 注册 Dock/Command/Setting/LangSmith Config
-  index.scss            # 全部样式, 使用思源 CSS 变量 (--b3-theme-*)
-  types.ts              # ChatMessage, AgentConfig (含 LangSmith 配置)
+  index.ts           # 插件入口: Dock/Command/Setting
+  index.scss         # 样式, 使用思源 CSS 变量 (--b3-theme-*)
+  types.ts           # ChatMessage, AgentConfig
   core/
-    agent.ts            # LangChain Agent 循环 (Model.stream + Tool Call Aggregation + Tracer)
-    tools.ts            # Tool Definitions (Zod Schema + SiYuan API Fetch)
-  ui/\
-    chat-panel.ts       # 右侧 Dock 聊天面板 (消息列表 + 输入框 + 流式渲染)
-    markdown.ts         # 轻量 Markdown→HTML 渲染器
+    agent.ts         # LangChain Agent 循环 (stream + tool call)
+    tools.ts         # Tool Definitions (Zod Schema + SiYuan API)
+  ui/
+    chat-panel.ts    # Dock 聊天面板 (消息列表 + 输入框 + 流式渲染)
+    markdown.ts      # Markdown→HTML 渲染器
 test/
-    test-tools.ts       # 独立工具测试脚本 (Direct HTTP Fetch)
+    test-tools.ts    # 工具测试: `npx tsx test/test-tools.ts`
 ```
 
-## 关键设计决策 (v0.2.0 Refactor)
+## 思源插件 API 要点
 
-- **Agent Framework**: 迁移至 LangChain.js, 利用其生态 (Tracer, Tool Binding, Streaming)
-- **Tool Definition**: 使用 `zod` 定义工具 Schema, 强类型验证输入
-- **Tracing**: 集成 LangSmith (`LangChainTracer`), 可配置 API Key 和 Project 用于调试
-- **Streaming Reliability**: 手动处理 `stream` chunks 并使用 `AIMessageChunk.concat()` 聚合, 解决 incomplete JSON args 问题
-- **Direct SQL**: 使用 `/api/query/sql` 替代部分 SDK 方法以获得更灵活的数据查询能力
+### Command 回调类型 (ICommand)
+- `callback`: 通用回调, 仅在其余回调都不存在时触发
+- `editorCallback(protyle: IProtyle)`: 焦点在编辑器时触发, 传入 protyle 对象
+- `globalCallback`: 焦点不在应用内时触发
+- `fileTreeCallback(file)` / `dockCallback(element)`: 对应焦点场景
+- **注意**: 全局 keydown 中, 如果 command 定义了任一非 callback 回调, callback 不会被触发
 
-## 已实现功能
+### 编辑器 Keydown 拦截 (protyle/wysiwyg/keydown.ts)
+- 跨块选择 (range 跨越不同 block 元素) 时, 编辑器会 `stopPropagation()` + `return`, **只放行 ⌘C**
+- 因此 `editorCallback` 在跨块选择场景下不会被调用
+- 块级选择通过 `.protyle-wysiwyg--select` CSS 类标记整个块元素
 
-### 核心功能
-- [x] 右侧 Dock 聊天面板
-- [x] 流式输出 + 打字光标动画
-- [x] OpenAI 兼容 API 配置 (Settings 面板: URL/Key/Model/Prompt)
-- [x] 选中文本 → ⌥⌘L → 作为引用上下文发送到对话框
-- [x] Stop 按钮 (AbortController 中断生成)
-- [x] 对话历史持久化
+### 获取选中文本的正确方式
+```typescript
+editorCallback: (protyle) => {
+    // 1. 文本级选区: 通过 window.getSelection() + 验证在 wysiwyg 内
+    // 2. 块级选区 fallback: querySelectorAll(".protyle-wysiwyg--select")
+}
+```
+右键菜单通过 `open-menu-content` 事件的 `e.detail.range` 获取选中文本。
 
-### Agent 能力
-- [x] LangChain ReAct Loop w/ Tool Calling
-- [x] **LangSmith Tracing**: 支持在插件设置中配置 Key/Project, 实时追踪 Agent 思考过程
-- [x] **Robust Streaming**: 修复流式输出时 Tool Args 解析错误的问题
+## 设计决策
 
-### 内置工具 (Tools)
-1.  **list_notebooks**:
-    *   API: `/api/notebook/lsNotebooks`
-    *   功能: 列出所有笔记本 ID/名称/图标/状态
-    *   用途: 获取后续查询所需的 notebook ID
-2.  **list_documents**:
-    *   API: `/api/query/sql` (`SELECT * FROM blocks WHERE type='d'...`)
-    *   功能: 获取指定笔记本下的文档列表 (ID, Title, Path, Updated)
-    *   参数: `notebook` (必填), `path` (可选过滤)
-    *   用途: 查找文档 ID
-3.  **get_document**:
-    *   API: `/api/export/exportMdContent`
-    *   功能: 获取文档完整 Markdown 内容
-    *   参数: `id` (文档 block ID)
-    *   用途: 读取内容以回答问题
+- 流式输出使用 `AIMessageChunk.concat()` 聚合, 避免 incomplete JSON args
+- LangSmith tracing 可选, 通过 Settings 配置
+- 使用 `/api/query/sql` 做灵活查询
 
-## 问题与修复记录
+## 内置工具
 
-### 2026-02-11 Tool Args 解析错误
-- **现象**: `Received tool input did r...` (JSON 解析失败)
-- **原因**: 之前在 stream loop 中手动合并 `tool_calls` args, 但未处理 incomplete JSON chunks
-- **修复**: 使用 `AIMessageChunk.concat(chunk)` 自动聚合流式块, LangChain 内部处理 JSON buffer
+| Tool | API | 用途 |
+|------|-----|------|
+| list_notebooks | `/api/notebook/lsNotebooks` | 列出笔记本 |
+| list_documents | `/api/query/sql` | 获取文档列表 |
+| get_document | `/api/export/exportMdContent` | 读取文档内容 |
 
-### 2026-02-11 LangSmith 集成
-- **需求**: 可视化 Agent 思考过程, 调试工具调用参数
-- **实现**:
-    - `src/types.ts`: 添加 `langSmithApiKey` 配置
-    - `src/index.ts`: 添加设置 UI
-    - `src/core/agent.ts`: 初始化 `LangChainTracer` 并注入到 model/tool calls
+## TODO
 
-## 验证脚本
-- `test/test-tools.ts`: 独立测试脚本, 不依赖 SiYuan 插件环境, 直接 fetch 本地 API (localhost:6806)
-- 运行: `npx tsx test/test-tools.ts`
-- 状态: ✅ 通行 (12/12 tests passed)
-
-## 下一版本 TODO
-- [ ] 更完善的错误处理 (当工具调用失败时, 让 Agent 尝试修复参数)
-- [ ] 更多工具: `search_fulltext` (全文搜索), `append_block` (写入笔记)
+- [ ] 工具调用失败时让 Agent 尝试修复参数
+- [ ] 更多工具: `search_fulltext`, `append_block`
 - [ ] 对话历史管理 UI 优化

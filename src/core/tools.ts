@@ -90,11 +90,67 @@ const getDocumentTool = tool(
 	}
 );
 
+const searchFulltextTool = tool(
+	async ({ query, page }) => {
+		const data = await siyuanFetch("/api/search/fullTextSearchBlock", {
+			query,
+			page: page || 1,
+			pageSize: 10,
+			types: { document: true, heading: true, paragraph: true, code: true, list: true, listItem: true, blockquote: true },
+			method: 0, // keyword
+			orderBy: 0, // relevance
+			groupBy: 0, // no grouping
+		});
+		const blocks = (data.blocks || []).map((b: any) => ({
+			id: b.id,
+			rootID: b.rootID,
+			content: b.content,
+			hpath: b.hPath,
+			type: b.type,
+		}));
+		return JSON.stringify({
+			blocks,
+			matchedBlockCount: data.matchedBlockCount,
+			matchedRootCount: data.matchedRootCount,
+			pageCount: data.pageCount,
+		}, null, 2);
+	},
+	{
+		name: "search_fulltext",
+		description: "Full-text search across all notebooks. Returns matching blocks with their content, path, and type. Use this to find specific information in the knowledge base.",
+		schema: z.object({
+			query: z.string().describe("Search keyword or phrase"),
+			page: z.number().optional().describe("Page number, defaults to 1. Each page returns up to 10 results."),
+		}),
+	}
+);
+
+const appendBlockTool = tool(
+	async ({ parentID, markdown }) => {
+		const data = await siyuanFetch("/api/block/appendBlock", {
+			data: markdown,
+			dataType: "markdown",
+			parentID,
+		});
+		return JSON.stringify(data, null, 2);
+	},
+	{
+		name: "append_block",
+		description: "Append Markdown content as child blocks to an existing block (usually a document). Use this to add new content to a document.",
+		schema: z.object({
+			parentID: z.string().describe("The parent block ID to append content to. Usually a document ID from list_documents or search results."),
+			markdown: z.string().describe("Markdown content to append"),
+		}),
+	}
+);
+
 const defaultTools: StructuredToolInterface[] = [
 	getWeatherTool,
 	listNotebooksTool,
 	listDocumentsTool,
 	getDocumentTool,
+	searchFulltextTool,
+	appendBlockTool,
 ];
 
 export function getDefaultTools(): StructuredToolInterface[] {
