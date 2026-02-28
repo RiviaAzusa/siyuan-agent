@@ -1,40 +1,35 @@
-export interface ChatMessage {
-	role: "user" | "assistant" | "system" | "tool";
-	content: string;
-	timestamp: number;
-	context?: string;
-	tool_calls?: {
-		id: string;
-		name: string;
-		args: any;
-	}[];
-	tool_call_id?: string;
-	name?: string;
-}
-
-export interface ChatSession {
-	id: string;
-	title: string;
-	created: number;
-	updated: number;
-	messages: ChatMessage[];
-}
-
-export interface ChatStore {
-	activeId: string;
-	sessions: ChatSession[];
-}
-
 export interface AgentConfig {
 	apiBaseURL: string;
 	apiKey: string;
 	model: string;
 	systemPrompt: string;
-	maxToolRounds: number;
 	langSmithEnabled?: boolean;
 	langSmithApiKey?: string;
 	langSmithEndpoint?: string;
 	langSmithProject?: string;
+}
+
+/** Agent 的完整状态，直接存储 values stream 的最后一次输出 */
+export type AgentState = Record<string, any>;
+
+/** 单个会话的持久化格式 */
+export interface SessionData {
+	id: string;
+	title: string;
+	created: number;
+	updated: number;
+	state: AgentState;
+}
+
+/** 会话列表索引（轻量，不含 messages） */
+export interface SessionIndex {
+	activeId: string;
+	sessions: {
+		id: string;
+		title: string;
+		created: number;
+		updated: number;
+	}[];
 }
 
 export const DEFAULT_SYSTEM_PROMPT = `你是思源笔记的 AI 助手。你的目标是帮助用户管理知识库、搜索信息并基于笔记内容回答问题。
@@ -64,7 +59,6 @@ export const DEFAULT_CONFIG: AgentConfig = {
 	apiKey: "",
 	model: "gpt-4o",
 	systemPrompt: DEFAULT_SYSTEM_PROMPT,
-	maxToolRounds: 10,
 	langSmithEnabled: false,
 	langSmithApiKey: "",
 	langSmithEndpoint: "https://api.smith.langchain.com",

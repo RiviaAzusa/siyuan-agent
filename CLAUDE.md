@@ -53,8 +53,12 @@ editorCallback: (protyle) => {
 ## 设计决策
 
 - 流式输出使用 `AIMessageChunk.concat()` 聚合, 避免 incomplete JSON args
-- LangSmith tracing 可选, 通过 Settings 配置
+- LangSmith tracing 可选, Settings 中配置 enabled/key/endpoint/project
 - 使用 `/api/query/sql` 做灵活查询
+- 编辑工具采用 "自动应用 + diff 展示 + Undo" 方案, 不打断 agent 循环
+- `edit_blocks` 返回 `{ __tool_type: "edit_blocks", results }`, chat-panel 的 `onToolEnd` 检测此标记渲染 git-diff 风格视图
+- diff 比较前 `stripIAL()` 过滤 kramdown `{: ...}` 标记, undo 恢复原始 kramdown
+- LCS 行级 diff 算法内置, 无外部依赖 (块内容通常 1-20 行)
 
 ## 内置工具
 
@@ -62,10 +66,8 @@ editorCallback: (protyle) => {
 |------|-----|------|
 | list_notebooks | `/api/notebook/lsNotebooks` | 列出笔记本 |
 | list_documents | `/api/query/sql` | 获取文档列表 |
-| get_document | `/api/export/exportMdContent` | 读取文档内容 |
-
-## TODO
-
-- [ ] 工具调用失败时让 Agent 尝试修复参数
-- [ ] 更多工具: `search_fulltext`, `append_block`
-- [ ] 对话历史管理 UI 优化
+| get_document | `/api/export/exportMdContent` | 读取文档内容 (纯 Markdown) |
+| get_document_blocks | `/api/block/getChildBlocks` | 获取文档子块 (带 block ID, 用于编辑) |
+| search_fulltext | `/api/search/fullTextSearchBlock` | 全文搜索 |
+| append_block | `/api/block/appendBlock` | 向文档追加内容 |
+| edit_blocks | `/api/block/getBlockKramdowns` + `updateBlock` | 编辑块内容, 返回 diff + 支持 undo |

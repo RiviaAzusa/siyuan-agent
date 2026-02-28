@@ -306,6 +306,90 @@
 	}
 }
 
+/* Edit blocks diff display */
+.chat-msg__edit-diff {
+	margin-top: 4px;
+}
+
+.chat-msg__edit-block {
+	border: 1px solid var(--b3-border-color);
+	border-radius: 4px;
+	margin: 4px 0;
+	padding: 6px 8px;
+	font-size: 12px;
+}
+
+.chat-msg__edit-header {
+	font-weight: 500;
+	margin-bottom: 4px;
+	color: var(--b3-theme-on-surface);
+
+	code {
+		font-size: 11px;
+		opacity: 0.7;
+	}
+
+	&--error {
+		color: var(--b3-card-error-color, #e53935);
+	}
+}
+
+.chat-msg__edit-error {
+	color: var(--b3-card-error-color, #e53935);
+	font-size: 11px;
+	font-style: italic;
+}
+
+.chat-msg__edit-lines {
+	font-family: var(--b3-font-family-code, monospace);
+	font-size: 11px;
+	line-height: 1.5;
+	background: var(--b3-theme-surface);
+	border-radius: 3px;
+	padding: 4px 6px;
+	margin: 4px 0;
+	overflow-x: auto;
+	max-height: 300px;
+	overflow-y: auto;
+}
+
+.diff-line {
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.diff-line--del {
+	background: rgba(255, 0, 0, 0.1);
+	color: var(--b3-card-error-color, #e53935);
+	text-decoration: line-through;
+}
+
+.diff-line--add {
+	background: rgba(0, 128, 0, 0.1);
+	color: var(--b3-card-success-color, #43a047);
+}
+
+.diff-line--context {
+	opacity: 0.6;
+}
+
+.chat-msg__edit-undo {
+	margin-top: 4px;
+	font-size: 11px;
+	padding: 2px 8px;
+	cursor: pointer;
+
+	&--done {
+		opacity: 0.5;
+		cursor: default;
+	}
+
+	&--error {
+		color: var(--b3-card-error-color, #e53935);
+		cursor: default;
+	}
+}
+
 /* Cursor animation */
 .chat-msg__cursor {
 	animation: blink 0.8s step-end infinite;

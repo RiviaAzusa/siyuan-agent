@@ -159,12 +159,6 @@ export default class SiYuanAgent extends Plugin {
 		systemPromptInput.className = "b3-text-field fn__block";
 		systemPromptInput.rows = 4;
 
-		const maxRoundsInput = document.createElement("input");
-		maxRoundsInput.className = "b3-text-field fn__block";
-		maxRoundsInput.type = "number";
-		maxRoundsInput.min = "1";
-		maxRoundsInput.max = "50";
-
 		const lsEnabledInput = document.createElement("input");
 		lsEnabledInput.type = "checkbox";
 		lsEnabledInput.className = "b3-switch";
@@ -189,7 +183,6 @@ export default class SiYuanAgent extends Plugin {
 					apiKey: apiKeyInput.value || "",
 					model: modelInput.value || DEFAULT_CONFIG.model,
 					systemPrompt: systemPromptInput.value || DEFAULT_CONFIG.systemPrompt,
-					maxToolRounds: parseInt(maxRoundsInput.value, 10) || DEFAULT_CONFIG.maxToolRounds,
 					langSmithEnabled: lsEnabledInput.checked,
 					langSmithApiKey: lsKeyInput.value || "",
 					langSmithEndpoint: lsEndpointInput.value || DEFAULT_CONFIG.langSmithEndpoint,
@@ -219,12 +212,6 @@ export default class SiYuanAgent extends Plugin {
 			description: "System instructions for the AI agent",
 			actionElement: systemPromptInput,
 		});
-		this.setting.addItem({
-			title: "Max Tool Rounds",
-			description: "Maximum number of tool call rounds per conversation turn",
-			actionElement: maxRoundsInput,
-		});
-
 		this.setting.addItem({
 			title: "LangSmith Tracing",
 			description: "Enable LangSmith tracing for debugging and evaluation",
@@ -257,7 +244,6 @@ export default class SiYuanAgent extends Plugin {
 			apiKeyInput.value = config.apiKey;
 			modelInput.value = config.model;
 			systemPromptInput.value = config.systemPrompt;
-			maxRoundsInput.value = String(config.maxToolRounds);
 			lsEnabledInput.checked = config.langSmithEnabled || false;
 			lsKeyInput.value = config.langSmithApiKey || "";
 			lsEndpointInput.value = config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint;
