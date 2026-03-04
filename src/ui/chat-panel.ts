@@ -89,14 +89,13 @@ function msgType(m: any): string {
 	return m.type ?? m.role ?? "";
 }
 
-function sessionTitle(session: SessionData): string {
-	const msgs = session.state?.messages || [];
+function sessionTitle(state: AgentState): string {
+	const msgs = state?.messages || [];
 	const first = msgs.find((m: any) => {
 		const t = msgType(m);
 		return t === "human" || t === "user";
 	});
-	if (!first) return session.title;
-	// Content may be in kwargs.content (serialised) or directly in .content
+	if (!first) return "New Chat";
 	const rawContent = first.kwargs?.content ?? first.content;
 	const text = (typeof rawContent === "string" ? rawContent : "").replace(/^>.*\n\n/s, "").trim();
 	return text.length > 30 ? text.slice(0, 30) + "..." : text;
@@ -273,15 +272,13 @@ export class ChatPanel {
 	}
 
 	private newSession(): void {
-		// If the current session is already empty, just focus the input
-		const msgs = this.activeSession?.state?.messages;
-		if (!msgs || msgs.length === 0) {
+		if (this.messagesEl.children.length === 0) {
 			this.textareaEl.focus();
 			return;
 		}
 		const s = makeSessionData();
 		this.sessionIndex.sessions.push({
-			id: s.id, title: s.title, created: s.created, updated: s.updated,
+			id: s.id, title: "New Chat", created: s.created, updated: s.updated,
 		});
 		this.sessionIndex.activeId = s.id;
 		this.activeSession = s;
@@ -292,6 +289,7 @@ export class ChatPanel {
 	}
 
 	private async switchSession(id: string): Promise<void> {
+		this.saveSession(this.activeSession);
 		this.sessionIndex.activeId = id;
 		this.activeSession = await this.loadSession(id);
 		this.renderCurrentSession();
@@ -306,8 +304,9 @@ export class ChatPanel {
 
 		if (this.sessionIndex.activeId === id) {
 			if (this.sessionIndex.sessions.length) {
-				this.sessionIndex.activeId = this.sessionIndex.sessions[0].id;
-				this.loadSession(this.sessionIndex.activeId).then(s => {
+				const next = [...this.sessionIndex.sessions].sort((a, b) => b.updated - a.updated)[0];
+				this.sessionIndex.activeId = next.id;
+				this.loadSession(next.id).then(s => {
 					this.activeSession = s;
 					this.renderCurrentSession();
 				});
@@ -332,10 +331,10 @@ export class ChatPanel {
 
 	private renderCurrentSession(): void {
 		const s = this.activeSession;
-		/* Update header name */
+		const entry = this.sessionIndex.sessions.find(e => e.id === s.id);
 		const nameEl = this.container.querySelector(".chat-panel__session-name");
 		if (nameEl)
-			nameEl.textContent = sessionTitle(s);
+			nameEl.textContent = entry?.title || "New Chat";
 
 		/* Re-render messages from state */
 		this.messagesEl.innerHTML = "";
@@ -380,13 +379,8 @@ export class ChatPanel {
 		/* Show user message in UI */
 		this.appendStaticMessage("user", content);
 
-		/* Update session title from first user message */
-		const s = this.activeSession;
-		s.updated = Date.now();
-		const nameEl = this.container.querySelector(".chat-panel__session-name");
-		if (nameEl) nameEl.textContent = sessionTitle(s);
-
 		this.textareaEl.value = "";
+		const s = this.activeSession;
 		this.setLoading(true);
 
 		/* Create assistant message container for streaming */
@@ -485,12 +479,13 @@ export class ChatPanel {
 			/* Persist the complete agent state */
 			s.state = latestState;
 			s.updated = Date.now();
-			/* Update title in index */
 			const indexEntry = this.sessionIndex.sessions.find(e => e.id === s.id);
 			if (indexEntry) {
-				indexEntry.title = sessionTitle(s);
+				indexEntry.title = sessionTitle(latestState);
 				indexEntry.updated = s.updated;
 			}
+			const nameEl = this.container.querySelector(".chat-panel__session-name");
+			if (nameEl) nameEl.textContent = indexEntry?.title || "New Chat";
 			this.saveIndex();
 			this.saveSession(s);
 		} catch (err) {
@@ -677,7 +672,10 @@ export class ChatPanel {
 	private async loadSession(id: string): Promise<SessionData> {
 		const key = SESSION_PREFIX + id;
 		await this.plugin.loadData(key);
-		return this.plugin.data[key] || makeSessionData();
+		const data = this.plugin.data[key];
+		if (data) return data;
+		const now = Date.now();
+		return { id, title: "New Chat", created: now, updated: now, state: {} };
 	}
 
 	private async getConfig(): Promise<AgentConfig> {

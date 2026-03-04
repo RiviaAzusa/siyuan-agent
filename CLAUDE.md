@@ -60,6 +60,16 @@ editorCallback: (protyle) => {
 - diff 比较前 `stripIAL()` 过滤 kramdown `{: ...}` 标记, undo 恢复原始 kramdown
 - LCS 行级 diff 算法内置, 无外部依赖 (块内容通常 1-20 行)
 
+## Session 管理设计 (chat-panel.ts)
+
+- **单一 title 来源**: title 只存在 `SessionIndex.sessions[].title`，`SessionData.title` 不使用
+- **空判断用 UI**: `newSession()` 判断是否新建用 `messagesEl.children.length === 0`，不依赖 `state`
+- **loadSession 找不到时**: 返回 `{ id: <传入id>, ... }` 而非随机生成新 id，避免 key 漂移
+- **deleteSession 后选最新**: 按 `updated` 降序排序选下一个 session，而非 `sessions[0]`
+- **title/updated 只在 stream 完成后更新**: `send()` 开头不提前更新，防止 state 未就绪时读到旧标题
+- **switchSession 前先保存**: `saveSession(this.activeSession)` 防止切换时丢失当前状态
+- **renderCurrentSession 从 index 读 title**: `sessionIndex.sessions.find(e => e.id === s.id)?.title`
+
 ## 内置工具
 
 | Tool | API | 用途 |
