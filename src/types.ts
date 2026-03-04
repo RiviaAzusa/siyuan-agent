@@ -2,7 +2,8 @@ export interface AgentConfig {
 	apiBaseURL: string;
 	apiKey: string;
 	model: string;
-	systemPrompt: string;
+	customInstructions: string;
+	defaultNotebook?: { id: string; name: string } | null;
 	langSmithEnabled?: boolean;
 	langSmithApiKey?: string;
 	langSmithEndpoint?: string;
@@ -32,7 +33,7 @@ export interface SessionIndex {
 	}[];
 }
 
-export const DEFAULT_SYSTEM_PROMPT = `你是思源笔记的 AI 助手。你的目标是帮助用户管理知识库、搜索信息并基于笔记内容回答问题。
+export const BUILTIN_SYSTEM_PROMPT = `你是思源笔记的 AI 助手。你的目标是帮助用户管理知识库、搜索信息并基于笔记内容回答问题。
 
 你拥有以下工具：
 - \`list_notebooks\`: 列出所有笔记本。获取笔记本 ID (box ID) 用于后续操作。
@@ -58,7 +59,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
 	apiBaseURL: "https://api.openai.com/v1",
 	apiKey: "",
 	model: "gpt-4o",
-	systemPrompt: DEFAULT_SYSTEM_PROMPT,
+	customInstructions: "",
 	langSmithEnabled: false,
 	langSmithApiKey: "",
 	langSmithEndpoint: "https://api.smith.langchain.com",

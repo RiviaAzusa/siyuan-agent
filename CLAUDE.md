@@ -79,5 +79,10 @@ editorCallback: (protyle) => {
 | get_document | `/api/export/exportMdContent` | 读取文档内容 (纯 Markdown) |
 | get_document_blocks | `/api/block/getChildBlocks` | 获取文档子块 (带 block ID, 用于编辑) |
 | search_fulltext | `/api/search/fullTextSearchBlock` | 全文搜索 |
+| search_documents | `/api/query/sql` | 按标题关键词搜索笔记 |
 | append_block | `/api/block/appendBlock` | 向文档追加内容 |
 | edit_blocks | `/api/block/getBlockKramdowns` + `updateBlock` | 编辑块内容, 返回 diff + 支持 undo |
+| create_document | `/api/filetree/createDocWithMd` | 新建笔记 (notebook + hpath + markdown) |
+| move_document | `/api/filetree/moveDocsByID` | 移动笔记, toID 可为笔记本或父文档 ID |
+| rename_document | `/api/filetree/renameDocByID` | 重命名笔记标题 |
+| delete_document | `/api/filetree/removeDocByID` | 删除笔记 (已实现, **不注册**, export 供手动启用) |

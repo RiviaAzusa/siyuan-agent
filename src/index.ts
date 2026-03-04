@@ -4,7 +4,6 @@ import {
 	getFrontend,
 	Setting,
 	adaptHotkey,
-	IMenuBaseDetail,
 } from "siyuan";
 import "./index.scss";
 import { AgentConfig, DEFAULT_CONFIG } from "./types";
@@ -155,9 +154,22 @@ export default class SiYuanAgent extends Plugin {
 		modelInput.className = "b3-text-field fn__block";
 		modelInput.placeholder = "gpt-4o";
 
-		const systemPromptInput = document.createElement("textarea");
-		systemPromptInput.className = "b3-text-field fn__block";
-		systemPromptInput.rows = 4;
+		const customInstructionsInput = document.createElement("textarea");
+		customInstructionsInput.className = "b3-text-field fn__block";
+		customInstructionsInput.rows = 4;
+		customInstructionsInput.placeholder = "可选。附加给 AI 的自定义指令，例如：回答时使用英文。";
+
+		/* Default notebook selector */
+		let selectedNotebook: { id: string; name: string } | null = null;
+		const notebookSelect = document.createElement("select");
+		notebookSelect.className = "b3-select fn__block";
+		notebookSelect.innerHTML = `<option value="">（加载中...）</option>`;
+		notebookSelect.addEventListener("change", () => {
+			const opt = notebookSelect.selectedOptions[0];
+			selectedNotebook = opt.value
+				? { id: opt.value, name: opt.text }
+				: null;
+		});
 
 		const lsEnabledInput = document.createElement("input");
 		lsEnabledInput.type = "checkbox";
@@ -182,7 +194,8 @@ export default class SiYuanAgent extends Plugin {
 					apiBaseURL: apiBaseInput.value || DEFAULT_CONFIG.apiBaseURL,
 					apiKey: apiKeyInput.value || "",
 					model: modelInput.value || DEFAULT_CONFIG.model,
-					systemPrompt: systemPromptInput.value || DEFAULT_CONFIG.systemPrompt,
+					customInstructions: customInstructionsInput.value,
+					defaultNotebook: selectedNotebook,
 					langSmithEnabled: lsEnabledInput.checked,
 					langSmithApiKey: lsKeyInput.value || "",
 					langSmithEndpoint: lsEndpointInput.value || DEFAULT_CONFIG.langSmithEndpoint,
@@ -208,9 +221,14 @@ export default class SiYuanAgent extends Plugin {
 			actionElement: modelInput,
 		});
 		this.setting.addItem({
-			title: "System Prompt",
-			description: "System instructions for the AI agent",
-			actionElement: systemPromptInput,
+			title: "自定义指令",
+			description: "附加给 AI 的个性化指令，追加在内置系统提示词之后",
+			actionElement: customInstructionsInput,
+		});
+		this.setting.addItem({
+			title: "默认工作笔记本",
+			description: "Agent 操作时优先使用的笔记本",
+			actionElement: notebookSelect,
 		});
 		this.setting.addItem({
 			title: "LangSmith Tracing",
@@ -235,7 +253,7 @@ export default class SiYuanAgent extends Plugin {
 
 		/* Load saved values when settings panel opens */
 		const origOpen = this.setting.open.bind(this.setting);
-		this.setting.open = (name: string) => {
+		this.setting.open = async (name: string) => {
 			const config: AgentConfig = {
 				...DEFAULT_CONFIG,
 				...(this.data[CONFIG_STORAGE] || {}),
@@ -243,11 +261,34 @@ export default class SiYuanAgent extends Plugin {
 			apiBaseInput.value = config.apiBaseURL;
 			apiKeyInput.value = config.apiKey;
 			modelInput.value = config.model;
-			systemPromptInput.value = config.systemPrompt;
+			customInstructionsInput.value = config.customInstructions || "";
+			selectedNotebook = config.defaultNotebook || null;
 			lsEnabledInput.checked = config.langSmithEnabled || false;
 			lsKeyInput.value = config.langSmithApiKey || "";
 			lsEndpointInput.value = config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint;
 			lsProjectInput.value = config.langSmithProject || "";
+
+			/* Populate notebook list */
+			try {
+				const resp = await fetch("/api/notebook/lsNotebooks", { method: "POST" });
+				const data = await resp.json();
+				const notebooks: { id: string; name: string; closed: boolean }[] =
+					(data.data?.notebooks || []).filter((nb: any) => !nb.closed);
+				notebookSelect.innerHTML =
+					`<option value="">（不指定）</option>` +
+					notebooks.map(nb =>
+						`<option value="${nb.id}">${nb.name}</option>`
+					).join("");
+				if (selectedNotebook?.id) {
+					notebookSelect.value = selectedNotebook.id;
+					/* Sync text in case name changed */
+					const matched = notebooks.find(nb => nb.id === selectedNotebook.id);
+					if (matched) selectedNotebook.name = matched.name;
+				}
+			} catch (e) {
+				notebookSelect.innerHTML = `<option value="">（加载失败）</option>`;
+			}
+
 			origOpen(name);
 		};
 	}
