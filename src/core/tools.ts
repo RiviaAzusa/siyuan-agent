@@ -218,14 +218,112 @@ const appendBlockTool = tool(
 	}
 );
 
+/* --- Document management tools --- */
+
+const createDocumentTool = tool(
+	async ({ notebook, path, markdown }) => {
+		const id = await siyuanFetch("/api/filetree/createDocWithMd", {
+			notebook,
+			path,
+			markdown: markdown || "",
+		});
+		return JSON.stringify({ id, notebook, path });
+	},
+	{
+		name: "create_document",
+		description: "Create a new document (note) in a notebook with optional Markdown content. The path is the human-readable path (hpath) like '/Folder/My Note'. Returns the new document's ID.",
+		schema: z.object({
+			notebook: z.string().describe("Notebook ID (from list_notebooks)"),
+			path: z.string().describe("Human-readable path for the new document, e.g. '/Daily Notes/2024-01-01' or '/Project/Meeting Notes'"),
+			markdown: z.string().optional().describe("Initial Markdown content for the document. Defaults to empty."),
+		}),
+	}
+);
+
+const moveDocumentTool = tool(
+	async ({ fromIDs, toID }) => {
+		await siyuanFetch("/api/filetree/moveDocsByID", { fromIDs, toID });
+		return JSON.stringify({ ok: true, fromIDs, toID });
+	},
+	{
+		name: "move_document",
+		description: "Move one or more documents to a different location. toID can be a notebook ID (moves to notebook root) or a document ID (moves inside that document as sub-document).",
+		schema: z.object({
+			fromIDs: z.array(z.string()).describe("Array of document IDs to move"),
+			toID: z.string().describe("Target notebook ID or parent document ID"),
+		}),
+	}
+);
+
+const renameDocumentTool = tool(
+	async ({ id, title }) => {
+		await siyuanFetch("/api/filetree/renameDocByID", { id, title });
+		return JSON.stringify({ ok: true, id, title });
+	},
+	{
+		name: "rename_document",
+		description: "Rename a document by changing its title.",
+		schema: z.object({
+			id: z.string().describe("Document ID to rename"),
+			title: z.string().describe("New title for the document"),
+		}),
+	}
+);
+
+// deleteDocumentTool is intentionally NOT in defaultTools (safety) — export for opt-in use
+export const deleteDocumentTool = tool(
+	async ({ id }) => {
+		await siyuanFetch("/api/filetree/removeDocByID", { id });
+		return JSON.stringify({ ok: true, id });
+	},
+	{
+		name: "delete_document",
+		description: "Permanently delete a document by its ID. This is irreversible.",
+		schema: z.object({
+			id: z.string().describe("Document ID to delete"),
+		}),
+	}
+);
+
+const searchDocumentsTool = tool(
+	async ({ keyword, notebook }) => {
+		const stmt = notebook
+			? `SELECT id, content, hpath, box, updated FROM blocks WHERE type='d' AND box='${notebook}' AND content LIKE '%${keyword}%' ORDER BY updated DESC LIMIT 50`
+			: `SELECT id, content, hpath, box, updated FROM blocks WHERE type='d' AND content LIKE '%${keyword}%' ORDER BY updated DESC LIMIT 50`;
+		const data = await siyuanFetch("/api/query/sql", { stmt });
+		const docs = (data || []).map((d: any) => ({
+			id: d.id,
+			title: d.content,
+			hpath: d.hpath,
+			notebook: d.box,
+			updated: d.updated,
+		}));
+		return JSON.stringify(docs, null, 2);
+	},
+	{
+		name: "search_documents",
+		description: "Search for documents (notes) by title keyword. Returns matching document IDs, titles, paths, and notebooks. Use search_fulltext to search inside document content instead.",
+		schema: z.object({
+			keyword: z.string().describe("Keyword to search in document titles"),
+			notebook: z.string().optional().describe("Limit search to a specific notebook ID. Omit to search all notebooks."),
+		}),
+	}
+);
+
 const defaultTools: StructuredToolInterface[] = [
 	getWeatherTool,
 	listNotebooksTool,
 	listDocumentsTool,
+	getDocumentTool,
 	getDocumentBlocksTool,
 	searchFulltextTool,
 	appendBlockTool,
 	editBlocksTool,
+	createDocumentTool,
+	moveDocumentTool,
+	renameDocumentTool,
+	searchDocumentsTool,
+	// deleteDocumentTool is intentionally excluded for safety
 ];
 
 export function getDefaultTools(): StructuredToolInterface[] {
