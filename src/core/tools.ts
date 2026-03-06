@@ -164,11 +164,33 @@ const editBlocksTool = tool(
 			}
 
 			try {
-				await siyuanFetch("/api/block/updateBlock", {
-					id: block.id,
-					data: block.content,
-					dataType: "markdown",
-				});
+				// Use insertBlock + deleteBlock instead of updateBlock so that
+				// multi-block markdown is correctly expanded into multiple blocks.
+				// (updateBlock only keeps FirstChild, discarding the rest.)
+				//
+				// insertBlock with previousID correctly inserts ALL parsed blocks.
+				// nextID has a bug in siyuan's doInsert: it only inserts FirstChild.
+				// So we must use previousID. When the block has no previous sibling,
+				// fall back to prependBlock (insert as first child of parent).
+				const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids: [block.id] });
+				const info = treeInfos[block.id];
+				const previousID: string = info?.previousID ?? "";
+				const parentID: string = info?.parentID ?? "";
+
+				if (previousID) {
+					await siyuanFetch("/api/block/insertBlock", {
+						data: block.content,
+						dataType: "markdown",
+						previousID,
+					});
+				} else {
+					await siyuanFetch("/api/block/prependBlock", {
+						data: block.content,
+						dataType: "markdown",
+						parentID,
+					});
+				}
+				await siyuanFetch("/api/block/deleteBlock", { id: block.id });
 				results.push({
 					id: block.id,
 					status: "ok",

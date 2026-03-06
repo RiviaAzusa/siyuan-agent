@@ -369,7 +369,7 @@ export class ChatPanel {
 		}
 
 		/* Handle slash commands */
-		let displayText = text;
+		let extraSystemPrompt: string | null = null;
 		const initMatch = text.match(/^\/init(?:\s+([\s\S]*))?$/i);
 		if (initMatch) {
 			const guideDocId = config.guideDoc?.id;
@@ -378,8 +378,7 @@ export class ChatPanel {
 				return;
 			}
 			const extra = (initMatch[1] || "").trim();
-			displayText = extra ? `/init ${extra}` : "/init";
-			text = INIT_PROMPT.replace(
+			extraSystemPrompt = INIT_PROMPT.replace(
 				"请开始探索。",
 				`目标文档 ID（请将结果写入此文档）：${guideDocId}\n\n${extra ? "额外指令：" + extra + "\n\n" : ""}请开始探索。`
 			);
@@ -387,19 +386,15 @@ export class ChatPanel {
 
 		/* Build user message content with optional context */
 		let content = "";
-		let displayContent = "";
 		if (this.pendingContext) {
-			const quote = `> ${this.pendingContext.replace(/\n/g, "\n> ")}`;
-			content = `${quote}\n\n${text}`;
-			displayContent = `${quote}\n\n${displayText}`;
+			content = `> ${this.pendingContext.replace(/\n/g, "\n> ")}\n\n${text}`;
 			this.clearContext();
 		} else {
 			content = text;
-			displayContent = displayText;
 		}
 
-		/* Show user message in UI (display version, not expanded prompt) */
-		this.appendStaticMessage("user", displayContent);
+		/* Show user message in UI */
+		this.appendStaticMessage("user", content);
 
 		this.textareaEl.value = "";
 		const s = this.activeSession;
@@ -430,7 +425,7 @@ export class ChatPanel {
 		};
 
 		try {
-			const agent = await makeAgent(config, this.tools);
+			const agent = await makeAgent(config, this.tools, extraSystemPrompt);
 			const tracer = makeTracer(config);
 
 			/* Build input: deserialise saved state + append new human message */

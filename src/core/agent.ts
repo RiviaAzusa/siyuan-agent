@@ -5,7 +5,22 @@ import { Client } from "langsmith";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { BUILTIN_SYSTEM_PROMPT, type AgentConfig } from "../types";
 
-export function makeAgent(config: AgentConfig, tools: StructuredToolInterface[]) {
+async function fetchGuideDoc(docId: string): Promise<string> {
+	try {
+		const resp = await fetch("/api/export/exportMdContent", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ id: docId }),
+		});
+		const data = await resp.json();
+		const content: string = data?.data?.content || "";
+		return content.trim();
+	} catch {
+		return "";
+	}
+}
+
+export async function makeAgent(config: AgentConfig, tools: StructuredToolInterface[], extraSystemPrompt?: string | null) {
 	const model = new ChatOpenAI({
 		model: config.model,
 		temperature: 0,
@@ -18,11 +33,20 @@ export function makeAgent(config: AgentConfig, tools: StructuredToolInterface[])
 	});
 
 	let systemPrompt = BUILTIN_SYSTEM_PROMPT;
+	if (config.guideDoc?.id) {
+		const guideContent = await fetchGuideDoc(config.guideDoc.id);
+		if (guideContent) {
+			systemPrompt += `\n\n---\n用户指南（来自笔记库）：\n${guideContent}\n---`;
+		}
+	}
 	if (config.defaultNotebook?.id) {
 		systemPrompt += `\n\n用户当前默认的工作笔记本(notebook)为 ${config.defaultNotebook.name}（ID: ${config.defaultNotebook.id}）。除非用户明确提出切换笔记本, 否则默认用此notebook工作。`;
 	}
 	if (config.customInstructions?.trim()) {
 		systemPrompt += `\n\n用户自定义指令：\n${config.customInstructions.trim()}`;
+	}
+	if (extraSystemPrompt) {
+		systemPrompt += `\n\n${extraSystemPrompt}`;
 	}
 
 	return createAgent({
