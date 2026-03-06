@@ -159,6 +159,65 @@ export default class SiYuanAgent extends Plugin {
 		customInstructionsInput.rows = 4;
 		customInstructionsInput.placeholder = "可选。附加给 AI 的自定义指令，例如：回答时使用英文。";
 
+		/* Guide doc picker */
+		let selectedGuideDoc: { id: string; title: string } | null = null;
+
+		const guideDocPicker = document.createElement("div");
+		guideDocPicker.style.cssText = "position:relative";
+
+		const guideDocSearch = document.createElement("input");
+		guideDocSearch.className = "b3-text-field fn__block";
+		guideDocSearch.placeholder = "搜索文档名称...";
+
+		const guideDocDropdown = document.createElement("div");
+		guideDocDropdown.className = "b3-menu fn__none";
+		guideDocDropdown.style.cssText = "position:absolute;z-index:200;width:100%;max-height:200px;overflow-y:auto;top:100%;left:0";
+
+		guideDocPicker.appendChild(guideDocSearch);
+		guideDocPicker.appendChild(guideDocDropdown);
+
+		const setGuideDoc = (doc: { id: string; title: string } | null) => {
+			selectedGuideDoc = doc;
+			guideDocSearch.value = doc ? doc.title : "";
+			guideDocDropdown.classList.add("fn__none");
+		};
+
+		let guideDocTimer: ReturnType<typeof setTimeout> | null = null;
+		guideDocSearch.addEventListener("input", () => {
+			selectedGuideDoc = null;
+			if (guideDocTimer) clearTimeout(guideDocTimer);
+			const kw = guideDocSearch.value.trim();
+			guideDocTimer = setTimeout(async () => {
+				const stmt = kw
+					? `SELECT * FROM blocks WHERE type='d' AND content LIKE '%${kw}%' ORDER BY updated DESC LIMIT 8`
+					: `SELECT * FROM blocks WHERE type='d' ORDER BY updated DESC LIMIT 8`;
+				try {
+					const resp = await fetch("/api/query/sql", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ stmt }),
+					});
+					const data = await resp.json();
+					const docs: { id: string; title: string }[] = (data.data || []).map((d: any) => ({ id: d.id, title: d.content }));
+					if (docs.length === 0) { guideDocDropdown.classList.add("fn__none"); return; }
+					guideDocDropdown.innerHTML = docs.map(d =>
+						`<div class="b3-menu__item" data-id="${d.id}" data-title="${d.title.replace(/"/g, "&quot;")}"><span class="b3-menu__label">${d.title}</span></div>`
+					).join("");
+					guideDocDropdown.querySelectorAll(".b3-menu__item").forEach(el => {
+						el.addEventListener("mousedown", (ev) => {
+							ev.preventDefault();
+							const h = el as HTMLElement;
+							setGuideDoc({ id: h.dataset.id!, title: h.dataset.title! });
+						});
+					});
+					guideDocDropdown.classList.remove("fn__none");
+				} catch { guideDocDropdown.classList.add("fn__none"); }
+			}, 200);
+		});
+		guideDocSearch.addEventListener("blur", () => {
+			setTimeout(() => guideDocDropdown.classList.add("fn__none"), 150);
+		});
+
 		/* Default notebook selector */
 		let selectedNotebook: { id: string; name: string } | null = null;
 		const notebookSelect = document.createElement("select");
@@ -195,6 +254,7 @@ export default class SiYuanAgent extends Plugin {
 					apiKey: apiKeyInput.value || "",
 					model: modelInput.value || DEFAULT_CONFIG.model,
 					customInstructions: customInstructionsInput.value,
+					guideDoc: selectedGuideDoc,
 					defaultNotebook: selectedNotebook,
 					langSmithEnabled: lsEnabledInput.checked,
 					langSmithApiKey: lsKeyInput.value || "",
@@ -224,6 +284,11 @@ export default class SiYuanAgent extends Plugin {
 			title: "自定义指令",
 			description: "附加给 AI 的个性化指令，追加在内置系统提示词之后",
 			actionElement: customInstructionsInput,
+		});
+		this.setting.addItem({
+			title: "用户指南文档",
+			description: "将指定文档内容拼接到系统提示词，作为 AI 的行为指南",
+			actionElement: guideDocPicker,
 		});
 		this.setting.addItem({
 			title: "默认工作笔记本",
@@ -262,6 +327,7 @@ export default class SiYuanAgent extends Plugin {
 			apiKeyInput.value = config.apiKey;
 			modelInput.value = config.model;
 			customInstructionsInput.value = config.customInstructions || "";
+			setGuideDoc(config.guideDoc || null);
 			selectedNotebook = config.defaultNotebook || null;
 			lsEnabledInput.checked = config.langSmithEnabled || false;
 			lsKeyInput.value = config.langSmithApiKey || "";

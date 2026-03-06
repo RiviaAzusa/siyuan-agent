@@ -4,7 +4,7 @@ import {
 	HumanMessage, AIMessage, SystemMessage, ToolMessage,
 	type BaseMessage,
 } from "@langchain/core/messages";
-import { AgentConfig, AgentState, SessionData, SessionIndex, DEFAULT_CONFIG } from "../types";
+import { AgentConfig, AgentState, SessionData, SessionIndex, DEFAULT_CONFIG, INIT_PROMPT, SLASH_COMMANDS } from "../types";
 import { makeAgent, makeTracer } from "../core/agent";
 import { renderMarkdown } from "./markdown";
 
@@ -142,10 +142,10 @@ export class ChatPanel {
 			<svg style="width:10px;height:10px;margin-left:4px"><use xlink:href="#iconDown"></use></svg>
 		</button>
 		<span class="fn__flex-1"></span>
-		<span class="chat-panel__new-session block__icon b3-tooltips b3-tooltips__sw" aria-label="New Chat">
+		<span class="chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="New Chat">
 			<svg style="width:16px;height:16px"><use xlink:href="#iconAdd"></use></svg>
 		</span>
-		<span class="chat-panel__clear block__icon b3-tooltips b3-tooltips__sw" aria-label="Clear">
+		<span class="chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="Clear">
 			<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
 		</span>
 	</div>
@@ -272,7 +272,8 @@ export class ChatPanel {
 	}
 
 	private newSession(): void {
-		if (this.messagesEl.children.length === 0) {
+		const msgs = this.activeSession.state?.messages;
+		if (!msgs || msgs.length === 0) {
 			this.textareaEl.focus();
 			return;
 		}
@@ -357,7 +358,7 @@ export class ChatPanel {
 	/* --- Send --- */
 
 	private async send(): Promise<void> {
-		const text = this.textareaEl.value.trim();
+		let text = this.textareaEl.value.trim();
 		if (!text && !this.pendingContext)
 			return;
 
@@ -367,17 +368,38 @@ export class ChatPanel {
 			return;
 		}
 
+		/* Handle slash commands */
+		let displayText = text;
+		const initMatch = text.match(/^\/init(?:\s+([\s\S]*))?$/i);
+		if (initMatch) {
+			const guideDocId = config.guideDoc?.id;
+			if (!guideDocId) {
+				showMessage("请先在插件设置中配置「用户指南文档」，/init 将把探索结果写入该文档。");
+				return;
+			}
+			const extra = (initMatch[1] || "").trim();
+			displayText = extra ? `/init ${extra}` : "/init";
+			text = INIT_PROMPT.replace(
+				"请开始探索。",
+				`目标文档 ID（请将结果写入此文档）：${guideDocId}\n\n${extra ? "额外指令：" + extra + "\n\n" : ""}请开始探索。`
+			);
+		}
+
 		/* Build user message content with optional context */
 		let content = "";
+		let displayContent = "";
 		if (this.pendingContext) {
-			content = `> ${this.pendingContext.replace(/\n/g, "\n> ")}\n\n${text}`;
+			const quote = `> ${this.pendingContext.replace(/\n/g, "\n> ")}`;
+			content = `${quote}\n\n${text}`;
+			displayContent = `${quote}\n\n${displayText}`;
 			this.clearContext();
 		} else {
 			content = text;
+			displayContent = displayText;
 		}
 
-		/* Show user message in UI */
-		this.appendStaticMessage("user", content);
+		/* Show user message in UI (display version, not expanded prompt) */
+		this.appendStaticMessage("user", displayContent);
 
 		this.textareaEl.value = "";
 		const s = this.activeSession;
@@ -408,7 +430,7 @@ export class ChatPanel {
 		};
 
 		try {
-			const agent = makeAgent(config, this.tools);
+			const agent = await makeAgent(config, this.tools);
 			const tracer = makeTracer(config);
 
 			/* Build input: deserialise saved state + append new human message */
@@ -416,6 +438,7 @@ export class ChatPanel {
 
 			const streamOpts: any = {
 				streamMode: ["messages", "values", "custom"],
+				recursionLimit: 100,
 			};
 			if (tracer) streamOpts.callbacks = [tracer];
 			if (this.abortCtrl) streamOpts.signal = this.abortCtrl.signal;
@@ -697,6 +720,20 @@ export class ChatPanel {
 		const cursor = target.selectionStart;
 		const text = target.value;
 
+		/* Slash commands: only when at start of input */
+		const slashMatch = text.slice(0, cursor).match(/^(\/\S*)$/);
+		if (slashMatch) {
+			const prefix = slashMatch[1].toLowerCase();
+			const matched = SLASH_COMMANDS.filter(c => c.name.startsWith(prefix));
+			if (matched.length > 0) {
+				this.completionRange = { start: 0, end: cursor };
+				this.completionList = matched.map(c => ({ id: c.name, title: `${c.name}  —  ${c.description}` }));
+				this.completionIdx = 0;
+				this.showCompletion();
+				return;
+			}
+		}
+
 		const match = text.slice(0, cursor).match(/@([^\s@]*)$/);
 
 		if (match) {
@@ -815,7 +852,9 @@ export class ChatPanel {
 		const before = text.slice(0, this.completionRange.start);
 		const after = text.slice(this.completionRange.end);
 
-		const insertion = `((${item.id} "${item.title}")) `;
+		/* Slash command: insert just the command name (no doc-ref syntax) */
+		const isSlashCmd = SLASH_COMMANDS.some(c => c.name === item.id);
+		const insertion = isSlashCmd ? item.id + " " : `((${item.id} "${item.title}")) `;
 
 		this.textareaEl.value = before + insertion + after;
 		this.textareaEl.selectionStart = this.textareaEl.selectionEnd = before.length + insertion.length;
