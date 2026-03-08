@@ -814,7 +814,7 @@ export class ChatPanel {
 						toolCallIndex += 1;
 						html += `<div class="chat-msg__tool" data-tool-call-index="${toolCallIndex}" data-tool-name="${this.escapeHtml(tc.name)}">
 							<details>
-								<summary>🔧 ${this.escapeHtml(tc.name)}</summary>
+								<summary>${this.buildToolSummaryHtml(tc.name)}</summary>
 							</details>
 						</div>`;
 					}
@@ -888,7 +888,7 @@ export class ChatPanel {
 
 		const details = document.createElement("details");
 		const summary = document.createElement("summary");
-		summary.textContent = `🔧 ${toolName}`;
+		summary.innerHTML = this.buildToolSummaryHtml(toolName);
 		details.appendChild(summary);
 
 		if (args !== undefined) {
@@ -919,7 +919,10 @@ export class ChatPanel {
 			const summary = details.querySelector("summary");
 			if (!summary) return;
 			const docTitle = this.escapeHtml(payload.path || payload.id);
-			summary.innerHTML = `🔧 ${this.escapeHtml(event.toolName || toolEl.dataset.toolName || "tool")} &mdash; <a class="chat-msg__doc-link" data-id="${this.escapeHtml(payload.id)}" href="javascript:void(0)">${docTitle}</a>`;
+			summary.innerHTML = this.buildToolSummaryHtml(
+				event.toolName || toolEl.dataset.toolName || "tool",
+				`<a class="chat-msg__doc-link chat-msg__doc-link--open" data-id="${this.escapeHtml(payload.id)}" href="javascript:void(0)">${docTitle}</a>`,
+			);
 			summary.querySelector(".chat-msg__doc-link")?.addEventListener("click", () => {
 				openTab({ app: (globalThis as any).siyuanApp, doc: { id: payload.id } });
 			});
@@ -998,7 +1001,10 @@ export class ChatPanel {
 		const docTitle = this.escapeHtml(options.label || options.path || docId || "文档");
 		const meta = options.meta ? `<span class="chat-msg__doc-meta">${this.escapeHtml(options.meta)}</span>` : "";
 		const actionClass = options.open ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted";
-		summary.innerHTML = `🔧 ${this.escapeHtml(event.toolName || toolEl.dataset.toolName || "tool")} &mdash; <a class="${actionClass}" data-id="${this.escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`;
+		summary.innerHTML = this.buildToolSummaryHtml(
+			event.toolName || toolEl.dataset.toolName || "tool",
+			`<a class="${actionClass}" data-id="${this.escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`,
+		);
 
 		const link = summary.querySelector<HTMLElement>(".chat-msg__doc-link");
 		if (!link) return;
@@ -1011,6 +1017,10 @@ export class ChatPanel {
 				e.preventDefault();
 			});
 		}
+	}
+
+	private buildToolSummaryHtml(toolName: string, contentHtml = ""): string {
+		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${this.escapeHtml(toolName)}</span>${contentHtml}`;
 	}
 
 	private scrollToBottom(): void {
