@@ -1,10 +1,20 @@
-import { Plugin, showMessage, fetchPost } from "siyuan";
+import { Plugin, showMessage, fetchPost, openTab } from "siyuan";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
 	HumanMessage, AIMessage, SystemMessage, ToolMessage,
 	type BaseMessage,
 } from "@langchain/core/messages";
-import { AgentConfig, AgentState, SessionData, SessionIndex, DEFAULT_CONFIG, INIT_PROMPT, SLASH_COMMANDS } from "../types";
+import {
+	AgentConfig,
+	AgentState,
+	SessionData,
+	SessionIndex,
+	ToolUIEvent,
+	ToolUIEventPayload,
+	DEFAULT_CONFIG,
+	INIT_PROMPT,
+	SLASH_COMMANDS,
+} from "../types";
 import { makeAgent, makeTracer } from "../core/agent";
 import { renderMarkdown } from "./markdown";
 
@@ -99,6 +109,36 @@ function sessionTitle(state: AgentState): string {
 	const rawContent = first.kwargs?.content ?? first.content;
 	const text = (typeof rawContent === "string" ? rawContent : "").replace(/^>.*\n\n/s, "").trim();
 	return text.length > 30 ? text.slice(0, 30) + "..." : text;
+}
+
+function normalizeToolUIEvent(raw: string, toolCallIndex: number, toolName?: string): ToolUIEvent {
+	let parsed: any = null;
+	try { parsed = JSON.parse(raw); } catch { /* plain string */ }
+
+	let payload: ToolUIEventPayload;
+	if (parsed?.__tool_type === "created_document" && parsed.id) {
+		payload = {
+			type: "created_document",
+			id: String(parsed.id),
+			path: parsed.path ? String(parsed.path) : undefined,
+		};
+	} else if (parsed && typeof parsed === "object") {
+		payload = {
+			type: "unknown_structured",
+			raw,
+			payload: parsed,
+		};
+	} else {
+		payload = { type: "text", text: raw };
+	}
+
+	return {
+		id: genId(),
+		source: "writer",
+		toolCallIndex,
+		toolName,
+		payload,
+	};
 }
 
 export class ChatPanel {
@@ -340,6 +380,9 @@ export class ChatPanel {
 		/* Re-render messages from state */
 		this.messagesEl.innerHTML = "";
 		const messages = s.state?.messages || [];
+		const toolUIEvents = Array.isArray(s.state?.toolUIEvents) ? s.state.toolUIEvents as ToolUIEvent[] : [];
+		let toolCallIndex = -1;
+		let lastToolEl: HTMLElement | null = null;
 		for (const msg of messages) {
 			const type = msgType(msg);
 			// Content / tool_calls may live in kwargs (serialised) or directly on the object
@@ -349,9 +392,26 @@ export class ChatPanel {
 			if (type === "human" || type === "user")
 				this.appendStaticMessage("user", typeof content === "string" ? content : JSON.stringify(content));
 			else if (type === "ai")
-				this.appendStaticMessage("assistant", typeof content === "string" ? content : "", toolCalls);
-			else if (type === "tool")
-				this.appendStaticMessage("tool", typeof content === "string" ? content : JSON.stringify(content), null, toolName);
+				toolCallIndex = this.appendStaticMessage(
+					"assistant",
+					typeof content === "string" ? content : "",
+					toolCalls,
+					undefined,
+					toolUIEvents,
+					toolCallIndex,
+				);
+			else if (type === "tool") {
+				const result = typeof content === "string" ? content : JSON.stringify(content);
+				if (lastToolEl) {
+					this.appendToolResultToElement(lastToolEl, result);
+					lastToolEl = null;
+				} else {
+					this.appendStaticMessage("tool", result, null, toolName);
+				}
+			}
+
+			if (type === "ai")
+				lastToolEl = this.findLastToolElement(this.messagesEl.lastElementChild as HTMLElement | null);
 		}
 	}
 
@@ -414,6 +474,8 @@ export class ChatPanel {
 		let curTextEl: HTMLElement | null = null;
 		let curBuffer = "";
 		let lastToolEl: HTMLElement | null = null;
+		let lastToolCallIndex = -1;
+		const toolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
 
 		const getTextEl = (): HTMLElement => {
 			if (curTextEl) return curTextEl;
@@ -462,9 +524,8 @@ export class ChatPanel {
 						for (const tc of chunks) {
 							if (tc.name) {
 								curTextEl = null;
-								const el = document.createElement("div");
-								el.className = "chat-msg__tool";
-								el.innerHTML = `<details open><summary>🔧 ${this.escapeHtml(tc.name)}</summary></details>`;
+								lastToolCallIndex += 1;
+								const el = this.createToolCallElement(tc.name, undefined, lastToolCallIndex);
 								contentEl.appendChild(el);
 								lastToolEl = el;
 								this.scrollToBottom();
@@ -475,13 +536,7 @@ export class ChatPanel {
 						const result = typeof message.content === "string"
 							? message.content : JSON.stringify(message.content);
 						if (lastToolEl) {
-							const details = lastToolEl.querySelector("details");
-							if (details) {
-								const pre = document.createElement("pre");
-								pre.className = "chat-msg__tool-result";
-								pre.textContent = result.length > 500 ? result.slice(0, 500) + "..." : result;
-								details.appendChild(pre);
-							}
+							this.appendToolResultToElement(lastToolEl, result);
 							lastToolEl = null;
 						}
 						curTextEl = null;
@@ -490,11 +545,17 @@ export class ChatPanel {
 				} else if (streamType === "values") {
 					latestState = data;
 				} else if (streamType === "custom") {
-					console.log("[tool-progress]", data);
+					const raw = typeof data === "string" ? data : JSON.stringify(data);
+					if (lastToolEl && lastToolCallIndex >= 0) {
+						const event = normalizeToolUIEvent(raw, lastToolCallIndex, lastToolEl.dataset.toolName);
+						toolUIEvents.push(event);
+						this.applyToolUIEvent(lastToolEl, event);
+					}
 				}
 			}
 
 			/* Persist the complete agent state */
+			latestState.toolUIEvents = toolUIEvents;
 			s.state = latestState;
 			s.updated = Date.now();
 			const indexEntry = this.sessionIndex.sessions.find(e => e.id === s.id);
@@ -555,11 +616,14 @@ export class ChatPanel {
 		content: string,
 		toolCalls?: any[] | null,
 		toolName?: string,
-	): void {
+		toolUIEvents?: ToolUIEvent[],
+		startToolCallIndex = -1,
+	): number {
 		const el = document.createElement("div");
 		el.className = `chat-msg chat-msg--${role}`;
 
 		let html = "";
+		let toolCallIndex = startToolCallIndex;
 
 		if (role === "tool") {
 			html = `<div class="chat-msg__tool-result">
@@ -569,21 +633,94 @@ export class ChatPanel {
 		} else {
 			if (content)
 				html += renderMarkdown(content);
-			if (toolCalls && toolCalls.length) {
-				for (const tc of toolCalls) {
-					html += `<div class="chat-msg__tool">
-						<details>
-							<summary>🔧 ${this.escapeHtml(tc.name)}</summary>
-							<pre>${this.escapeHtml(JSON.stringify(tc.args, null, 2))}</pre>
-						</details>
-					</div>`;
+				if (toolCalls && toolCalls.length) {
+					for (const tc of toolCalls) {
+						toolCallIndex += 1;
+						html += `<div class="chat-msg__tool" data-tool-call-index="${toolCallIndex}" data-tool-name="${this.escapeHtml(tc.name)}">
+							<details>
+								<summary>🔧 ${this.escapeHtml(tc.name)}</summary>
+							</details>
+						</div>`;
+					}
 				}
-			}
 		}
 
 		el.innerHTML = `<div class="chat-msg__content">${html}</div>`;
 		this.messagesEl.appendChild(el);
+		if (role !== "tool" && toolUIEvents?.length) {
+			const toolEls = el.querySelectorAll<HTMLElement>(".chat-msg__tool[data-tool-call-index]");
+			for (const toolEl of toolEls) {
+				const idx = Number(toolEl.dataset.toolCallIndex);
+				for (const event of toolUIEvents) {
+					if (event.toolCallIndex === idx)
+						this.applyToolUIEvent(toolEl, event);
+				}
+			}
+		}
 		this.scrollToBottom();
+		return toolCallIndex;
+	}
+
+	private createToolCallElement(toolName: string, args?: unknown, toolCallIndex?: number): HTMLElement {
+		const el = document.createElement("div");
+		el.className = "chat-msg__tool";
+		el.dataset.toolName = toolName;
+		if (typeof toolCallIndex === "number")
+			el.dataset.toolCallIndex = String(toolCallIndex);
+
+		const details = document.createElement("details");
+		const summary = document.createElement("summary");
+		summary.textContent = `🔧 ${toolName}`;
+		details.appendChild(summary);
+
+		if (args !== undefined) {
+			const pre = document.createElement("pre");
+			pre.textContent = JSON.stringify(args, null, 2);
+			details.appendChild(pre);
+		}
+
+		el.appendChild(details);
+		return el;
+	}
+
+	private applyToolUIEvent(toolEl: HTMLElement, event: ToolUIEvent): void {
+		const details = toolEl.querySelector("details");
+		if (!details) return;
+
+		if (event.payload.type === "created_document") {
+			const payload = event.payload;
+			const summary = details.querySelector("summary");
+			if (!summary) return;
+			const docTitle = this.escapeHtml(payload.path || payload.id);
+			summary.innerHTML = `🔧 ${this.escapeHtml(event.toolName || toolEl.dataset.toolName || "tool")} &mdash; <a class="chat-msg__doc-link" data-id="${this.escapeHtml(payload.id)}" href="javascript:void(0)">已创建 ${docTitle}（点击跳转）</a>`;
+			summary.querySelector(".chat-msg__doc-link")?.addEventListener("click", () => {
+				openTab({ app: (globalThis as any).siyuanApp, doc: { id: payload.id } });
+			});
+			return;
+		}
+
+		const line = document.createElement("div");
+		line.className = "chat-msg__tool-progress";
+		line.textContent = event.payload.type === "text"
+			? event.payload.text
+			: event.payload.raw;
+		details.appendChild(line);
+	}
+
+	private appendToolResultToElement(toolEl: HTMLElement, result: string): void {
+		const details = toolEl.querySelector("details");
+		if (!details) return;
+
+		const pre = document.createElement("pre");
+		pre.className = "chat-msg__tool-result";
+		pre.textContent = result.length > 500 ? result.slice(0, 500) + "..." : result;
+		details.appendChild(pre);
+	}
+
+	private findLastToolElement(container: HTMLElement | null): HTMLElement | null {
+		if (!container) return null;
+		const toolEls = container.querySelectorAll<HTMLElement>(".chat-msg__tool");
+		return toolEls.length ? toolEls[toolEls.length - 1] : null;
 	}
 
 	private scrollToBottom(): void {

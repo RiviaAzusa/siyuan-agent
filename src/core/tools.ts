@@ -1,6 +1,6 @@
-import { tool, StructuredToolInterface } from "@langchain/core/tools";
+import { tool, StructuredToolInterface, ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
-import { fetchPost } from "siyuan";
+import { fetchPost, openTab } from "siyuan";
 
 function siyuanFetch(url: string, data: any): Promise<any> {
 	return new Promise((resolve, reject) => {
@@ -243,12 +243,18 @@ const appendBlockTool = tool(
 /* --- Document management tools --- */
 
 const createDocumentTool = tool(
-	async ({ notebook, path, markdown }) => {
+	async ({ notebook, path, markdown }, config: ToolRuntime) => {
 		const id = await siyuanFetch("/api/filetree/createDocWithMd", {
 			notebook,
 			path,
 			markdown: markdown || "",
 		});
+		// Auto-open the created document
+		openTab({ app: (globalThis as any).siyuanApp, doc: { id } });
+		// Send structured progress event for rich UI rendering
+		if (config.writer) {
+			config.writer(JSON.stringify({ __tool_type: "created_document", id, path }));
+		}
 		return JSON.stringify({ id, notebook, path });
 	},
 	{

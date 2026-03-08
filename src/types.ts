@@ -12,7 +12,40 @@ export interface AgentConfig {
 }
 
 /** Agent 的完整状态，直接存储 values stream 的最后一次输出 */
-export type AgentState = Record<string, any>;
+export interface ToolUIEventText {
+	type: "text";
+	text: string;
+}
+
+export interface ToolUIEventCreatedDocument {
+	type: "created_document";
+	id: string;
+	path?: string;
+}
+
+export interface ToolUIEventUnknownStructured {
+	type: "unknown_structured";
+	raw: string;
+	payload?: Record<string, any>;
+}
+
+export type ToolUIEventPayload =
+	| ToolUIEventText
+	| ToolUIEventCreatedDocument
+	| ToolUIEventUnknownStructured;
+
+export interface ToolUIEvent {
+	id: string;
+	source: "writer";
+	toolCallIndex: number;
+	toolName?: string;
+	payload: ToolUIEventPayload;
+}
+
+export type AgentState = Record<string, any> & {
+	messages?: any[];
+	toolUIEvents?: ToolUIEvent[];
+};
 
 /** 单个会话的持久化格式 */
 export interface SessionData {

@@ -200,6 +200,19 @@
 	}
 }
 
+.chat-msg__doc-link {
+	color: var(--b3-theme-primary);
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.chat-msg__tool-progress {
+	font-size: 11px;
+	color: var(--b3-theme-on-surface);
+	opacity: 0.6;
+	padding: 2px 0;
+}
+
 .chat-msg__tool-result {
 	user-select: text;
 	-webkit-user-select: text;

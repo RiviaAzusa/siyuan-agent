@@ -22,6 +22,9 @@ export default class SiYuanAgent extends Plugin {
 		const frontend = getFrontend();
 		this.isMobile = frontend === "mobile" || frontend === "browser-mobile";
 
+		// Expose app instance for tools that need it (e.g., openTab)
+		(globalThis as any).siyuanApp = this.app;
+
 		const tools = getDefaultTools();
 
 		this.addIcons(`<symbol id="iconAgent" viewBox="0 0 24 24">
