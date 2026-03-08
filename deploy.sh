@@ -5,6 +5,9 @@ set -e
 PLUGIN_NAME="siyuan-agent"
 PLUGIN_DIR="/Users/azusa/SiYuan/data/plugins/${PLUGIN_NAME}"
 
+cp assets/logos/icon.png ./icon.png
+cp assets/logos/preview.png ./preview.png
+
 npm run build
 
 mkdir -p "${PLUGIN_DIR}/i18n"

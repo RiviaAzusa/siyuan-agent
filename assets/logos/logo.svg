@@ -1,0 +1,31 @@
+<svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F4B942" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F4B942" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Warm paper-like background -->
+  <rect x="0" y="0" width="160" height="160" rx="28" fill="#F2E6D8" />
+
+  <!-- Gentle glow on the book: AI illuminates knowledge -->
+  <circle cx="80" cy="72" r="18" fill="url(#glow)" />
+
+  <!-- Open book symbol (knowledge / notes) -->
+  <path d="M32 60 Q60 45 80 60 L80 118 Q60 105 32 118 Z" fill="#D96C4A" />
+  <path d="M128 60 Q100 45 80 60 L80 118 Q100 105 128 118 Z" fill="#E89A6A" />
+
+  <!-- Gentle center spine -->
+  <rect x="78" y="60" width="4" height="58" rx="2" fill="#C85A3A" />
+
+  <!-- Subtle handwritten lines (human knowledge feeling) -->
+  <line x1="44" y1="82" x2="70" y2="78" stroke="#F6D5C3" stroke-width="3" stroke-linecap="round" />
+  <line x1="90" y1="78" x2="116" y2="84" stroke="#F6D5C3" stroke-width="3" stroke-linecap="round" />
+
+  <!-- Small writing trail: AI is actively helping write -->
+  <path d="M82 52 Q86 58 82 66" stroke="#F4B942" stroke-width="2.5" fill="none" stroke-linecap="round" />
+
+  <!-- Small spark dot (AI assisting quietly) -->
+  <circle cx="80" cy="46" r="6" fill="#F4B942" />
+</svg>

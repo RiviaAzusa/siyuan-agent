@@ -1,0 +1,31 @@
+<svg width="1024" height="768" viewBox="0 0 1024 768" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F4B942" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F4B942" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Warm paper-like background -->
+  <rect x="0" y="0" width="1024" height="768" rx="48" fill="#F2E6D8" />
+
+  <!-- Gentle glow on the book -->
+  <circle cx="512" cy="322" r="86" fill="url(#glow)" />
+
+  <!-- Open book symbol -->
+  <path d="M304 272 Q438 200 512 272 L512 556 Q438 496 304 556 Z" fill="#D96C4A" />
+  <path d="M720 272 Q586 200 512 272 L512 556 Q586 496 720 556 Z" fill="#E89A6A" />
+
+  <!-- Gentle center spine -->
+  <rect x="503" y="272" width="18" height="284" rx="9" fill="#C85A3A" />
+
+  <!-- Subtle handwritten lines -->
+  <line x1="366" y1="378" x2="470" y2="362" stroke="#F6D5C3" stroke-width="10" stroke-linecap="round" />
+  <line x1="554" y1="362" x2="658" y2="386" stroke="#F6D5C3" stroke-width="10" stroke-linecap="round" />
+
+  <!-- Small writing trail -->
+  <path d="M518 232 Q534 258 518 286" stroke="#F4B942" stroke-width="10" fill="none" stroke-linecap="round" />
+
+  <!-- Small spark dot -->
+  <circle cx="512" cy="204" r="24" fill="#F4B942" />
+</svg>

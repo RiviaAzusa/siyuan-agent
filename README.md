@@ -1,167 +1,197 @@
-[中文](https://github.com/siyuan-note/plugin-sample/blob/main/README_zh_CN.md)
+# SiYuan Agent
 
-# SiYuan plugin sample
+思源笔记 AI 助手插件，提供类似 Notion AI 的侧边栏对话体验，并允许 AI 直接在你的思源知识库中搜索、读取、创建和编辑笔记。
 
-## Get started
+## 功能特性
 
-* Make a copy of this repo as a template with the <kbd>Use this template</kbd> button, please note that the repo name must be the same as the plugin name, the default branch must be `main`
-* Clone your repo to a local development folder. For convenience, you can place this folder in your `{workspace}/data/plugins/` folder
-* Install [NodeJS](https://nodejs.org/en/download) and [pnpm](https://pnpm.io/installation), then run `pnpm i` in the command line under your repo folder
-* Execute `pnpm run dev` for real-time compilation
-* Open SiYuan marketplace and enable plugin in downloaded tab
+- 侧边栏聊天面板，支持流式输出
+- 基于 OpenAI Compatible 接口接入任意兼容模型
+- 可把编辑器选中文本或右键选中文本直接发送到对话
+- 可搜索全文、搜索文档标题、读取整篇文档、读取文档块结构
+- 可创建文档、追加内容、重命名、移动文档
+- 可编辑已有块内容，适合做润色、改写、整理
+- 支持为 Agent 配置“用户指南文档”，把你的长期偏好注入系统提示词
+- 支持设置默认工作笔记本，减少反复指定目标库
+- 可选接入 LangSmith tracing 用于调试
 
-## Development
+## 适用场景
 
-* i18n/*
-* icon.png (160*160)
-* index.css
-* index.js
-* plugin.json
-* preview.png (1024*768)
-* README*.md
-* [Fontend API](https://github.com/siyuan-note/petal)
-* [Backend API](https://github.com/siyuan-note/siyuan/blob/master/API.md)
+- 让 AI 基于你的思源笔记回答问题
+- 把零散记录整理成结构化笔记
+- 让 AI 在指定笔记本中新建文档、补充内容、改标题
+- 让 AI 先检索你的知识库，再给出总结或建议
+- 为自己建立一份“用户指南”，让 AI 更懂你的笔记结构和偏好
 
-## I18n
+## 安装
 
-In terms of internationalization, our main consideration is to support multiple languages. Specifically, we need to
-complete the following tasks:
+### 方式一：从思源集市安装
 
-* Meta information about the plugin itself, such as plugin description and readme
-  * `displayName`, `description` and `readme` fields in plugin.json, and the corresponding README*.md file
-* Text used in the plugin, such as button text and tooltips
-  * src/i18n/*.json language configuration files
-  * Use `this.i18.key` to get the text in the code
+在思源笔记中打开集市，搜索 `SiYuan Agent`，安装并启用。
 
-It is recommended that the plugin supports at least English and Simplified Chinese, so that more people can use it more conveniently. Unsupported languages do not need to be declared in the `displayName`, `description` and `readme` fields in plugin.json.
+### 方式二：手动安装
 
-## plugin.json
+1. 下载发布页中的 `package.zip`
+2. 解压到思源工作空间的 `data/plugins/siyuan-agent/`
+3. 重启思源笔记并启用插件
 
-A typical example is as follows:
+项目地址：[azusa/siyuan-agent](https://github.com/azusa/siyuan-agent)
 
-```json
-{
-  "name": "plugin-sample",
-  "author": "Vanessa",
-  "url": "https://github.com/siyuan-note/plugin-sample",
-  "version": "0.4.2",
-  "minAppVersion": "3.3.0",
-  "backends": ["all"],
-  "frontends": ["all"],
-  "disabledInPublish": false,
-  "displayName": {
-    "default": "Plugin Sample",
-    "zh_CN": "插件示例"
-  },
-  "description": {
-    "default": "This is a plugin development sample",
-    "zh_CN": "这是一个插件开发示例"
-  },
-  "readme": {
-    "default": "README.md",
-    "zh_CN": "README_zh_CN.md"
-  },
-  "funding": {
-    "custom": ["https://ld246.com/sponsor"]
-  },
-  "keywords": [
-    "开发者参考",
-    "developer reference",
-    "示例插件"
-  ]
-}
+## 首次配置
+
+启用插件后，打开插件设置，填写以下项目：
+
+### 1. API Base URL
+
+OpenAI 兼容接口地址，例如：
+
+```text
+https://api.openai.com/v1
 ```
 
-* `name`: Plugin package name, must be the same as the GitHub repository name, and cannot be duplicated with other plugins in the marketplace
-* `author`: Plugin author name
-* `url`: Plugin repo URL
-* `version`: Plugin version number, needs to follow the [semver](https://semver.org/) specification
-* `minAppVersion`: Minimum SiYuan version required to use this plugin
-* `disabledInPublish`: Whether to disable the plugin when using the publish service, defaults to false, i.e., not disabled
-* `backends`: Backend environment required by the plugin, optional values are `windows`, `linux`, `darwin`, `docker`, `android`, `ios`, `harmony` and `all`
-  * `windows`: Windows desktop
-  * `linux`: Linux desktop
-  * `darwin`: macOS desktop
-  * `docker`: Docker
-  * `android`: Android APP
-  * `ios`: iOS APP
-  * `harmony`: HarmonyOS APP
-  * `all`: All environments
-* `frontends`: Frontend environment required by the plugin, optional values are `desktop`, `desktop-window`, `mobile`, `browser-desktop`, `browser-mobile` and `all`
-  * `desktop`: Desktop
-  * `desktop-window`: Desktop window converted from tab
-  * `mobile`: Mobile APP
-  * `browser-desktop`: Desktop browser
-  * `browser-mobile`: Mobile browser
-  * `all`: All environments
-* `displayName`: Plugin name, displayed in the marketplace list
-  * `default`: Default language, must exist. If the plugin supports English, English should be used here
-  * `zh_CN`, `en_US` and other languages: optional
-* `description`: Plugin description, displayed in the marketplace list
-  * `default`: Default language, must exist. If the plugin supports English, English should be used here
-  * `zh_CN`, `en_US` and other languages: optional
-* `readme`: Readme file name, displayed in the marketplace details page
-  * `default`: Default language, must exist. If the plugin supports English, English should be used here
-  * `zh_CN`, `en_US` and other languages: optional
-* `funding`: Plugin sponsorship information, only one type will be displayed in the marketplace
-  * `openCollective`: Open Collective name
-  * `patreon`: Patreon name
-  * `github`: GitHub login name
-  * `custom`: Custom sponsorship link list
-* `keywords`: Search keyword list, used for marketplace search function, supplements search keywords beyond the values of `name`, `author`, `displayName`, and `description` fields
+如果你使用其他兼容服务，也填写其对应的 base URL。
 
-## Package
+### 2. API Key
 
-No matter which method is used to compile and package, we finally need to generate a package.zip, which contains at
-least the following files:
+模型服务提供的 API Key。
 
-* i18n/* (If the plugin supports multiple languages, language files need to be packaged to this directory, otherwise this directory is not needed)
-* icon.png (recommended size: 160*160, file size should not exceed 20KB)
-* index.css
-* index.js
-* plugin.json
-* preview.png (recommended size: 1024*768, file size should not exceed 200KB)
-* README*.md
+### 3. Model
 
-## List on the marketplace
+模型名称，例如：
 
-* Execute `pnpm run build` to generate package.zip
-* Create a new GitHub release using your new version number as the "Tag version". See here for an
-  example: https://github.com/siyuan-note/plugin-sample/releases
-* Upload the file package.zip as binary attachments
-* Publish the release
-
-If this is the first release, you also need to create a PR to the [Community Bazaar](https://github.com/siyuan-note/bazaar) repository and modify the plugins.json file in it. This file is the index of all community plugin repositories, the format is:
-
-```json
-{
-  "repos": [
-    "username/reponame"
-  ]
-}
+```text
+gpt-4o
+deepseek-chat
 ```
 
-After the PR is merged, the bazaar will automatically update the index and deploy through GitHub Actions. For subsequent plugin releases, you only need to follow the above steps to create a new release, and you don't need to PR the community bazaar repository.
+### 4. 自定义指令
 
-Under normal circumstances, the community bazaar repository will automatically update the index and deploy every hour, and you can check the deployment status at https://github.com/siyuan-note/bazaar/actions.
+可选。用于补充你的固定要求，例如：
 
-## Developer's Guide
+- 始终用中文回答
+- 回答尽量简洁
+- 修改文档时保留我的标题层级和列表风格
 
-Developers need to pay attention to the following specifications.
+### 5. 用户指南文档
 
-### 1. File Reading and Writing Specifications
+可选，但强烈建议配置。
 
-If plugins or external extensions require direct reading or writing of files under the `data` directory, please use the kernel API to achieve this. **Do not call `fs` or other electron or nodejs APIs directly**, as it may result in data loss during synchronization and cause damage to cloud data.
+你可以指定一篇思源文档作为“用户指南”。该文档的内容会被拼接进系统提示词，作为 AI 的长期行为参考。适合写入：
 
-Related APIs can be found at: `/api/file/*` (e.g., `/api/file/getFile`).
+- 你的笔记结构
+- 常用笔记本和目录
+- 命名习惯
+- 写作偏好
+- 不希望 AI 做的事
 
-### 2. Daily Note Attribute Specifications
+### 6. 默认工作笔记本
 
-When creating a daily note in SiYuan, a custom-dailynote-yyyymmdd attribute will be automatically added to the document to distinguish it from regular documents.
+可选。设置后，AI 在没有明确指定目标笔记本时，会优先在该笔记本中工作。
 
-> For more details, please refer to [Github Issue #9807](https://github.com/siyuan-note/siyuan/issues/9807).
+### 7. LangSmith Tracing
 
-Developers should pay attention to the following when developing the functionality to manually create Daily Notes:
+可选。用于调试 Agent 调用链。只有在你需要排查问题或观察调用过程时才需要开启。
 
-* If `/api/filetree/createDailyNote` is called to create a daily note, the attribute will be automatically added to the document, and developers do not need to handle it separately
-* If a document is created manually by developer's code (e.g., using the `createDocWithMd` API to create a daily note), please manually add this attribute to the document
+## 使用方式
+
+## 打开聊天面板
+
+插件启用后，会在右侧出现 `AI Agent` 停靠面板。
+
+你可以直接在面板中输入问题，例如：
+
+- “帮我搜索最近写过的项目计划”
+- “总结一下我关于提示词工程的笔记”
+- “在默认笔记本里新建一篇《本周复盘》”
+- “把这篇文档的语言润色得更自然”
+
+## 发送选中文本到对话
+
+插件支持两种方式把当前选区作为上下文发送给 AI：
+
+- 编辑器快捷键：`Option + Command + L`
+- 右键菜单：`发送选中文本到 AI 对话`
+
+发送后，选中文本会作为当前提问的引用上下文附加到聊天输入中。
+
+## `/init` 命令
+
+插件内置了一个初始化命令：
+
+```text
+/init
+```
+
+它会尝试探索你的笔记库结构，并把结果写入“用户指南文档”。
+
+使用前提：
+
+- 已配置 API
+- 已在插件设置中指定“用户指南文档”
+
+你也可以附加额外指令：
+
+```text
+/init 重点分析我的项目管理和日记结构
+```
+
+适合第一次使用时快速建立 Agent 对你知识库的理解。
+
+## AI 可用能力
+
+当前内置工具包括：
+
+- `list_notebooks`：列出全部笔记本
+- `list_documents`：列出某个笔记本中的文档
+- `search_documents`：按标题搜索文档
+- `search_fulltext`：全文搜索块内容
+- `get_document`：读取整篇文档 Markdown
+- `get_document_blocks`：读取文档子块与 block ID
+- `create_document`：新建文档
+- `append_block`：向文档追加内容
+- `edit_blocks`：编辑已有块
+- `move_document`：移动文档
+- `rename_document`：重命名文档
+
+默认不开放删除文档能力，以降低误操作风险。
+
+## 推荐配置方法
+
+如果你想让插件更稳定、更像“你的私人助手”，建议这样配置：
+
+1. 先新建一篇文档，例如《AI 用户指南》
+2. 在文档里写清楚你的笔记本分工、常用目录、命名规则、语言偏好
+3. 在插件设置中把它设为“用户指南文档”
+4. 再执行一次 `/init`，让 AI 自动补全对知识库的整体认识
+
+这样后续在新建、整理、归档文档时，Agent 会更容易遵循你的习惯。
+
+## 注意事项
+
+- 本插件需要你自行提供可用的模型接口和 API Key
+- AI 的文档编辑会直接作用于思源内容，重要笔记建议先自行确认结果
+- 插件会优先使用真实工具查询笔记库，而不是凭空编造内容
+- 删除文档工具默认未启用
+- 首次使用时，建议先从只读类任务开始，例如搜索、总结、问答
+
+## 开发
+
+```bash
+pnpm install
+pnpm run dev
+```
+
+构建发布包：
+
+```bash
+pnpm run build
+```
+
+测试：
+
+```bash
+pnpm run test
+```
+
+## 许可证
+
+MIT

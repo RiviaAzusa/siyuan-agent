@@ -1,0 +1,18 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- background -->
+  <rect width="24" height="24" rx="4" fill="#F2E6D8"/>
+
+  <!-- left page -->
+  <path d="M3 8 Q8 5 12 8 L12 20 Q8 17 3 20 Z" fill="#D96C4A"/>
+
+  <!-- right page -->
+  <path d="M21 8 Q16 5 12 8 L12 20 Q16 17 21 20 Z" fill="#E89A6A"/>
+
+  <!-- spine -->
+  <rect x="11.4" y="8" width="1.2" height="12" rx="0.6" fill="#C85A3A"/>
+
+  <!-- AI spark -->
+  <circle cx="12" cy="4.8" r="2.2" fill="#F4B942"/>
+
+</svg>

@@ -7,6 +7,7 @@
     "lint": "eslint . --fix --cache",
     "dev": "webpack --mode development",
     "build": "webpack --mode production",
+    "validate:dist-icon": "node scripts/update-dist-icon.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

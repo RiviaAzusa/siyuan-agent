@@ -28,7 +28,11 @@ export default class SiYuanAgent extends Plugin {
 		const tools = getDefaultTools();
 
 		this.addIcons(`<symbol id="iconAgent" viewBox="0 0 24 24">
-<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-4h2v2h-2zm1-10c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/>
+<rect width="24" height="24" rx="4" fill="#F2E6D8"/>
+<path d="M3 8Q8 5 12 8v12Q8 17 3 20Z" fill="#D96C4A"/>
+<path d="M21 8Q16 5 12 8v12q4-3 9 0Z" fill="#E89A6A"/>
+<rect x="11.4" y="8" width="1.2" height="12" rx=".6" fill="#C85A3A"/>
+<circle cx="12" cy="4.8" r="2.2" fill="#F4B942"/>
 </symbol>`);
 
 		this.eventBus.on("open-menu-content", (e) => {
