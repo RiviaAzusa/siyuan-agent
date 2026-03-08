@@ -122,6 +122,39 @@ function normalizeToolUIEvent(raw: string, toolCallIndex: number, toolName?: str
 			id: String(parsed.id),
 			path: parsed.path ? String(parsed.path) : undefined,
 		};
+	} else if (parsed?.__tool_type === "document_link" && parsed.id) {
+		payload = {
+			type: "document_link",
+			id: String(parsed.id),
+			path: parsed.path ? String(parsed.path) : undefined,
+			label: parsed.label ? String(parsed.label) : undefined,
+			open: Boolean(parsed.open),
+		};
+	} else if (parsed?.__tool_type === "document_blocks" && parsed.id) {
+		payload = {
+			type: "document_blocks",
+			id: String(parsed.id),
+			path: parsed.path ? String(parsed.path) : undefined,
+			blockCount: Number(parsed.blockCount) || 0,
+			open: Boolean(parsed.open),
+		};
+	} else if (parsed?.__tool_type === "append_block" && parsed.parentID) {
+		payload = {
+			type: "append_block",
+			parentID: String(parsed.parentID),
+			path: parsed.path ? String(parsed.path) : undefined,
+			blockIDs: Array.isArray(parsed.blockIDs) ? parsed.blockIDs.map(String) : [],
+			open: Boolean(parsed.open),
+		};
+	} else if (parsed?.__tool_type === "edit_blocks") {
+		payload = {
+			type: "edit_blocks",
+			documentIDs: Array.isArray(parsed.documentIDs) ? parsed.documentIDs.map(String) : [],
+			primaryDocumentID: parsed.primaryDocumentID ? String(parsed.primaryDocumentID) : undefined,
+			path: parsed.path ? String(parsed.path) : undefined,
+			editedCount: Number(parsed.editedCount) || 0,
+			open: Boolean(parsed.open),
+		};
 	} else if (parsed && typeof parsed === "object") {
 		payload = {
 			type: "unknown_structured",
@@ -692,9 +725,50 @@ export class ChatPanel {
 			const summary = details.querySelector("summary");
 			if (!summary) return;
 			const docTitle = this.escapeHtml(payload.path || payload.id);
-			summary.innerHTML = `🔧 ${this.escapeHtml(event.toolName || toolEl.dataset.toolName || "tool")} &mdash; <a class="chat-msg__doc-link" data-id="${this.escapeHtml(payload.id)}" href="javascript:void(0)">已创建 ${docTitle}（点击跳转）</a>`;
+			summary.innerHTML = `🔧 ${this.escapeHtml(event.toolName || toolEl.dataset.toolName || "tool")} &mdash; <a class="chat-msg__doc-link" data-id="${this.escapeHtml(payload.id)}" href="javascript:void(0)">${docTitle}</a>`;
 			summary.querySelector(".chat-msg__doc-link")?.addEventListener("click", () => {
 				openTab({ app: (globalThis as any).siyuanApp, doc: { id: payload.id } });
+			});
+			return;
+		}
+
+		if (event.payload.type === "document_link") {
+			this.renderDocumentToolSummary(toolEl, details, event, {
+				id: event.payload.id,
+				path: event.payload.path,
+				label: event.payload.label,
+				meta: "已读取文档",
+				open: event.payload.open,
+			});
+			return;
+		}
+
+		if (event.payload.type === "document_blocks") {
+			this.renderDocumentToolSummary(toolEl, details, event, {
+				id: event.payload.id,
+				path: event.payload.path,
+				meta: `已读取 ${event.payload.blockCount} 个块`,
+				open: event.payload.open,
+			});
+			return;
+		}
+
+		if (event.payload.type === "append_block") {
+			this.renderDocumentToolSummary(toolEl, details, event, {
+				id: event.payload.parentID,
+				path: event.payload.path,
+				meta: `已追加 ${event.payload.blockIDs.length || 0} 个块`,
+				open: event.payload.open,
+			});
+			return;
+		}
+
+		if (event.payload.type === "edit_blocks") {
+			this.renderDocumentToolSummary(toolEl, details, event, {
+				id: event.payload.primaryDocumentID || event.payload.documentIDs[0],
+				path: event.payload.path,
+				meta: `已编辑 ${event.payload.editedCount} 个块`,
+				open: event.payload.open,
 			});
 			return;
 		}
@@ -715,6 +789,34 @@ export class ChatPanel {
 		pre.className = "chat-msg__tool-result";
 		pre.textContent = result.length > 500 ? result.slice(0, 500) + "..." : result;
 		details.appendChild(pre);
+	}
+
+	private renderDocumentToolSummary(
+		toolEl: HTMLElement,
+		details: HTMLDetailsElement,
+		event: ToolUIEvent,
+		options: { id?: string; path?: string; label?: string; meta?: string; open?: boolean },
+	): void {
+		const summary = details.querySelector("summary");
+		if (!summary) return;
+
+		const docId = options.id || "";
+		const docTitle = this.escapeHtml(options.label || options.path || docId || "文档");
+		const meta = options.meta ? `<span class="chat-msg__doc-meta">${this.escapeHtml(options.meta)}</span>` : "";
+		const actionClass = options.open ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted";
+		summary.innerHTML = `🔧 ${this.escapeHtml(event.toolName || toolEl.dataset.toolName || "tool")} &mdash; <a class="${actionClass}" data-id="${this.escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`;
+
+		const link = summary.querySelector<HTMLElement>(".chat-msg__doc-link");
+		if (!link) return;
+		if (options.open && docId) {
+			link.addEventListener("click", () => {
+				openTab({ app: (globalThis as any).siyuanApp, doc: { id: docId } });
+			});
+		} else {
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+			});
+		}
 	}
 
 	private findLastToolElement(container: HTMLElement | null): HTMLElement | null {

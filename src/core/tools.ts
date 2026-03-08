@@ -75,10 +75,23 @@ const listDocumentsTool = tool(
 );
 
 const getDocumentTool = tool(
-	async ({ id }) => {
+	async ({ id }, config: ToolRuntime) => {
+		const docInfo = await siyuanFetch("/api/query/sql", {
+			stmt: `SELECT id, content, hpath FROM blocks WHERE id='${id}' LIMIT 1`,
+		});
 		const data = await siyuanFetch("/api/export/exportMdContent", { id });
 		const hpath = data.hPath || "";
 		const content = data.content || "";
+		const label = docInfo?.[0]?.content || hpath || id;
+		if (config.writer) {
+			config.writer(JSON.stringify({
+				__tool_type: "document_link",
+				id,
+				path: hpath,
+				label,
+				open: false,
+			}));
+		}
 		return `# ${hpath}\n\n${content}`;
 	},
 	{
@@ -126,7 +139,10 @@ const searchFulltextTool = tool(
 );
 
 const getDocumentBlocksTool = tool(
-	async ({ id }) => {
+	async ({ id }, config: ToolRuntime) => {
+		const docInfo = await siyuanFetch("/api/query/sql", {
+			stmt: `SELECT id, hpath FROM blocks WHERE id='${id}' LIMIT 1`,
+		});
 		const data = await siyuanFetch("/api/block/getChildBlocks", { id });
 		const blocks = (data || []).map((b: any) => ({
 			id: b.id,
@@ -134,6 +150,15 @@ const getDocumentBlocksTool = tool(
 			subType: b.subType || undefined,
 			markdown: b.markdown || b.content || "",
 		}));
+		if (config.writer) {
+			config.writer(JSON.stringify({
+				__tool_type: "document_blocks",
+				id,
+				path: docInfo?.[0]?.hpath || "",
+				blockCount: blocks.length,
+				open: false,
+			}));
+		}
 		return JSON.stringify(blocks, null, 2);
 	},
 	{
@@ -146,9 +171,10 @@ const getDocumentBlocksTool = tool(
 );
 
 const editBlocksTool = tool(
-	async ({ blocks }) => {
+	async ({ blocks }, config: ToolRuntime) => {
 		const ids = blocks.map((b: { id: string }) => b.id);
 		const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
+		const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids });
 
 		const results: any[] = [];
 
@@ -172,7 +198,6 @@ const editBlocksTool = tool(
 				// nextID has a bug in siyuan's doInsert: it only inserts FirstChild.
 				// So we must use previousID. When the block has no previous sibling,
 				// fall back to prependBlock (insert as first child of parent).
-				const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids: [block.id] });
 				const info = treeInfos[block.id];
 				const previousID: string = info?.previousID ?? "";
 				const parentID: string = info?.parentID ?? "";
@@ -207,6 +232,29 @@ const editBlocksTool = tool(
 			}
 		}
 
+		if (config.writer) {
+			const rootIDs = [...new Set(
+				ids
+					.map((id) => treeInfos[id]?.rootID)
+					.filter((rootID: unknown): rootID is string => typeof rootID === "string" && rootID.length > 0)
+			)];
+			let path = "";
+			if (rootIDs.length > 0) {
+				const rootDoc = await siyuanFetch("/api/query/sql", {
+					stmt: `SELECT id, hpath FROM blocks WHERE id='${rootIDs[0]}' LIMIT 1`,
+				});
+				path = rootDoc?.[0]?.hpath || "";
+			}
+			config.writer(JSON.stringify({
+				__tool_type: "edit_blocks",
+				documentIDs: rootIDs,
+				primaryDocumentID: rootIDs[0],
+				path,
+				editedCount: results.filter((item) => item.status === "ok").length,
+				open: true,
+			}));
+		}
+
 		return JSON.stringify({ __tool_type: "edit_blocks", results });
 	},
 	{
@@ -222,12 +270,27 @@ const editBlocksTool = tool(
 );
 
 const appendBlockTool = tool(
-	async ({ parentID, markdown }) => {
+	async ({ parentID, markdown }, config: ToolRuntime) => {
 		const data = await siyuanFetch("/api/block/appendBlock", {
 			data: markdown,
 			dataType: "markdown",
 			parentID,
 		});
+		if (config.writer) {
+			const docInfo = await siyuanFetch("/api/query/sql", {
+				stmt: `SELECT id, hpath FROM blocks WHERE id='${parentID}' LIMIT 1`,
+			});
+			const blockIDs = Array.isArray(data)
+				? data.map((item: any) => item?.doOperations?.[0]?.id).filter(Boolean)
+				: [];
+			config.writer(JSON.stringify({
+				__tool_type: "append_block",
+				parentID,
+				path: docInfo?.[0]?.hpath || "",
+				blockIDs,
+				open: true,
+			}));
+		}
 		return JSON.stringify(data, null, 2);
 	},
 	{

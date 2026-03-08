@@ -23,6 +23,39 @@ export interface ToolUIEventCreatedDocument {
 	path?: string;
 }
 
+export interface ToolUIEventDocumentLink {
+	type: "document_link";
+	id: string;
+	path?: string;
+	label?: string;
+	open?: boolean;
+}
+
+export interface ToolUIEventDocumentBlocks {
+	type: "document_blocks";
+	id: string;
+	path?: string;
+	blockCount: number;
+	open?: boolean;
+}
+
+export interface ToolUIEventAppendBlock {
+	type: "append_block";
+	parentID: string;
+	path?: string;
+	blockIDs: string[];
+	open?: boolean;
+}
+
+export interface ToolUIEventEditBlocks {
+	type: "edit_blocks";
+	documentIDs: string[];
+	primaryDocumentID?: string;
+	path?: string;
+	editedCount: number;
+	open?: boolean;
+}
+
 export interface ToolUIEventUnknownStructured {
 	type: "unknown_structured";
 	raw: string;
@@ -32,6 +65,10 @@ export interface ToolUIEventUnknownStructured {
 export type ToolUIEventPayload =
 	| ToolUIEventText
 	| ToolUIEventCreatedDocument
+	| ToolUIEventDocumentLink
+	| ToolUIEventDocumentBlocks
+	| ToolUIEventAppendBlock
+	| ToolUIEventEditBlocks
 	| ToolUIEventUnknownStructured;
 
 export interface ToolUIEvent {

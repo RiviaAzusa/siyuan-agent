@@ -403,6 +403,26 @@
 	}
 }
 
+.chat-msg__doc-link {
+	color: var(--b3-theme-primary);
+	text-decoration: underline;
+	cursor: pointer;
+
+	&--muted {
+		color: var(--b3-theme-on-surface);
+		opacity: 0.75;
+		cursor: default;
+		text-decoration-style: dotted;
+	}
+}
+
+.chat-msg__doc-meta {
+	margin-left: 8px;
+	font-size: 11px;
+	color: var(--b3-theme-on-surface);
+	opacity: 0.7;
+}
+
 /* Cursor animation */
 .chat-msg__cursor {
 	animation: blink 0.8s step-end infinite;
