@@ -34,7 +34,7 @@
 2. 解压到思源工作空间的 `data/plugins/siyuan-agent/`
 3. 重启思源笔记并启用插件
 
-项目地址：[azusa/siyuan-agent](https://github.com/azusa/siyuan-agent)
+项目地址：[RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent)
 
 ## 首次配置
 

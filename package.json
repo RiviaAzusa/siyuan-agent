@@ -1,7 +1,7 @@
 {
-  "name": "plugin-sample",
-  "version": "0.4.4",
-  "description": "This is a sample plugin for Siyuan (https://b3log.org/siyuan)",
+  "name": "siyuan-agent",
+  "version": "0.1.0",
+  "description": "AI agent assistant plugin for SiYuan",
   "main": ".src/index.js",
   "scripts": {
     "lint": "eslint . --fix --cache",
@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "keywords": [],
-  "author": "Vanessa",
+  "author": "azusa",
   "license": "MIT",
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",

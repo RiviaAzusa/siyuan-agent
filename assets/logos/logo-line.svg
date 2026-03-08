@@ -1,0 +1,18 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- AI dot -->
+  <circle cx="12" cy="4.5" r="1.75" stroke="currentColor" stroke-width="1.75"/>
+
+  <!-- Writing trail -->
+  <path d="M12 6.8C12.9 7.6 13.1 8.5 12 9.4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+
+  <!-- Left page -->
+  <path d="M3.5 8.5C6.6 6.7 9.4 6.6 12 8.2V19C9.7 17.8 6.9 17.8 3.5 19V8.5Z"
+        stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+
+  <!-- Right page -->
+  <path d="M20.5 8.5C17.4 6.7 14.6 6.6 12 8.2V19C14.3 17.8 17.1 17.8 20.5 19V8.5Z"
+        stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+
+  <!-- Spine -->
+  <path d="M12 8.2V19" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+</svg>

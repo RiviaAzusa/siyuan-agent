@@ -1,7 +1,7 @@
 {
   "name": "siyuan-agent",
   "author": "azusa",
-  "url": "https://github.com/azusa/siyuan-agent",
+  "url": "https://github.com/RiviaAzusa/siyuan-agent",
   "version": "0.1.0",
   "minAppVersion": "3.5.3",
   "backends": [

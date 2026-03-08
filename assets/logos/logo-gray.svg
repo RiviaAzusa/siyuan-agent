@@ -1,0 +1,32 @@
+<svg width="24" height="24" viewBox="0 0 24 24"
+     xmlns="http://www.w3.org/2000/svg"
+     fill="none">
+
+  <!-- AI dot -->
+  <circle cx="12" cy="5.2" r="1.1" fill="currentColor"/>
+
+  <!-- writing trail -->
+  <path d="M12 6.3 Q13 7.3 12.3 8.6"
+        stroke="currentColor"
+        stroke-width="1.35"
+        stroke-linecap="round"/>
+
+  <!-- left page -->
+  <path d="M4.2 9 Q7.6 7.2 12 9 V18.4 Q8.8 17.2 4.2 18.4 Z"
+        stroke="currentColor"
+        stroke-width="1.35"
+        stroke-linejoin="round"/>
+
+  <!-- right page -->
+  <path d="M19.8 9 Q16.4 7.2 12 9 V18.4 Q15.2 17.2 19.8 18.4 Z"
+        stroke="currentColor"
+        stroke-width="1.35"
+        stroke-linejoin="round"/>
+
+  <!-- spine -->
+  <line x1="12" y1="9" x2="12" y2="18.4"
+        stroke="currentColor"
+        stroke-width="1.35"
+        stroke-linecap="round"/>
+
+</svg>
