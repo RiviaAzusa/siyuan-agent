@@ -3,6 +3,7 @@ export interface AgentConfig {
 	apiKey: string;
 	model: string;
 	customInstructions: string;
+	panelPosition?: "right" | "bottom";
 	guideDoc?: { id: string; title: string } | null;
 	defaultNotebook?: { id: string; name: string } | null;
 	langSmithEnabled?: boolean;
@@ -185,6 +186,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
 	apiKey: "",
 	model: "gpt-4o",
 	customInstructions: "",
+	panelPosition: "right",
 	guideDoc: null,
 	langSmithEnabled: false,
 	langSmithApiKey: "",

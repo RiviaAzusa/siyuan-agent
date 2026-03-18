@@ -3,7 +3,9 @@ import {
 	showMessage,
 	getFrontend,
 	Setting,
+	Menu,
 	adaptHotkey,
+	openTab,
 } from "siyuan";
 import "./index.scss";
 import { AgentConfig, DEFAULT_CONFIG } from "./types";
@@ -12,11 +14,15 @@ import { getDefaultTools } from "./core/tools";
 
 const CONFIG_STORAGE = "agent-config";
 const DOCK_TYPE = "agent-chat";
+const TAB_TYPE = "agent-chat-tab";
+const DOCK_TITLE = "AI Agent";
+type PanelPosition = "right" | "bottom";
 
 export default class SiYuanAgent extends Plugin {
 
 	private chatPanel: ChatPanel;
 	private isMobile: boolean;
+	private pendingContexts: string[] = [];
 
 	onload() {
 		const frontend = getFrontend();
@@ -47,31 +53,28 @@ export default class SiYuanAgent extends Plugin {
 					accelerator: this.commands.find(c => c.langKey === "sendToChat")?.hotkey,
 					click: () => {
 						console.log("SiYuan Agent: Send to Chat clicked");
-						this.chatPanel?.addContext(text);
-						// If dock is hidden/minimized, we might want to open/show it.
-						// ensuring chat panel is visible is tricky without knowing dock ID,
-						// but usually user will open it if they want to chat.
+						this.sendContextToChat(text);
 					}
 				});
 			}
 		});
 
-		/* --- Dock panel --- */
-		this.addDock({
-			config: {
-				position: "RightTop",
-				size: { width: 360, height: 0 },
-				icon: "iconAgent",
-				title: "AI Agent",
-				hotkey: "⌥⌘A",
-			},
-			data: {},
-			type: DOCK_TYPE,
-			init: (dock) => {
-				if (this.isMobile) {
+		if (this.isMobile) {
+			this.addDock({
+				config: {
+					position: "RightTop",
+					size: { width: 360, height: 0 },
+					icon: "iconAgent",
+					title: DOCK_TITLE,
+					hotkey: "⌥⌘A",
+					show: false,
+				},
+				data: {},
+				type: DOCK_TYPE,
+				init: (dock) => {
 					dock.element.innerHTML = `<div class="toolbar toolbar--border toolbar--dark">
 						<svg class="toolbar__icon"><use xlink:href="#iconAgent"></use></svg>
-						<div class="toolbar__text">AI Agent</div>
+						<div class="toolbar__text">${DOCK_TITLE}</div>
 					</div>
 					<div class="fn__flex-1" style="overflow:hidden"></div>`;
 					this.chatPanel = new ChatPanel(
@@ -79,32 +82,31 @@ export default class SiYuanAgent extends Plugin {
 						this,
 						tools
 					);
-				} else {
-					dock.element.innerHTML = `<div class="fn__flex-1 fn__flex-column" style="height:100%">
-						<div class="block__icons">
-							<div class="block__logo">
-								<svg class="block__logoicon"><use xlink:href="#iconAgent"></use></svg>
-								AI Agent
-							</div>
-							<span class="fn__flex-1 fn__space"></span>
-							<span data-type="min" class="block__icon b3-tooltips b3-tooltips__sw" aria-label="Min ${adaptHotkey("⌘W")}">
-								<svg><use xlink:href="#iconMin"></use></svg>
-							</span>
-						</div>
-						<div class="fn__flex-1" style="overflow:hidden"></div>
-					</div>`;
+					this.flushPendingContexts();
+				},
+				destroy: () => {
+					this.chatPanel?.destroy();
+					this.chatPanel = null;
+				}
+			});
+		} else {
+			this.addTab({
+				type: TAB_TYPE,
+				init: (custom) => {
+					custom.element.innerHTML = `<div class="fn__flex-1" style="height:100%;overflow:hidden"></div>`;
 					this.chatPanel = new ChatPanel(
-						dock.element.querySelector(".fn__flex-1:last-child"),
+						custom.element.querySelector(".fn__flex-1"),
 						this,
 						tools
 					);
-				}
-			},
-			destroy: () => {
-				this.chatPanel?.destroy();
-				this.chatPanel = null;
-			}
-		});
+					this.flushPendingContexts();
+				},
+				destroy: () => {
+					this.chatPanel?.destroy();
+					this.chatPanel = null;
+				},
+			});
+		}
 
 		/* --- Commands --- */
 		this.addCommand({
@@ -129,7 +131,7 @@ export default class SiYuanAgent extends Plugin {
 							.join("\n").trim();
 				}
 				if (text)
-					this.chatPanel?.addContext(text);
+					this.sendContextToChat(text);
 				else
 					showMessage(this.i18n.noSelection || "No text selected");
 			},
@@ -140,11 +142,165 @@ export default class SiYuanAgent extends Plugin {
 	}
 
 	onLayoutReady() {
-		this.loadData(CONFIG_STORAGE);
+		void this.loadData(CONFIG_STORAGE);
+		const topBarButton = this.addTopBar({
+			icon: "iconAgent",
+			title: DOCK_TITLE,
+			position: "right",
+			callback: () => {
+				void this.toggleChatPanel();
+			},
+		});
+		topBarButton?.addEventListener("contextmenu", (event: MouseEvent) => {
+			event.preventDefault();
+			event.stopPropagation();
+			this.openTopBarMenu(event);
+		});
 	}
 
 	onunload() {
 		this.chatPanel?.destroy();
+	}
+
+	private openTopBarMenu(event: MouseEvent): void {
+		const menu = new Menu();
+		menu.addItem({
+			icon: "iconRightTop",
+			label: this.i18n.openToRight || "打开到右侧",
+			click: () => {
+				void this.setPanelPosition("right", true);
+			},
+		});
+		menu.addItem({
+			icon: "iconBottomLeft",
+			label: this.i18n.openToBottom || "打开到下侧",
+			click: () => {
+				void this.setPanelPosition("bottom", true);
+			},
+		});
+		menu.addSeparator();
+		menu.addItem({
+			icon: "iconSettings",
+			label: this.i18n.settings || "设置",
+			click: () => {
+				this.openSetting();
+			},
+		});
+		menu.open({
+			x: event.clientX,
+			y: event.clientY,
+		});
+	}
+
+	private getPluginTabType(): string {
+		return `${this.name}${TAB_TYPE}`;
+	}
+
+	private getConfig(): AgentConfig {
+		return {
+			...DEFAULT_CONFIG,
+			...(this.data[CONFIG_STORAGE] || {}),
+		};
+	}
+
+	private async setPanelPosition(position: PanelPosition, reopen = false): Promise<void> {
+		const nextConfig: AgentConfig = {
+			...this.getConfig(),
+			panelPosition: position,
+		};
+		this.data[CONFIG_STORAGE] = nextConfig;
+		await this.saveData(CONFIG_STORAGE, nextConfig);
+		if (!this.isMobile && reopen) {
+			this.closeChatTabs();
+			await this.openChatTab();
+		}
+	}
+
+	private sendContextToChat(text: string): void {
+		if (!text) {
+			return;
+		}
+		if (this.chatPanel) {
+			this.chatPanel.addContext(text);
+			return;
+		}
+		this.pendingContexts.push(text);
+		void this.ensureChatVisible();
+	}
+
+	private flushPendingContexts(): void {
+		if (!this.chatPanel || this.pendingContexts.length === 0) {
+			return;
+		}
+		const pending = [...this.pendingContexts];
+		this.pendingContexts = [];
+		pending.forEach((text) => this.chatPanel?.addContext(text));
+	}
+
+	private async toggleChatPanel(): Promise<void> {
+		if (this.isMobile) {
+			this.toggleChatDock();
+			return;
+		}
+		const openedTabs = this.getOpenedChatTabs();
+		if (openedTabs.length > 0) {
+			this.closeChatTabs();
+			return;
+		}
+		await this.openChatTab();
+	}
+
+	private async ensureChatVisible(): Promise<void> {
+		if (this.isMobile) {
+			this.openChatDock();
+			return;
+		}
+		const openedTabs = this.getOpenedChatTabs();
+		if (openedTabs.length > 0) {
+			return;
+		}
+		await this.openChatTab();
+	}
+
+	private async openChatTab(): Promise<void> {
+		await openTab({
+			app: this.app,
+			custom: {
+				id: this.getPluginTabType(),
+				icon: "iconAgent",
+				title: DOCK_TITLE,
+			},
+			position: this.getConfig().panelPosition || DEFAULT_CONFIG.panelPosition,
+		});
+	}
+
+	private getOpenedChatTabs(): any[] {
+		return this.getOpenedTab()[TAB_TYPE] || [];
+	}
+
+	private closeChatTabs(): void {
+		this.getOpenedChatTabs().forEach((model) => {
+			model.tab?.parent?.removeTab(model.tab.id);
+		});
+	}
+
+	private openChatDock(): void {
+		const dockType = `${this.name}${DOCK_TYPE}`;
+		const dockButton = document.querySelector(`.dock__item[data-type="${dockType}"]`) as HTMLElement | null;
+		const layout = (window as any).siyuan?.layout;
+		const dockController = dockButton?.closest("#dockLeft, #dockRight, #dockBottom")?.id === "dockLeft"
+			? layout?.leftDock
+			: dockButton?.closest("#dockLeft, #dockRight, #dockBottom")?.id === "dockBottom"
+				? layout?.bottomDock
+				: layout?.rightDock;
+
+		dockController?.toggleModel?.(dockType, true, false, false, false);
+	}
+
+	private toggleChatDock(): void {
+		const dockType = `${this.name}${DOCK_TYPE}`;
+		const dockButton = document.querySelector(`.dock__item[data-type="${dockType}"]`) as HTMLElement | null;
+		dockButton?.click();
 	}
 
 	private initSettings(): void {
@@ -256,7 +412,9 @@ export default class SiYuanAgent extends Plugin {
 
 		this.setting = new Setting({
 			confirmCallback: () => {
+				const currentConfig = this.getConfig();
 				const config: AgentConfig = {
+					...currentConfig,
 					apiBaseURL: apiBaseInput.value || DEFAULT_CONFIG.apiBaseURL,
 					apiKey: apiKeyInput.value || "",
 					model: modelInput.value || DEFAULT_CONFIG.model,
@@ -326,10 +484,7 @@ export default class SiYuanAgent extends Plugin {
 		/* Load saved values when settings panel opens */
 		const origOpen = this.setting.open.bind(this.setting);
 		this.setting.open = async (name: string) => {
-			const config: AgentConfig = {
-				...DEFAULT_CONFIG,
-				...(this.data[CONFIG_STORAGE] || {}),
-			};
+			const config = this.getConfig();
 			apiBaseInput.value = config.apiBaseURL;
 			apiKeyInput.value = config.apiKey;
 			modelInput.value = config.model;

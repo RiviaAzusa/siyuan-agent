@@ -1,4 +1,7 @@
 {
   "sendToChat": "发送选中文本到 AI 对话",
-  "noSelection": "没有选中文本"
+  "noSelection": "没有选中文本",
+  "openToRight": "打开到右侧",
+  "openToBottom": "打开到下侧",
+  "settings": "设置"
 }

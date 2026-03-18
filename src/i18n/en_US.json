@@ -1,4 +1,7 @@
 {
   "sendToChat": "Send selection to AI chat",
-  "noSelection": "No text selected"
+  "noSelection": "No text selected",
+  "openToRight": "Open to Right",
+  "openToBottom": "Open to Bottom",
+  "settings": "Settings"
 }
