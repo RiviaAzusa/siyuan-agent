@@ -18,6 +18,31 @@ export interface ToolUIEventText {
 	text: string;
 }
 
+export type ToolActivityCategory = "lookup" | "change" | "other";
+
+export type ToolActivityAction =
+	| "list"
+	| "read"
+	| "search"
+	| "create"
+	| "append"
+	| "edit"
+	| "move"
+	| "rename"
+	| "delete"
+	| "other";
+
+export interface ToolUIEventActivity {
+	type: "activity";
+	category: ToolActivityCategory;
+	action: ToolActivityAction;
+	id?: string;
+	path?: string;
+	label?: string;
+	meta?: string;
+	open?: boolean;
+}
+
 export interface ToolUIEventCreatedDocument {
 	type: "created_document";
 	id: string;
@@ -65,6 +90,7 @@ export interface ToolUIEventUnknownStructured {
 
 export type ToolUIEventPayload =
 	| ToolUIEventText
+	| ToolUIEventActivity
 	| ToolUIEventCreatedDocument
 	| ToolUIEventDocumentLink
 	| ToolUIEventDocumentBlocks
@@ -76,6 +102,7 @@ export interface ToolUIEvent {
 	id: string;
 	source: "writer";
 	toolCallIndex: number;
+	toolCallId?: string;
 	toolName?: string;
 	payload: ToolUIEventPayload;
 }

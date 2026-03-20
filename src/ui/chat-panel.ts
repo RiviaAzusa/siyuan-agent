@@ -183,7 +183,18 @@ function normalizeToolUIEvent(raw: string, toolCallIndex: number, toolName?: str
 	try { parsed = JSON.parse(raw); } catch { /* plain string */ }
 
 	let payload: ToolUIEventPayload;
-	if (parsed?.__tool_type === "created_document" && parsed.id) {
+	if (parsed?.__tool_type === "activity") {
+		payload = {
+			type: "activity",
+			category: parsed.category === "change" || parsed.category === "other" ? parsed.category : "lookup",
+			action: typeof parsed.action === "string" ? parsed.action : "other",
+			id: parsed.id ? String(parsed.id) : undefined,
+			path: parsed.path ? String(parsed.path) : undefined,
+			label: parsed.label ? String(parsed.label) : undefined,
+			meta: parsed.meta ? String(parsed.meta) : undefined,
+			open: parsed.open === undefined ? undefined : Boolean(parsed.open),
+		};
+	} else if (parsed?.__tool_type === "created_document" && parsed.id) {
 		payload = {
 			type: "created_document",
 			id: String(parsed.id),
@@ -236,9 +247,24 @@ function normalizeToolUIEvent(raw: string, toolCallIndex: number, toolName?: str
 		id: genId(),
 		source: "writer",
 		toolCallIndex,
+		toolCallId: parsed?.toolCallId ? String(parsed.toolCallId) : undefined,
 		toolName,
 		payload,
 	};
+}
+
+interface AssistantMessageShell {
+	el: HTMLElement;
+	contentEl: HTMLElement;
+	stackEl: HTMLElement;
+}
+
+interface ActivityBlockRefs {
+	el: HTMLElement;
+	category: "lookup" | "change";
+	currentEl: HTMLElement;
+	archiveEl: HTMLDetailsElement;
+	archiveListEl: HTMLElement;
 }
 
 export class ChatPanel {
@@ -620,8 +646,8 @@ export class ChatPanel {
 		this.setLoading(true);
 
 		/* Create assistant message container for streaming */
-		const { el: assistantEl, contentEl } = this.createAssistantMessageShell();
-		listEl.appendChild(assistantEl);
+		const assistantShell = this.createAssistantMessageShell();
+		listEl.appendChild(assistantShell.el);
 		this.scrollToBottom();
 
 		this.abortCtrl = new AbortController();
@@ -635,9 +661,10 @@ export class ChatPanel {
 		const getTextEl = (): HTMLElement => {
 			if (curTextEl) return curTextEl;
 			curBuffer = "";
+			this.compactCompletedActivityBlocks(assistantShell, "lookup");
 			curTextEl = document.createElement("div");
 			curTextEl.className = "chat-msg__text";
-			contentEl.appendChild(curTextEl);
+			assistantShell.stackEl.appendChild(curTextEl);
 			return curTextEl;
 		};
 
@@ -681,7 +708,7 @@ export class ChatPanel {
 								curTextEl = null;
 								lastToolCallIndex += 1;
 								const el = this.createToolCallElement(tc.name, undefined, lastToolCallIndex, getToolCallId(tc));
-								contentEl.appendChild(el);
+								this.attachToolElementToShell(assistantShell, el);
 								pendingToolEls.push(el);
 								this.scrollToBottom();
 							}
@@ -693,6 +720,7 @@ export class ChatPanel {
 						const toolEl = this.findPendingToolElement(getMessageToolCallId(message), pendingToolEls);
 						if (toolEl) {
 							this.appendToolResultToElement(toolEl, result);
+							this.finalizeToolElement(toolEl);
 						}
 						curTextEl = null;
 						this.scrollToBottom();
@@ -701,14 +729,18 @@ export class ChatPanel {
 					latestState = data;
 				} else if (streamType === "custom") {
 					const raw = typeof data === "string" ? data : JSON.stringify(data);
-					const toolEl = pendingToolEls[pendingToolEls.length - 1] || contentEl.querySelector<HTMLElement>(".chat-msg__tool:last-of-type");
+					const event = normalizeToolUIEvent(raw, lastToolCallIndex);
+					const toolEl = this.findToolElementForEvent(assistantShell, event, pendingToolEls);
 					if (toolEl && lastToolCallIndex >= 0) {
-						const event = normalizeToolUIEvent(raw, lastToolCallIndex, toolEl.dataset.toolName);
+						event.toolCallIndex = Number(toolEl.dataset.toolCallIndex || event.toolCallIndex);
+						event.toolName = event.toolName || toolEl.dataset.toolName;
 						toolUIEvents.push(event);
 						this.applyToolUIEvent(toolEl, event);
 					}
 				}
 			}
+
+			this.compactCompletedActivityBlocks(assistantShell, "lookup");
 
 			/* Persist the complete agent state */
 			latestState.toolUIEvents = toolUIEvents;
@@ -788,7 +820,7 @@ export class ChatPanel {
 		let toolCallIndex = -1;
 		const pendingToolEls: HTMLElement[] = [];
 		let currentListEl: HTMLElement | null = null;
-		let currentAssistantContentEl: HTMLElement | null = null;
+		let currentAssistantShell: AssistantMessageShell | null = null;
 
 		for (const msg of messages) {
 			const type = msgType(msg);
@@ -799,7 +831,7 @@ export class ChatPanel {
 			if (type === "human" || type === "user") {
 				const { listEl } = this.createConversationTurn(typeof content === "string" ? content : JSON.stringify(content));
 				currentListEl = listEl;
-				currentAssistantContentEl = null;
+				currentAssistantShell = null;
 				pendingToolEls.length = 0;
 				continue;
 			}
@@ -809,13 +841,12 @@ export class ChatPanel {
 					const turn = this.createConversationTurn();
 					currentListEl = turn.listEl;
 				}
-				if (!currentAssistantContentEl) {
-					const { el, contentEl } = this.createAssistantMessageShell();
-					currentListEl.appendChild(el);
-					currentAssistantContentEl = contentEl;
+				if (!currentAssistantShell) {
+					currentAssistantShell = this.createAssistantMessageShell();
+					currentListEl.appendChild(currentAssistantShell.el);
 				}
 				const { toolCallIndex: nextToolCallIndex, toolEls } = this.appendAssistantSegment(
-					currentAssistantContentEl,
+					currentAssistantShell,
 					typeof content === "string" ? content : "",
 					toolCalls,
 					toolUIEvents,
@@ -836,11 +867,15 @@ export class ChatPanel {
 				const toolEl = this.findPendingToolElement(getMessageToolCallId(msg), pendingToolEls);
 				if (toolEl) {
 					this.appendToolResultToElement(toolEl, result);
+					this.finalizeToolElement(toolEl);
 				} else {
 					this.appendStaticMessage("tool", result, null, toolName, undefined, -1, currentListEl);
 				}
 			}
 		}
+
+		if (currentAssistantShell)
+			this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
 	}
 
 	private appendStaticMessage(
@@ -870,6 +905,30 @@ export class ChatPanel {
 		toolUIEvents?: ToolUIEvent[],
 		startToolCallIndex = -1,
 	): HTMLElement {
+		if (role === "assistant") {
+			const shell = this.createAssistantMessageShell();
+			if (content) {
+				const textEl = document.createElement("div");
+				textEl.className = "chat-msg__text";
+				textEl.innerHTML = renderMarkdown(content);
+				shell.stackEl.appendChild(textEl);
+			}
+
+			let toolCallIndex = startToolCallIndex;
+			for (const tc of toolCalls || []) {
+				toolCallIndex += 1;
+				const toolEl = this.createToolCallElement(tc.name, undefined, toolCallIndex, getToolCallId(tc));
+				this.attachToolElementToShell(shell, toolEl);
+				if (toolUIEvents?.length) {
+					for (const event of toolUIEvents) {
+						if (this.toolEventMatchesElement(event, toolEl))
+							this.applyToolUIEvent(toolEl, event);
+					}
+				}
+			}
+			return shell.el;
+		}
+
 		const el = document.createElement("div");
 		el.className = `chat-msg chat-msg--${role}`;
 
@@ -900,9 +959,8 @@ export class ChatPanel {
 		if (role !== "tool" && toolUIEvents?.length) {
 			const toolEls = el.querySelectorAll<HTMLElement>(".chat-msg__tool[data-tool-call-index]");
 			for (const toolEl of toolEls) {
-				const idx = Number(toolEl.dataset.toolCallIndex);
 				for (const event of toolUIEvents) {
-					if (event.toolCallIndex === idx)
+					if (this.toolEventMatchesElement(event, toolEl))
 						this.applyToolUIEvent(toolEl, event);
 				}
 			}
@@ -910,28 +968,40 @@ export class ChatPanel {
 		return el;
 	}
 
-	private createAssistantMessageShell(): { el: HTMLElement; contentEl: HTMLElement } {
+	private createAssistantMessageShell(): AssistantMessageShell {
 		const el = document.createElement("div");
 		el.className = "chat-msg chat-msg--assistant";
 
 		const contentEl = document.createElement("div");
-		contentEl.className = "chat-msg__content";
+		contentEl.className = "chat-msg__content chat-msg__assistant-shell";
+
+		const stackEl = document.createElement("div");
+		stackEl.className = "chat-msg__assistant-stack";
+
+		contentEl.appendChild(stackEl);
 		el.appendChild(contentEl);
-		return { el, contentEl };
+		const refs: AssistantMessageShell = {
+			el,
+			contentEl,
+			stackEl,
+		};
+		(el as any).__assistantShell = refs;
+		return refs;
 	}
 
 	private appendAssistantSegment(
-		contentEl: HTMLElement,
+		shell: AssistantMessageShell,
 		content: string,
 		toolCalls: any[] | null | undefined,
 		toolUIEvents: ToolUIEvent[] | undefined,
 		startToolCallIndex = -1,
 	): { toolCallIndex: number; toolEls: HTMLElement[] } {
 		if (content) {
+			this.compactCompletedActivityBlocks(shell, "lookup");
 			const textEl = document.createElement("div");
 			textEl.className = "chat-msg__text";
 			textEl.innerHTML = renderMarkdown(content);
-			contentEl.appendChild(textEl);
+			shell.stackEl.appendChild(textEl);
 		}
 
 		let toolCallIndex = startToolCallIndex;
@@ -939,10 +1009,10 @@ export class ChatPanel {
 		for (const tc of toolCalls || []) {
 			toolCallIndex += 1;
 			const toolEl = this.createToolCallElement(tc.name, undefined, toolCallIndex, getToolCallId(tc));
-			contentEl.appendChild(toolEl);
+			this.attachToolElementToShell(shell, toolEl);
 			if (toolUIEvents?.length) {
 				for (const event of toolUIEvents) {
-					if (event.toolCallIndex === toolCallIndex)
+					if (this.toolEventMatchesElement(event, toolEl))
 						this.applyToolUIEvent(toolEl, event);
 				}
 			}
@@ -956,14 +1026,22 @@ export class ChatPanel {
 		const el = document.createElement("div");
 		el.className = "chat-msg__tool";
 		el.dataset.toolName = toolName;
+		el.dataset.toolCategory = this.getToolCategory(toolName);
+		el.dataset.toolAction = this.getToolAction(toolName);
+		el.dataset.toolStatus = "pending";
 		if (typeof toolCallIndex === "number")
 			el.dataset.toolCallIndex = String(toolCallIndex);
 		if (toolCallId)
 			el.dataset.toolCallId = toolCallId;
 
 		const details = document.createElement("details");
+		details.open = true;
 		const summary = document.createElement("summary");
-		summary.innerHTML = this.buildToolSummaryHtml(toolName);
+		summary.innerHTML = this.buildToolSummaryHtml(
+			toolName,
+			`<span class="chat-msg__doc-meta">进行中</span>`,
+			el.dataset.toolCategory as "lookup" | "change"
+		);
 		details.appendChild(summary);
 
 		if (args !== undefined) {
@@ -976,6 +1054,202 @@ export class ChatPanel {
 		return el;
 	}
 
+	private getAssistantShellFromElement(el: HTMLElement | null): AssistantMessageShell | null {
+		return el ? ((el as any).__assistantShell ?? null) : null;
+	}
+
+	private getActivityBlockFromElement(el: HTMLElement | null): ActivityBlockRefs | null {
+		return el ? ((el as any).__activityBlock ?? null) : null;
+	}
+
+	private getToolCategory(toolName?: string, payload?: ToolUIEventPayload): "lookup" | "change" {
+		if (payload?.type === "activity")
+			return payload.category === "change" ? "change" : "lookup";
+		if (payload?.type === "append_block" || payload?.type === "edit_blocks" || payload?.type === "created_document")
+			return "change";
+		const name = toolName || "";
+		if (["append_block", "edit_blocks", "create_document", "move_document", "rename_document", "delete_document"].includes(name))
+			return "change";
+		return "lookup";
+	}
+
+	private getToolAction(toolName?: string, payload?: ToolUIEventPayload): string {
+		if (payload?.type === "activity")
+			return payload.action;
+		if (payload?.type === "created_document") return "create";
+		if (payload?.type === "append_block") return "append";
+		if (payload?.type === "edit_blocks") return "edit";
+		if (payload?.type === "document_link" || payload?.type === "document_blocks") return "read";
+
+		switch (toolName) {
+			case "list_notebooks":
+			case "list_documents":
+			case "recent_documents":
+				return "list";
+			case "get_document":
+			case "get_document_blocks":
+				return "read";
+			case "search_fulltext":
+			case "search_documents":
+				return "search";
+			case "create_document":
+				return "create";
+			case "append_block":
+				return "append";
+			case "edit_blocks":
+				return "edit";
+			case "move_document":
+				return "move";
+			case "rename_document":
+				return "rename";
+			case "delete_document":
+				return "delete";
+			default:
+				return "other";
+		}
+	}
+
+	private getToolDisplayTitle(toolName: string): string {
+		switch (toolName) {
+			case "list_notebooks": return "列出笔记本";
+			case "list_documents": return "列出文档";
+			case "recent_documents": return "浏览最近文档";
+			case "get_document": return "读取文档";
+			case "get_document_blocks": return "读取文档块";
+			case "search_fulltext": return "全文搜索";
+			case "search_documents": return "搜索文档";
+			case "append_block": return "追加内容";
+			case "edit_blocks": return "编辑块";
+			case "create_document": return "新建文档";
+			case "move_document": return "移动文档";
+			case "rename_document": return "重命名文档";
+			case "delete_document": return "删除文档";
+			default: return toolName;
+		}
+	}
+
+	private getActionLabel(action: string): string {
+		switch (action) {
+			case "list": return "列表";
+			case "read": return "读取";
+			case "search": return "搜索";
+			case "create": return "新建";
+			case "append": return "追加";
+			case "edit": return "编辑";
+			case "move": return "移动";
+			case "rename": return "重命名";
+			case "delete": return "删除";
+			default: return "其他";
+		}
+	}
+
+	private attachToolElementToShell(shell: AssistantMessageShell, toolEl: HTMLElement): void {
+		const category = (toolEl.dataset.toolCategory as "lookup" | "change") || "lookup";
+		const block = this.getTailActivityBlock(shell, category) || this.createActivityBlock(shell, category);
+		this.compactActivityBlock(block, { includeLatestDone: false });
+		block.currentEl.appendChild(toolEl);
+		this.refreshActivityBlock(block);
+	}
+
+	private getTailActivityBlock(shell: AssistantMessageShell, category: "lookup" | "change"): ActivityBlockRefs | null {
+		const last = shell.stackEl.lastElementChild as HTMLElement | null;
+		const block = this.getActivityBlockFromElement(last);
+		return block?.category === category ? block : null;
+	}
+
+	private createActivityBlock(shell: AssistantMessageShell, category: "lookup" | "change"): ActivityBlockRefs {
+		const el = document.createElement("div");
+		el.className = `chat-msg__activity-block chat-msg__activity-block--${category}`;
+		el.dataset.category = category;
+
+		const archiveEl = document.createElement("details");
+		archiveEl.className = "chat-msg__activity-archive fn__none";
+		const archiveSummary = document.createElement("summary");
+		archiveEl.appendChild(archiveSummary);
+		const archiveListEl = document.createElement("div");
+		archiveListEl.className = "chat-msg__activity-list";
+		archiveEl.appendChild(archiveListEl);
+
+		const currentEl = document.createElement("div");
+		currentEl.className = "chat-msg__activity-current";
+
+		el.append(archiveEl, currentEl);
+		shell.stackEl.appendChild(el);
+
+		const refs: ActivityBlockRefs = {
+			el,
+			category,
+			currentEl,
+			archiveEl,
+			archiveListEl,
+		};
+		(el as any).__activityBlock = refs;
+		return refs;
+	}
+
+	private compactCompletedActivityBlocks(shell: AssistantMessageShell, category: "lookup" | "change"): void {
+		const children = Array.from(shell.stackEl.children) as HTMLElement[];
+		for (const child of children) {
+			const block = this.getActivityBlockFromElement(child);
+			if (!block || block.category !== category)
+				continue;
+			this.compactActivityBlock(block, { includeLatestDone: true });
+		}
+	}
+
+	private compactActivityBlock(
+		block: ActivityBlockRefs,
+		options: { includeLatestDone: boolean },
+	): void {
+		const currentTools = Array.from(block.currentEl.querySelectorAll<HTMLElement>(":scope > .chat-msg__tool"));
+		if (currentTools.length === 0) {
+			this.refreshActivityBlock(block);
+			return;
+		}
+
+		const doneTools = currentTools.filter((toolEl) => toolEl.dataset.toolStatus === "done");
+		if (doneTools.length === 0) {
+			this.refreshActivityBlock(block);
+			return;
+		}
+
+		const keepVisible = !options.includeLatestDone && currentTools[currentTools.length - 1]?.dataset.toolStatus === "done"
+			? currentTools[currentTools.length - 1]
+			: null;
+
+		for (const toolEl of doneTools) {
+			if (keepVisible === toolEl)
+				continue;
+			if (!toolEl.classList.contains("chat-msg__tool--archived")) {
+				block.archiveListEl.appendChild(toolEl);
+				toolEl.classList.add("chat-msg__tool--archived");
+			}
+		}
+
+		this.refreshActivityBlock(block);
+	}
+
+	private refreshActivityBlock(block: ActivityBlockRefs): void {
+		const tools = Array.from(block.archiveListEl.querySelectorAll<HTMLElement>(".chat-msg__tool"));
+		const total = tools.length;
+		block.archiveEl.classList.toggle("fn__none", total === 0);
+		block.el.classList.toggle("fn__none", total === 0 && block.currentEl.children.length === 0);
+
+		const summary = block.archiveEl.querySelector("summary");
+		if (!summary) return;
+
+		const counts = new Map<string, number>();
+		for (const toolEl of tools) {
+			const action = toolEl.dataset.toolAction || "other";
+			counts.set(action, (counts.get(action) || 0) + 1);
+		}
+		const chips = [...counts.entries()]
+			.map(([action, count]) => `<span class="chat-msg__activity-chip">${this.escapeHtml(this.getActionLabel(action))} ${count}</span>`)
+			.join("");
+		const title = block.category === "change" ? `已更改 ${total} 项` : `已查找 ${total} 项`;
+		summary.innerHTML = `<span class="chat-msg__activity-title">${this.escapeHtml(title)}</span>${chips}`;
+	}
+
 	private findPendingToolElement(toolCallId: string, pendingToolEls: HTMLElement[]): HTMLElement | null {
 		if (toolCallId) {
 			const matchedIndex = pendingToolEls.findIndex(el => el.dataset.toolCallId === toolCallId);
@@ -985,27 +1259,60 @@ export class ChatPanel {
 		return pendingToolEls.shift() || null;
 	}
 
+	private findToolElementForEvent(
+		shell: AssistantMessageShell,
+		event: ToolUIEvent,
+		pendingToolEls: HTMLElement[],
+	): HTMLElement | null {
+		if (event.toolCallId) {
+			const pendingMatch = pendingToolEls.find(el => el.dataset.toolCallId === event.toolCallId);
+			if (pendingMatch)
+				return pendingMatch;
+			return shell.el.querySelector<HTMLElement>(`.chat-msg__tool[data-tool-call-id="${CSS.escape(event.toolCallId)}"]`);
+		}
+		if (typeof event.toolCallIndex === "number" && event.toolCallIndex >= 0) {
+			return shell.el.querySelector<HTMLElement>(`.chat-msg__tool[data-tool-call-index="${event.toolCallIndex}"]`);
+		}
+		return pendingToolEls[pendingToolEls.length - 1] || null;
+	}
+
+	private toolEventMatchesElement(event: ToolUIEvent, toolEl: HTMLElement): boolean {
+		if (event.toolCallId && toolEl.dataset.toolCallId)
+			return event.toolCallId === toolEl.dataset.toolCallId;
+		return Number(toolEl.dataset.toolCallIndex) === event.toolCallIndex;
+	}
+
 	private applyToolUIEvent(toolEl: HTMLElement, event: ToolUIEvent): void {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
+		const category = this.getToolCategory(event.toolName || toolEl.dataset.toolName, event.payload);
+		toolEl.dataset.toolCategory = category;
+		toolEl.dataset.toolAction = this.getToolAction(event.toolName || toolEl.dataset.toolName, event.payload);
+
+		if (event.payload.type === "activity") {
+			this.renderToolActivitySummary(toolEl, details, event, event.payload);
+			return;
+		}
 
 		if (event.payload.type === "created_document") {
-			const payload = event.payload;
-			const summary = details.querySelector("summary");
-			if (!summary) return;
-			const docTitle = this.escapeHtml(payload.path || payload.id);
-			summary.innerHTML = this.buildToolSummaryHtml(
-				event.toolName || toolEl.dataset.toolName || "tool",
-				`<a class="chat-msg__doc-link chat-msg__doc-link--open" data-id="${this.escapeHtml(payload.id)}" href="javascript:void(0)">${docTitle}</a>`,
-			);
-			summary.querySelector(".chat-msg__doc-link")?.addEventListener("click", () => {
-				openTab({ app: (globalThis as any).siyuanApp, doc: { id: payload.id } });
+			this.renderToolActivitySummary(toolEl, details, event, {
+				type: "activity",
+				category: "change",
+				action: "create",
+				id: event.payload.id,
+				path: event.payload.path,
+				label: event.payload.path,
+				meta: "已创建文档",
+				open: true,
 			});
 			return;
 		}
 
 		if (event.payload.type === "document_link") {
-			this.renderDocumentToolSummary(toolEl, details, event, {
+			this.renderToolActivitySummary(toolEl, details, event, {
+				type: "activity",
+				category: "lookup",
+				action: "read",
 				id: event.payload.id,
 				path: event.payload.path,
 				label: event.payload.label,
@@ -1016,9 +1323,13 @@ export class ChatPanel {
 		}
 
 		if (event.payload.type === "document_blocks") {
-			this.renderDocumentToolSummary(toolEl, details, event, {
+			this.renderToolActivitySummary(toolEl, details, event, {
+				type: "activity",
+				category: "lookup",
+				action: "read",
 				id: event.payload.id,
 				path: event.payload.path,
+				label: event.payload.path,
 				meta: `已读取 ${event.payload.blockCount} 个块`,
 				open: event.payload.open,
 			});
@@ -1026,9 +1337,13 @@ export class ChatPanel {
 		}
 
 		if (event.payload.type === "append_block") {
-			this.renderDocumentToolSummary(toolEl, details, event, {
+			this.renderToolActivitySummary(toolEl, details, event, {
+				type: "activity",
+				category: "change",
+				action: "append",
 				id: event.payload.parentID,
 				path: event.payload.path,
+				label: event.payload.path,
 				meta: `已追加 ${event.payload.blockIDs.length || 0} 个块`,
 				open: event.payload.open,
 			});
@@ -1036,9 +1351,13 @@ export class ChatPanel {
 		}
 
 		if (event.payload.type === "edit_blocks") {
-			this.renderDocumentToolSummary(toolEl, details, event, {
+			this.renderToolActivitySummary(toolEl, details, event, {
+				type: "activity",
+				category: "change",
+				action: "edit",
 				id: event.payload.primaryDocumentID || event.payload.documentIDs[0],
 				path: event.payload.path,
+				label: event.payload.path,
 				meta: `已编辑 ${event.payload.editedCount} 个块`,
 				open: event.payload.open,
 			});
@@ -1063,11 +1382,23 @@ export class ChatPanel {
 		details.appendChild(pre);
 	}
 
-	private renderDocumentToolSummary(
+	private finalizeToolElement(toolEl: HTMLElement): void {
+		if (toolEl.dataset.toolStatus === "done")
+			return;
+		toolEl.dataset.toolStatus = "done";
+		const details = toolEl.querySelector("details");
+		if (details)
+			details.open = false;
+		const block = this.getActivityBlockFromElement(toolEl.parentElement?.closest(".chat-msg__activity-block") as HTMLElement | null);
+		if (block)
+			this.refreshActivityBlock(block);
+	}
+
+	private renderToolActivitySummary(
 		toolEl: HTMLElement,
 		details: HTMLDetailsElement,
 		event: ToolUIEvent,
-		options: { id?: string; path?: string; label?: string; meta?: string; open?: boolean },
+		options: { id?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string },
 	): void {
 		const summary = details.querySelector("summary");
 		if (!summary) return;
@@ -1075,27 +1406,36 @@ export class ChatPanel {
 		const docId = options.id || "";
 		const docTitle = this.escapeHtml(options.label || options.path || docId || "文档");
 		const meta = options.meta ? `<span class="chat-msg__doc-meta">${this.escapeHtml(options.meta)}</span>` : "";
-		const actionClass = options.open ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted";
+		const canOpen = Boolean(docId) && options.open !== false;
+		const contentHtml = docId
+			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${this.escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`
+			: `<span class="chat-msg__doc-label">${docTitle}</span>${meta}`;
 		summary.innerHTML = this.buildToolSummaryHtml(
 			event.toolName || toolEl.dataset.toolName || "tool",
-			`<a class="${actionClass}" data-id="${this.escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`,
+			contentHtml,
+			(options.category || toolEl.dataset.toolCategory as "lookup" | "change")
 		);
 
 		const link = summary.querySelector<HTMLElement>(".chat-msg__doc-link");
-		if (!link) return;
-		if (options.open && docId) {
+		if (link && canOpen && docId) {
 			link.addEventListener("click", () => {
 				openTab({ app: (globalThis as any).siyuanApp, doc: { id: docId } });
 			});
-		} else {
+		} else if (link) {
 			link.addEventListener("click", (e) => {
 				e.preventDefault();
 			});
 		}
+
+		const block = this.getActivityBlockFromElement(toolEl.closest(".chat-msg__activity-block") as HTMLElement | null);
+		if (block)
+			this.refreshActivityBlock(block);
 	}
 
-	private buildToolSummaryHtml(toolName: string, contentHtml = ""): string {
-		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${this.escapeHtml(toolName)}</span>${contentHtml}`;
+	private buildToolSummaryHtml(toolName: string, contentHtml = "", category?: "lookup" | "change"): string {
+		const resolvedCategory = category || this.getToolCategory(toolName);
+		const badge = resolvedCategory === "change" ? "更改" : "查找";
+		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${this.escapeHtml(badge)}</span><span class="chat-msg__tool-title">${this.escapeHtml(this.getToolDisplayTitle(toolName))}</span>${contentHtml}`;
 	}
 
 	private scrollToBottom(): void {

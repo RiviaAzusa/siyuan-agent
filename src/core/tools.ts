@@ -15,6 +15,31 @@ function siyuanFetch(url: string, data: any): Promise<any> {
 	});
 }
 
+function emitToolEvent(runtime: ToolRuntime, payload: Record<string, unknown>): void {
+	runtime.writer?.(JSON.stringify({
+		...payload,
+		toolCallId: runtime.toolCallId,
+	}));
+}
+
+function emitActivity(
+	runtime: ToolRuntime,
+	payload: {
+		category: "lookup" | "change" | "other";
+		action: "list" | "read" | "search" | "create" | "append" | "edit" | "move" | "rename" | "delete" | "other";
+		id?: string;
+		path?: string;
+		label?: string;
+		meta?: string;
+		open?: boolean;
+	},
+): void {
+	emitToolEvent(runtime, {
+		__tool_type: "activity",
+		...payload,
+	});
+}
+
 /* --- fake tool for testing --- */
 
 const getWeatherTool = tool(
@@ -35,7 +60,7 @@ const getWeatherTool = tool(
 /* --- SiYuan notebook/document tools --- */
 
 const listNotebooksTool = tool(
-	async () => {
+	async (_, runtime: ToolRuntime) => {
 		const data = await siyuanFetch("/api/notebook/lsNotebooks", {});
 		const notebooks = (data.notebooks || []).map((nb: any) => ({
 			id: nb.id,
@@ -43,6 +68,12 @@ const listNotebooksTool = tool(
 			icon: nb.icon,
 			closed: nb.closed,
 		}));
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "list",
+			label: "笔记本",
+			meta: `已列出 ${notebooks.length} 个笔记本`,
+		});
 		return JSON.stringify(notebooks, null, 2);
 	},
 	{
@@ -53,7 +84,7 @@ const listNotebooksTool = tool(
 );
 
 const listDocumentsTool = tool(
-	async ({ notebook, path, depth, page, page_size, child_limit, include_summary }) => {
+	async ({ notebook, path, depth, page, page_size, child_limit, include_summary }, runtime: ToolRuntime) => {
 		const result = await listDocumentsViaApi({
 			notebook,
 			path,
@@ -63,6 +94,13 @@ const listDocumentsTool = tool(
 			child_limit,
 			include_summary,
 		}, siyuanFetch);
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "list",
+			path: result.path,
+			label: result.path,
+			meta: `已列出 ${result.items.length} 项`,
+		});
 		return JSON.stringify(result, null, 2);
 	},
 	{
@@ -81,10 +119,16 @@ const listDocumentsTool = tool(
 );
 
 const recentDocumentsTool = tool(
-	async ({ limit }) => {
+	async ({ limit }, runtime: ToolRuntime) => {
 		const result = await recentDocumentsViaApi({
 			limit,
 		}, siyuanFetch);
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "list",
+			label: "最近文档",
+			meta: `已浏览 ${result.items.length} 篇最近文档`,
+		});
 		return JSON.stringify(result, null, 2);
 	},
 	{
@@ -97,7 +141,7 @@ const recentDocumentsTool = tool(
 );
 
 const getDocumentTool = tool(
-	async ({ id }, config: ToolRuntime) => {
+	async ({ id }, runtime: ToolRuntime) => {
 		const docInfo = await siyuanFetch("/api/query/sql", {
 			stmt: `SELECT id, content, hpath FROM blocks WHERE id='${id}' LIMIT 1`,
 		});
@@ -105,15 +149,15 @@ const getDocumentTool = tool(
 		const hpath = data.hPath || "";
 		const content = data.content || "";
 		const label = docInfo?.[0]?.content || hpath || id;
-		if (config.writer) {
-			config.writer(JSON.stringify({
-				__tool_type: "document_link",
-				id,
-				path: hpath,
-				label,
-				open: false,
-			}));
-		}
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "read",
+			id,
+			path: hpath,
+			label,
+			meta: "已读取文档",
+			open: true,
+		});
 		return `# ${hpath}\n\n${content}`;
 	},
 	{
@@ -126,7 +170,7 @@ const getDocumentTool = tool(
 );
 
 const searchFulltextTool = tool(
-	async ({ query, page }) => {
+	async ({ query, page }, runtime: ToolRuntime) => {
 		const data = await siyuanFetch("/api/search/fullTextSearchBlock", {
 			query,
 			page: page || 1,
@@ -143,6 +187,12 @@ const searchFulltextTool = tool(
 			hpath: b.hPath,
 			type: b.type,
 		}));
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "search",
+			label: query,
+			meta: `命中 ${data.matchedBlockCount || blocks.length || 0} 个块`,
+		});
 		return JSON.stringify({
 			blocks,
 			matchedBlockCount: data.matchedBlockCount,
@@ -161,7 +211,7 @@ const searchFulltextTool = tool(
 );
 
 const getDocumentBlocksTool = tool(
-	async ({ id }, config: ToolRuntime) => {
+	async ({ id }, runtime: ToolRuntime) => {
 		const docInfo = await siyuanFetch("/api/query/sql", {
 			stmt: `SELECT id, hpath FROM blocks WHERE id='${id}' LIMIT 1`,
 		});
@@ -172,15 +222,15 @@ const getDocumentBlocksTool = tool(
 			subType: b.subType || undefined,
 			markdown: b.markdown || b.content || "",
 		}));
-		if (config.writer) {
-			config.writer(JSON.stringify({
-				__tool_type: "document_blocks",
-				id,
-				path: docInfo?.[0]?.hpath || "",
-				blockCount: blocks.length,
-				open: false,
-			}));
-		}
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "read",
+			id,
+			path: docInfo?.[0]?.hpath || "",
+			label: docInfo?.[0]?.hpath || id,
+			meta: `已读取 ${blocks.length} 个块`,
+			open: true,
+		});
 		return JSON.stringify(blocks, null, 2);
 	},
 	{
@@ -193,7 +243,7 @@ const getDocumentBlocksTool = tool(
 );
 
 const editBlocksTool = tool(
-	async ({ blocks }, config: ToolRuntime) => {
+	async ({ blocks }, runtime: ToolRuntime) => {
 		const ids = blocks.map((b: { id: string }) => b.id);
 		const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
 		const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids });
@@ -254,7 +304,7 @@ const editBlocksTool = tool(
 			}
 		}
 
-		if (config.writer) {
+		if (runtime.writer) {
 			const rootIDs = [...new Set(
 				ids
 					.map((id) => treeInfos[id]?.rootID)
@@ -267,14 +317,15 @@ const editBlocksTool = tool(
 				});
 				path = rootDoc?.[0]?.hpath || "";
 			}
-			config.writer(JSON.stringify({
-				__tool_type: "edit_blocks",
-				documentIDs: rootIDs,
-				primaryDocumentID: rootIDs[0],
+			emitActivity(runtime, {
+				category: "change",
+				action: "edit",
+				id: rootIDs[0],
 				path,
-				editedCount: results.filter((item) => item.status === "ok").length,
+				label: path || rootIDs[0],
+				meta: `已编辑 ${results.filter((item) => item.status === "ok").length} 个块`,
 				open: true,
-			}));
+			});
 		}
 
 		return JSON.stringify({ __tool_type: "edit_blocks", results });
@@ -292,27 +343,27 @@ const editBlocksTool = tool(
 );
 
 const appendBlockTool = tool(
-	async ({ parentID, markdown }, config: ToolRuntime) => {
+	async ({ parentID, markdown }, runtime: ToolRuntime) => {
 		const data = await siyuanFetch("/api/block/appendBlock", {
 			data: markdown,
 			dataType: "markdown",
 			parentID,
 		});
-		if (config.writer) {
-			const docInfo = await siyuanFetch("/api/query/sql", {
-				stmt: `SELECT id, hpath FROM blocks WHERE id='${parentID}' LIMIT 1`,
-			});
-			const blockIDs = Array.isArray(data)
-				? data.map((item: any) => item?.doOperations?.[0]?.id).filter(Boolean)
-				: [];
-			config.writer(JSON.stringify({
-				__tool_type: "append_block",
-				parentID,
-				path: docInfo?.[0]?.hpath || "",
-				blockIDs,
-				open: true,
-			}));
-		}
+		const docInfo = await siyuanFetch("/api/query/sql", {
+			stmt: `SELECT id, hpath FROM blocks WHERE id='${parentID}' LIMIT 1`,
+		});
+		const blockIDs = Array.isArray(data)
+			? data.map((item: any) => item?.doOperations?.[0]?.id).filter(Boolean)
+			: [];
+		emitActivity(runtime, {
+			category: "change",
+			action: "append",
+			id: parentID,
+			path: docInfo?.[0]?.hpath || "",
+			label: docInfo?.[0]?.hpath || parentID,
+			meta: `已追加 ${blockIDs.length || 0} 个块`,
+			open: true,
+		});
 		return JSON.stringify(data, null, 2);
 	},
 	{
@@ -328,7 +379,7 @@ const appendBlockTool = tool(
 /* --- Document management tools --- */
 
 const createDocumentTool = tool(
-	async ({ notebook, path, markdown }, config: ToolRuntime) => {
+	async ({ notebook, path, markdown }, runtime: ToolRuntime) => {
 		const id = await siyuanFetch("/api/filetree/createDocWithMd", {
 			notebook,
 			path,
@@ -336,10 +387,15 @@ const createDocumentTool = tool(
 		});
 		// Auto-open the created document
 		openTab({ app: (globalThis as any).siyuanApp, doc: { id } });
-		// Send structured progress event for rich UI rendering
-		if (config.writer) {
-			config.writer(JSON.stringify({ __tool_type: "created_document", id, path }));
-		}
+		emitActivity(runtime, {
+			category: "change",
+			action: "create",
+			id,
+			path,
+			label: path,
+			meta: "已创建文档",
+			open: true,
+		});
 		return JSON.stringify({ id, notebook, path });
 	},
 	{
@@ -354,8 +410,15 @@ const createDocumentTool = tool(
 );
 
 const moveDocumentTool = tool(
-	async ({ fromIDs, toID }) => {
+	async ({ fromIDs, toID }, runtime: ToolRuntime) => {
 		await siyuanFetch("/api/filetree/moveDocsByID", { fromIDs, toID });
+		emitActivity(runtime, {
+			category: "change",
+			action: "move",
+			id: fromIDs[0],
+			label: fromIDs.length > 1 ? `${fromIDs[0]} 等 ${fromIDs.length} 个文档` : fromIDs[0],
+			meta: `已移动到 ${toID}`,
+		});
 		return JSON.stringify({ ok: true, fromIDs, toID });
 	},
 	{
@@ -369,8 +432,16 @@ const moveDocumentTool = tool(
 );
 
 const renameDocumentTool = tool(
-	async ({ id, title }) => {
+	async ({ id, title }, runtime: ToolRuntime) => {
 		await siyuanFetch("/api/filetree/renameDocByID", { id, title });
+		emitActivity(runtime, {
+			category: "change",
+			action: "rename",
+			id,
+			label: title,
+			meta: "已重命名文档",
+			open: true,
+		});
 		return JSON.stringify({ ok: true, id, title });
 	},
 	{
@@ -399,7 +470,7 @@ export const deleteDocumentTool = tool(
 );
 
 const searchDocumentsTool = tool(
-	async ({ keyword, notebook }) => {
+	async ({ keyword, notebook }, runtime: ToolRuntime) => {
 		const stmt = notebook
 			? `SELECT id, content, hpath, box, updated FROM blocks WHERE type='d' AND box='${notebook}' AND content LIKE '%${keyword}%' ORDER BY updated DESC LIMIT 50`
 			: `SELECT id, content, hpath, box, updated FROM blocks WHERE type='d' AND content LIKE '%${keyword}%' ORDER BY updated DESC LIMIT 50`;
@@ -411,6 +482,12 @@ const searchDocumentsTool = tool(
 			notebook: d.box,
 			updated: d.updated,
 		}));
+		emitActivity(runtime, {
+			category: "lookup",
+			action: "search",
+			label: keyword,
+			meta: `命中 ${docs.length} 篇文档`,
+		});
 		return JSON.stringify(docs, null, 2);
 	},
 	{
