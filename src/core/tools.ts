@@ -2,6 +2,7 @@ import { tool, StructuredToolInterface, ToolRuntime } from "@langchain/core/tool
 import { z } from "zod";
 import { fetchPost, openTab } from "siyuan";
 import { listDocumentsViaApi } from "./list-documents";
+import { recentDocumentsViaApi } from "./recent-documents";
 
 function siyuanFetch(url: string, data: any): Promise<any> {
 	return new Promise((resolve, reject) => {
@@ -75,6 +76,22 @@ const listDocumentsTool = tool(
 			page_size: z.number().int().min(1).max(50).optional().describe("Number of items per page at the current level. Defaults to 20, max 50."),
 			child_limit: z.number().int().min(0).max(20).optional().describe("Maximum number of direct child documents to include for each expanded node. Defaults to 5, max 20."),
 			include_summary: z.boolean().optional().describe("Whether to include a lightweight summary for each returned document. Defaults to true."),
+		}),
+	}
+);
+
+const recentDocumentsTool = tool(
+	async ({ limit }) => {
+		const result = await recentDocumentsViaApi({
+			limit,
+		}, siyuanFetch);
+		return JSON.stringify(result, null, 2);
+	},
+	{
+		name: "recent_documents",
+		description: "List the most recently modified documents with brief summaries.",
+		schema: z.object({
+			limit: z.number().int().min(1).max(20).optional().describe("Number of documents to return. Defaults to 10."),
 		}),
 	}
 );
@@ -410,6 +427,7 @@ const defaultTools: StructuredToolInterface[] = [
 	getWeatherTool,
 	listNotebooksTool,
 	listDocumentsTool,
+	recentDocumentsTool,
 	getDocumentTool,
 	getDocumentBlocksTool,
 	searchFulltextTool,

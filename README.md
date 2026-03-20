@@ -150,6 +150,7 @@ deepseek-chat
 
 - `list_notebooks`：列出全部笔记本
 - `list_documents`：以树形结构列出某个笔记本中的文档，支持分页、有限层级展开和简要摘要
+- `recent_documents`：列出最近修改的文档，默认返回 10 篇并附带简要摘要
 - `search_documents`：按标题搜索文档
 - `search_fulltext`：全文搜索块内容
 - `get_document`：读取整篇文档 Markdown

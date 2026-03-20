@@ -351,7 +351,7 @@ async function fetchDocumentHPath(
 	return joinHPath(fallbackParentHPath, title);
 }
 
-async function fetchDocumentSummary(
+export async function fetchDocumentSummaryById(
 	id: string,
 	fetcher: SiyuanApiFetcher,
 ): Promise<string | undefined> {
@@ -387,7 +387,7 @@ async function buildDocumentNode(
 
 	const [hpath, summary] = await Promise.all([
 		fetchDocumentHPath(file.id, options.fetcher, options.parentHPath, title),
-		options.includeSummary ? fetchDocumentSummary(file.id, options.fetcher) : Promise.resolve(undefined),
+		options.includeSummary ? fetchDocumentSummaryById(file.id, options.fetcher) : Promise.resolve(undefined),
 	]);
 
 	let children: ListDocumentsItem[] | undefined;
