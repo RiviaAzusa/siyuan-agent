@@ -1,6 +1,7 @@
 import { tool, StructuredToolInterface, ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
 import { fetchPost, openTab } from "siyuan";
+import { listDocumentsViaApi } from "./list-documents";
 
 function siyuanFetch(url: string, data: any): Promise<any> {
 	return new Promise((resolve, reject) => {
@@ -51,25 +52,29 @@ const listNotebooksTool = tool(
 );
 
 const listDocumentsTool = tool(
-	async ({ notebook, path }) => {
-		const stmt = path
-			? `SELECT * FROM blocks WHERE type='d' AND box='${notebook}' AND hpath LIKE '${path}%' ORDER BY updated DESC LIMIT 50`
-			: `SELECT * FROM blocks WHERE type='d' AND box='${notebook}' ORDER BY updated DESC LIMIT 50`;
-		const data = await siyuanFetch("/api/query/sql", { stmt });
-		const docs = (data || []).map((d: any) => ({
-			id: d.id,
-			title: d.content,
-			hpath: d.hpath,
-			updated: d.updated,
-		}));
-		return JSON.stringify(docs, null, 2);
+	async ({ notebook, path, depth, page, page_size, child_limit, include_summary }) => {
+		const result = await listDocumentsViaApi({
+			notebook,
+			path,
+			depth,
+			page,
+			page_size,
+			child_limit,
+			include_summary,
+		}, siyuanFetch);
+		return JSON.stringify(result, null, 2);
 	},
 	{
 		name: "list_documents",
-		description: "List documents in a specific notebook. Returns document id, title, human-readable path (hpath), and last updated time. You must provide a notebook ID. Optionally filter by path prefix to narrow down results.",
+		description: "List documents in a specific notebook as a paginated tree. The path parameter uses the human-readable hpath, while the tool resolves SiYuan filetree paths internally. Returns pagination metadata plus items with id, title, hpath, updated, hasChildren, childCount, optional children, and optional summary.",
 		schema: z.object({
 			notebook: z.string().describe("The Notebook ID (box ID) to search in. You must get this from list_notebooks first."),
-			path: z.string().optional().describe("Optional path prefix to filter documents, e.g. '/Daily Notes'. defaults to root '/'"),
+			path: z.string().optional().describe("Optional human-readable path (hpath) to list under, e.g. '/Daily Notes'. Defaults to root '/'."),
+			depth: z.number().int().min(0).max(5).optional().describe("Tree expansion depth. 0 returns only the current level, 1 includes one level of children. Defaults to 0."),
+			page: z.number().int().min(1).optional().describe("Page number for the current level. Defaults to 1."),
+			page_size: z.number().int().min(1).max(50).optional().describe("Number of items per page at the current level. Defaults to 20, max 50."),
+			child_limit: z.number().int().min(0).max(20).optional().describe("Maximum number of direct child documents to include for each expanded node. Defaults to 5, max 20."),
+			include_summary: z.boolean().optional().describe("Whether to include a lightweight summary for each returned document. Defaults to true."),
 		}),
 	}
 );

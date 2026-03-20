@@ -54,7 +54,8 @@ editorCallback: (protyle) => {
 
 - 流式输出使用 `AIMessageChunk.concat()` 聚合, 避免 incomplete JSON args
 - LangSmith tracing 可选, Settings 中配置 enabled/key/endpoint/project
-- 使用 `/api/query/sql` 做灵活查询
+- 文档树查询优先使用 SiYuan 原生 `filetree` API，避免直接 SQL 枚举文档
+- 仍保留 `/api/query/sql` 做部分灵活查询
 - 编辑工具采用 "自动应用 + diff 展示 + Undo" 方案, 不打断 agent 循环
 - `edit_blocks` 返回 `{ __tool_type: "edit_blocks", results }`, chat-panel 的 `onToolEnd` 检测此标记渲染 git-diff 风格视图
 - diff 比较前 `stripIAL()` 过滤 kramdown `{: ...}` 标记, undo 恢复原始 kramdown
@@ -75,7 +76,7 @@ editorCallback: (protyle) => {
 | Tool | API | 用途 |
 |------|-----|------|
 | list_notebooks | `/api/notebook/lsNotebooks` | 列出笔记本 |
-| list_documents | `/api/query/sql` | 获取文档列表 |
+| list_documents | `/api/filetree/getIDsByHPath` + `/api/filetree/getPathByID` + `/api/filetree/listDocsByPath` | 获取树形文档列表 |
 | get_document | `/api/export/exportMdContent` | 读取文档内容 (纯 Markdown) |
 | get_document_blocks | `/api/block/getChildBlocks` | 获取文档子块 (带 block ID, 用于编辑) |
 | search_fulltext | `/api/search/fullTextSearchBlock` | 全文搜索 |
