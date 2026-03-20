@@ -247,6 +247,7 @@ export class ChatPanel {
 	private tools: StructuredToolInterface[];
 	private panelEl: HTMLElement;
 
+	private sessionToggleEl: HTMLButtonElement;
 	private sessionListEl: HTMLElement;
 	private messagesEl: HTMLElement;
 	private textareaEl: HTMLTextAreaElement;
@@ -258,6 +259,7 @@ export class ChatPanel {
 	private pendingContext: string | null = null;
 	private abortCtrl: AbortController | null = null;
 	private autoScroll = true;
+	private sessionListExpanded = false;
 
 	/* Autocomplete */
 	private completionEl: HTMLElement | null = null;
@@ -277,16 +279,19 @@ export class ChatPanel {
 		this.container.innerHTML = `
 <div class="chat-panel fn__flex-column" style="height:100%">
 	<div class="chat-panel__session-bar">
-		<button class="chat-panel__session-toggle b3-button b3-button--text">
-			<svg style="width:14px;height:14px;margin-right:4px"><use xlink:href="#iconHistory"></use></svg>
-			<span class="chat-panel__session-name">New Chat</span>
-			<svg style="width:10px;height:10px;margin-left:4px"><use xlink:href="#iconDown"></use></svg>
+		<button class="chat-panel__session-toggle b3-button b3-button--text" type="button" aria-expanded="false">
+			<span class="chat-panel__session-toggle-main">
+				<span class="chat-panel__session-name">New Chat</span>
+			</span>
+			<span class="chat-panel__session-toggle-side">
+				<svg class="chat-panel__session-toggle-chevron" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
+			</span>
 		</button>
 		<span class="fn__flex-1"></span>
-		<span class="chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="New Chat">
+		<span class="chat-panel__session-action chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="New Chat">
 			<svg style="width:16px;height:16px"><use xlink:href="#iconAdd"></use></svg>
 		</span>
-		<span class="chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="Clear">
+		<span class="chat-panel__session-action chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="Clear">
 			<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
 		</span>
 	</div>
@@ -305,6 +310,7 @@ export class ChatPanel {
 </div>`;
 
 		this.panelEl = this.container.querySelector(".chat-panel");
+		this.sessionToggleEl = this.container.querySelector(".chat-panel__session-toggle");
 		this.sessionListEl = this.container.querySelector(".chat-panel__session-list");
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
@@ -345,7 +351,7 @@ export class ChatPanel {
 		});
 
 		/* Toggle session list */
-		this.container.querySelector(".chat-panel__session-toggle").addEventListener("click", () => {
+		this.sessionToggleEl.addEventListener("click", () => {
 			this.toggleSessionList();
 		});
 
@@ -376,33 +382,90 @@ export class ChatPanel {
 	/* --- Session management --- */
 
 	private toggleSessionList(): void {
-		const hidden = this.sessionListEl.classList.toggle("fn__none");
-		if (!hidden)
+		if (this.isSessionListOpen()) {
+			this.sessionListExpanded = false;
+			this.sessionListEl.classList.add("fn__none");
+			this.updateSessionToggleState();
+			return;
+		}
+		this.renderSessionList();
+		this.sessionListEl.classList.remove("fn__none");
+		this.updateSessionToggleState();
+	}
+
+	private isSessionListOpen(): boolean {
+		return !this.sessionListEl.classList.contains("fn__none");
+	}
+
+	private updateSessionToggleState(): void {
+		const open = this.isSessionListOpen();
+		this.sessionToggleEl.classList.toggle("chat-panel__session-toggle--open", open);
+		this.sessionToggleEl.setAttribute("aria-expanded", String(open));
+	}
+
+	private toggleSessionListExpanded(): void {
+		this.sessionListExpanded = !this.sessionListExpanded;
+		this.renderSessionList();
+	}
+
+	private refreshSessionListUi(): void {
+		this.updateSessionToggleState();
+		if (this.isSessionListOpen())
 			this.renderSessionList();
+	}
+
+	private formatSessionDate(timestamp: number): string {
+		const date = new Date(timestamp);
+		const now = new Date();
+		if (date.getFullYear() === now.getFullYear()) {
+			return date.toLocaleDateString(undefined, {
+				month: "numeric",
+				day: "numeric",
+			});
+		}
+		return date.toLocaleDateString();
 	}
 
 	private renderSessionList(): void {
 		const sessions = this.sessionIndex.sessions;
 		if (!sessions.length) {
-			this.sessionListEl.innerHTML = `<div class="chat-session-list__empty">No conversations</div>`;
+			this.sessionListEl.innerHTML = `<div class="chat-session-list__empty">暂无会话</div>`;
+			this.sessionListEl.classList.remove("chat-panel__session-list--expanded");
 			return;
 		}
 
+		const previewCount = 3;
 		const sorted = [...sessions].sort((a, b) => b.updated - a.updated);
-		this.sessionListEl.innerHTML = sorted.map(s => {
+		const canExpand = sorted.length > previewCount;
+		if (!canExpand)
+			this.sessionListExpanded = false;
+		const visible = this.sessionListExpanded ? sorted : sorted.slice(0, previewCount);
+		const hiddenCount = Math.max(0, sorted.length - previewCount);
+		this.sessionListEl.classList.toggle("chat-panel__session-list--expanded", this.sessionListExpanded);
+		this.sessionListEl.innerHTML = `
+			<div class="chat-session-list__items">${visible.map(s => {
 			const active = s.id === this.sessionIndex.activeId ? " chat-session-item--active" : "";
-			const title = this.escapeHtml(s.title);
-			const date = new Date(s.updated).toLocaleDateString();
+			const title = this.escapeHtml(s.title || "New Chat");
+			const date = this.escapeHtml(this.formatSessionDate(s.updated));
 			return `<div class="chat-session-item${active}" data-id="${s.id}">
 				<div class="chat-session-item__info">
-					<span class="chat-session-item__title">${title}</span>
-					<span class="chat-session-item__meta">${date}</span>
+					<div class="chat-session-item__line">
+						<span class="chat-session-item__title">${title}</span>
+						<span class="chat-session-item__meta">${date}</span>
+					</div>
 				</div>
 				<span class="chat-session-item__delete block__icon b3-tooltips b3-tooltips__sw" aria-label="Delete" data-delete="${s.id}">
 					<svg><use xlink:href="#iconTrashcan"></use></svg>
 				</span>
 			</div>`;
-		}).join("");
+		}).join("")}</div>
+			${canExpand ? `
+				<button class="chat-session-list__more b3-button b3-button--text" type="button" data-action="toggle-expand">
+					<span>${this.sessionListExpanded ? "收起" : `展开更多 ${hiddenCount} 条`}</span>
+					<svg class="chat-session-list__more-icon" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
+				</button>
+			` : ""}
+		`;
 
 		/* Click to switch */
 		this.sessionListEl.querySelectorAll(".chat-session-item").forEach(el => {
@@ -425,6 +488,14 @@ export class ChatPanel {
 					this.deleteSession(id);
 			});
 		});
+
+		const moreBtn = this.sessionListEl.querySelector<HTMLElement>("[data-action='toggle-expand']");
+		if (moreBtn) {
+			moreBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.toggleSessionListExpanded();
+			});
+		}
 	}
 
 	private newSession(): void {
@@ -442,6 +513,7 @@ export class ChatPanel {
 		this.renderCurrentSession();
 		this.saveIndex();
 		this.saveSession(s);
+		this.refreshSessionListUi();
 		this.textareaEl.focus();
 	}
 
@@ -451,7 +523,9 @@ export class ChatPanel {
 		this.activeSession = await this.loadSession(id);
 		this.renderCurrentSession();
 		this.saveIndex();
+		this.sessionListExpanded = false;
 		this.sessionListEl.classList.add("fn__none");
+		this.updateSessionToggleState();
 	}
 
 	private deleteSession(id: string): void {
@@ -482,8 +556,7 @@ export class ChatPanel {
 		this.saveIndex();
 		// TODO: could also delete the session file from storage
 
-		if (!this.sessionListEl.classList.contains("fn__none"))
-			this.renderSessionList();
+		this.refreshSessionListUi();
 	}
 
 	private renderCurrentSession(): void {
@@ -492,6 +565,7 @@ export class ChatPanel {
 		const nameEl = this.container.querySelector(".chat-panel__session-name");
 		if (nameEl)
 			nameEl.textContent = entry?.title || "New Chat";
+		this.updateSessionToggleState();
 
 	/* Re-render messages from state */
 		this.messagesEl.innerHTML = "";
@@ -649,6 +723,7 @@ export class ChatPanel {
 			if (nameEl) nameEl.textContent = indexEntry?.title || "New Chat";
 			this.saveIndex();
 			this.saveSession(s);
+			this.refreshSessionListUi();
 		} catch (err) {
 			if (!this.abortCtrl?.signal.aborted) {
 				const el = getTextEl();
@@ -1114,6 +1189,7 @@ export class ChatPanel {
 		}
 
 		this.renderCurrentSession();
+		this.updateSessionToggleState();
 	}
 
 	private saveIndex(): void {
