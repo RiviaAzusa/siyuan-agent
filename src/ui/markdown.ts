@@ -1,6 +1,6 @@
 /*
  * Lightweight Markdown → HTML renderer.
- * Handles: code blocks, inline code, bold, italic, links, headings, lists, blockquotes, hr.
+ * Handles: code blocks, inline code, bold, italic, links, headings, lists, blockquotes, hr, tables.
  * No external dependencies. Good enough for chat messages.
  */
 
@@ -56,6 +56,26 @@ export function renderMarkdown(src: string): string {
 			closeBlockquote();
 			const level = headingMatch[1].length;
 			out.push(`<h${level}>${inlineFormat(headingMatch[2])}</h${level}>`);
+			continue;
+		}
+
+		/* GFM table */
+		if (i + 1 < lines.length && isTableRow(line) && isTableSeparator(lines[i + 1])) {
+			closeList();
+			closeBlockquote();
+
+			const headers = splitTableRow(line);
+			const alignments = parseTableAlignments(lines[i + 1]);
+			const rows: string[][] = [];
+			let j = i + 2;
+
+			while (j < lines.length && isTableRow(lines[j]) && !isTableSeparator(lines[j])) {
+				rows.push(splitTableRow(lines[j]));
+				j += 1;
+			}
+
+			out.push(renderTable(headers, alignments, rows));
+			i = j - 1;
 			continue;
 		}
 
@@ -164,4 +184,77 @@ function inlineFormat(text: string): string {
 	text = text.replace(/\x01IC(\d+)\x01/g, (_, idx) => codes[parseInt(idx, 10)]);
 
 	return text;
+}
+
+function isTableRow(line: string): boolean {
+	const trimmed = line.trim();
+	return trimmed.includes("|") && !/^\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?$/.test(trimmed);
+}
+
+function isTableSeparator(line: string): boolean {
+	const cells = splitTableRow(line);
+	return cells.length > 0 && cells.every((cell) => /^:?-{1,}:?$/.test(cell.trim()));
+}
+
+function splitTableRow(line: string): string[] {
+	const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+	const cells: string[] = [];
+	let current = "";
+	let escaped = false;
+
+	for (const char of trimmed) {
+		if (escaped) {
+			current += char;
+			escaped = false;
+			continue;
+		}
+
+		if ("\\" === char) {
+			escaped = true;
+			current += char;
+			continue;
+		}
+
+		if ("|" === char) {
+			cells.push(current.trim());
+			current = "";
+			continue;
+		}
+
+		current += char;
+	}
+
+	cells.push(current.trim());
+	return cells;
+}
+
+function parseTableAlignments(line: string): Array<"left" | "center" | "right" | null> {
+	return splitTableRow(line).map((cell) => {
+		const trimmed = cell.trim();
+		const startsWithColon = trimmed.startsWith(":");
+		const endsWithColon = trimmed.endsWith(":");
+		if (startsWithColon && endsWithColon) return "center";
+		if (endsWithColon) return "right";
+		if (startsWithColon) return "left";
+		return null;
+	});
+}
+
+function renderTable(
+	headers: string[],
+	alignments: Array<"left" | "center" | "right" | null>,
+	rows: string[][],
+): string {
+	const renderCell = (tag: "th" | "td", value: string, index: number): string => {
+		const alignment = alignments[index];
+		const style = alignment ? ` style="text-align:${alignment}"` : "";
+		return `<${tag}${style}>${inlineFormat(value)}</${tag}>`;
+	};
+
+	const thead = `<thead><tr>${headers.map((cell, index) => renderCell("th", cell, index)).join("")}</tr></thead>`;
+	const tbody = rows.length
+		? `<tbody>${rows.map((row) => `<tr>${headers.map((_, index) => renderCell("td", row[index] ?? "", index)).join("")}</tr>`).join("")}</tbody>`
+		: "";
+
+	return `<div class="chat-md-table-wrap"><table>${thead}${tbody}</table></div>`;
 }

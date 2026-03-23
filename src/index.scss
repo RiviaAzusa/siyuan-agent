@@ -172,6 +172,37 @@
 		padding-left: 20px;
 	}
 
+	.chat-md-table-wrap {
+		overflow-x: auto;
+		margin: 8px 0;
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		min-width: 320px;
+		font-size: 13px;
+		background: color-mix(in srgb, var(--agent-surface, var(--b3-theme-surface)) 92%, transparent);
+		border: 1px solid var(--agent-border, var(--b3-border-color));
+		border-radius: 10px;
+		overflow: hidden;
+	}
+
+	th, td {
+		padding: 7px 10px;
+		border: 1px solid var(--agent-border, var(--b3-border-color));
+		vertical-align: top;
+	}
+
+	th {
+		font-weight: 600;
+		background: color-mix(in srgb, var(--agent-accent-soft, var(--b3-theme-primary-lightest)) 55%, var(--agent-surface, var(--b3-theme-surface)) 45%);
+	}
+
+	tr:nth-child(even) td {
+		background: color-mix(in srgb, var(--agent-surface-code, var(--b3-theme-surface)) 48%, transparent);
+	}
+
 	hr {
 		border: none;
 		border-top: 1px solid var(--agent-border, var(--b3-border-color));
