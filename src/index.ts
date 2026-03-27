@@ -31,7 +31,7 @@ export default class SiYuanAgent extends Plugin {
 		// Expose app instance for tools that need it (e.g., openTab)
 		(globalThis as any).siyuanApp = this.app;
 
-		const tools = getDefaultTools();
+		const tools = getDefaultTools(() => this.getConfig());
 
 		this.addIcons(`<symbol id="iconAgent" viewBox="0 0 24 24">
 <rect width="24" height="24" rx="4" fill="#F2E6D8"/>

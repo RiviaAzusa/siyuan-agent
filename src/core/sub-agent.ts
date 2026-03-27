@@ -1,0 +1,110 @@
+import { HumanMessage } from "@langchain/core/messages";
+import { tool, type StructuredToolInterface, type ToolRuntime } from "@langchain/core/tools";
+import type { ZodTypeAny } from "zod";
+import { makeAgent } from "./agent";
+import type { AgentConfig } from "../types";
+
+type AgentLike = {
+	invoke: (input: { messages: HumanMessage[] }, options?: Record<string, unknown>) => Promise<any>;
+};
+
+type ToolsetResolver = StructuredToolInterface[] | (() => StructuredToolInterface[]);
+
+type CreateAgentFn = (
+	config: AgentConfig,
+	tools: StructuredToolInterface[],
+	extraSystemPrompt?: string | null,
+) => Promise<AgentLike>;
+
+export interface SubAgentToolOptions<TSchema extends ZodTypeAny = ZodTypeAny> {
+	name: string;
+	description: string;
+	schema: TSchema;
+	toolset: ToolsetResolver;
+	systemPrompt: string;
+	getAgentConfig: () => AgentConfig | Promise<AgentConfig>;
+	extractResult?: (result: any) => string;
+	recursionLimit?: number;
+	createAgent?: CreateAgentFn;
+}
+
+function resolveToolset(toolset: ToolsetResolver): StructuredToolInterface[] {
+	return typeof toolset === "function" ? toolset() : toolset;
+}
+
+function getMessageType(message: any): string {
+	if (typeof message?._getType === "function") return message._getType();
+	if (message?.lc === 1 && Array.isArray(message.id)) {
+		const className = message.id[message.id.length - 1] as string;
+		if (className === "AIMessage" || className === "AIMessageChunk") return "ai";
+		if (className === "HumanMessage") return "human";
+		if (className === "ToolMessage") return "tool";
+	}
+	return String(message?.type ?? message?.role ?? "");
+}
+
+function getMessageContent(message: any): string | null {
+	const content = message?.kwargs?.content ?? message?.content;
+	return typeof content === "string" ? content : null;
+}
+
+function inputToPrompt(input: unknown): string {
+	if (input && typeof input === "object" && "query" in input) {
+		const query = (input as { query?: unknown }).query;
+		if (typeof query === "string") return query;
+	}
+	if (typeof input === "string") return input;
+	return JSON.stringify(input, null, 2);
+}
+
+export function extractLastAiMessageContent(result: any): string {
+	const messages = Array.isArray(result?.messages) ? result.messages : [];
+	for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+		if (getMessageType(messages[idx]) !== "ai") continue;
+		const content = getMessageContent(messages[idx]);
+		if (content !== null) return content;
+	}
+	return "Explore 子智能体未返回最终文本结果。";
+}
+
+export async function invokeSubAgent<TSchema extends ZodTypeAny>(
+	options: SubAgentToolOptions<TSchema>,
+	input: unknown,
+	runtime: ToolRuntime,
+): Promise<string> {
+	const extractResult = options.extractResult ?? extractLastAiMessageContent;
+	const createChildAgent = options.createAgent ?? makeAgent;
+	const recursionLimit = options.recursionLimit ?? 12;
+	const config = await options.getAgentConfig();
+	const childTools = resolveToolset(options.toolset)
+		.filter((toolDef) => toolDef.name !== options.name);
+	const childAgent = await createChildAgent(config, childTools, options.systemPrompt);
+	const prompt = inputToPrompt(input);
+	const invokeOptions: Record<string, unknown> = {
+		recursionLimit,
+		signal: runtime.signal,
+	};
+	if (runtime.context !== undefined) {
+		invokeOptions.context = runtime.context;
+	}
+	if (runtime.config?.callbacks) {
+		invokeOptions.callbacks = runtime.config.callbacks;
+	}
+	const result = await childAgent.invoke({
+		messages: [new HumanMessage({ content: prompt })],
+	}, invokeOptions);
+	return extractResult(result);
+}
+
+export function createSubAgentTool<TSchema extends ZodTypeAny>(
+	options: SubAgentToolOptions<TSchema>,
+): StructuredToolInterface {
+	return tool(
+		async (input: unknown, runtime: ToolRuntime) => invokeSubAgent(options, input, runtime),
+		{
+			name: options.name,
+			description: options.description,
+			schema: options.schema,
+		},
+	);
+}
