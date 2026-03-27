@@ -14,6 +14,21 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 
+const hasOpenAICredentials = Boolean(
+	process.env.OPENAI_API_KEY
+	&& process.env.OPENAI_BASE_URL
+	&& process.env.OPENAI_MODEL
+);
+const hasLangSmithCredentials = Boolean(
+	hasOpenAICredentials
+	&& process.env.LANGSMITH_API_KEY
+	&& process.env.LANGSMITH_ENDPOINT
+	&& process.env.LANGSMITH_PROJECT
+);
+
+const describeOpenAI = hasOpenAICredentials ? describe : describe.skip;
+const describeLangSmith = hasLangSmithCredentials ? describe : describe.skip;
+
 // ─────────────────────── Session Helpers ───────────────────────
 
 /**
@@ -135,7 +150,7 @@ const agent = createAgent({
   systemPrompt: "你是好助手，快速回答。",
 });
 
-describe("Invoke To LangChain Agent", () => {
+describeOpenAI("Invoke To LangChain Agent", () => {
   it("用真实模型调用工具", async () => {
     const result = await agent.invoke({
       messages: [{ role: "human", content: "豆丁的id是多少" }],
@@ -149,7 +164,7 @@ describe("Invoke To LangChain Agent", () => {
   }, 30000); 
 });
 
-describe("Streaming to LangChain Agent", () => {
+describeOpenAI("Streaming to LangChain Agent", () => {
   it("Streaming to LangChain Agent", async () => {
     const stream = await agent.stream(
       {
@@ -171,7 +186,7 @@ describe("Streaming to LangChain Agent", () => {
   }, 30000); // 30s 超时
 });
 
-describe("Streaming Agent With LangSmith Tracing", () => {
+describeLangSmith("Streaming Agent With LangSmith Tracing", () => {
   it("should trace entire agent run as single trace", async () => {
     const { Client } = await import("langsmith");
     const { LangChainTracer } = await import("@langchain/core/tracers/tracer_langchain");
@@ -209,7 +224,7 @@ describe("Streaming Agent With LangSmith Tracing", () => {
 
 
 
-describe("Save & Load Session", () => {
+describeOpenAI("Save & Load Session", () => {
   it("Save & Load Session", async () => {
     const inputState = mergeState(null, "豆丁的id多少");
     const result = await agent.invoke(inputState);

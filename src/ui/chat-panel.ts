@@ -1,10 +1,6 @@
 import { Plugin, showMessage, fetchPost, openTab } from "siyuan";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
-	HumanMessage, AIMessage, SystemMessage, ToolMessage,
-	type BaseMessage,
-} from "@langchain/core/messages";
-import {
 	AgentConfig,
 	AgentState,
 	SessionData,
@@ -16,59 +12,8 @@ import {
 	SLASH_COMMANDS,
 } from "../types";
 import { makeAgent, makeTracer } from "../core/agent";
+import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
-
-// ─── Message serialisation helpers ───────────────────────────────────────────
-
-/**
- * LangChain JS serialises messages as:
- *   { lc:1, type:"constructor", id:[...path, ClassName], kwargs:{...} }
- * This function restores such a dict back to a BaseMessage instance.
- * Also handles the legacy plain-object format { type: "human"|"ai"|..., content, ... }.
- */
-function messageFromDict(raw: Record<string, any>): BaseMessage {
-	if (raw.lc === 1 && raw.type === "constructor" && Array.isArray(raw.id)) {
-		const className = raw.id[raw.id.length - 1] as string;
-		const kwargs = raw.kwargs ?? {};
-		if (className === "HumanMessage")   return new HumanMessage(kwargs);
-		if (className === "AIMessage")      return new AIMessage(kwargs);
-		if (className === "AIMessageChunk") return new AIMessage(kwargs);
-		if (className === "SystemMessage")  return new SystemMessage(kwargs);
-		if (className === "ToolMessage")    return new ToolMessage({ tool_call_id: "", ...kwargs });
-		throw new Error(`Unknown LangChain message class: ${className}`);
-	}
-	// Legacy plain-object: { type: "human"|"ai"|"system"|"tool", content, ... }
-	const { type, ...rest } = raw;
-	if (type === "human" || type === "user") return new HumanMessage(rest);
-	if (type === "ai" || type === "assistant") return new AIMessage(rest);
-	if (type === "system") return new SystemMessage(rest);
-	if (type === "tool")   return new ToolMessage({ tool_call_id: "", ...rest });
-	throw new Error(`Unknown message type: ${type}`);
-}
-
-/** Deserialise an array of raw message dicts to BaseMessage instances. */
-function messagesFromDict(messages: Record<string, any>[]): BaseMessage[] {
-	return messages.map(messageFromDict);
-}
-
-/**
- * Merge existing saved state with an optional new user message string.
- * Mirrors Python-side _merge_state; returned object can be passed directly
- * to agent.invoke() / agent.stream().
- */
-function mergeState(
-	savedState: Record<string, any> | null,
-	inputMsgStr?: string,
-): { messages: BaseMessage[] } {
-	let messages: BaseMessage[] = [];
-	if (savedState?.messages && Array.isArray(savedState.messages)) {
-		messages = messagesFromDict(savedState.messages);
-	}
-	if (inputMsgStr) {
-		messages.push(new HumanMessage({ content: inputMsgStr }));
-	}
-	return { messages };
-}
 
 const INDEX_STORAGE = "chat-sessions-index";
 const SESSION_PREFIX = "chat-session-";
@@ -176,81 +121,6 @@ function normalizeMessagesForDisplay(messages: any[]): any[] {
 		normalized.push(cloneMessage(raw));
 	}
 	return normalized;
-}
-
-function normalizeToolUIEvent(raw: string, toolCallIndex: number, toolName?: string): ToolUIEvent {
-	let parsed: any = null;
-	try { parsed = JSON.parse(raw); } catch { /* plain string */ }
-
-	let payload: ToolUIEventPayload;
-	if (parsed?.__tool_type === "activity") {
-		payload = {
-			type: "activity",
-			category: parsed.category === "change" || parsed.category === "other" ? parsed.category : "lookup",
-			action: typeof parsed.action === "string" ? parsed.action : "other",
-			id: parsed.id ? String(parsed.id) : undefined,
-			path: parsed.path ? String(parsed.path) : undefined,
-			label: parsed.label ? String(parsed.label) : undefined,
-			meta: parsed.meta ? String(parsed.meta) : undefined,
-			open: parsed.open === undefined ? undefined : Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "created_document" && parsed.id) {
-		payload = {
-			type: "created_document",
-			id: String(parsed.id),
-			path: parsed.path ? String(parsed.path) : undefined,
-		};
-	} else if (parsed?.__tool_type === "document_link" && parsed.id) {
-		payload = {
-			type: "document_link",
-			id: String(parsed.id),
-			path: parsed.path ? String(parsed.path) : undefined,
-			label: parsed.label ? String(parsed.label) : undefined,
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "document_blocks" && parsed.id) {
-		payload = {
-			type: "document_blocks",
-			id: String(parsed.id),
-			path: parsed.path ? String(parsed.path) : undefined,
-			blockCount: Number(parsed.blockCount) || 0,
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "append_block" && parsed.parentID) {
-		payload = {
-			type: "append_block",
-			parentID: String(parsed.parentID),
-			path: parsed.path ? String(parsed.path) : undefined,
-			blockIDs: Array.isArray(parsed.blockIDs) ? parsed.blockIDs.map(String) : [],
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "edit_blocks") {
-		payload = {
-			type: "edit_blocks",
-			documentIDs: Array.isArray(parsed.documentIDs) ? parsed.documentIDs.map(String) : [],
-			primaryDocumentID: parsed.primaryDocumentID ? String(parsed.primaryDocumentID) : undefined,
-			path: parsed.path ? String(parsed.path) : undefined,
-			editedCount: Number(parsed.editedCount) || 0,
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed && typeof parsed === "object") {
-		payload = {
-			type: "unknown_structured",
-			raw,
-			payload: parsed,
-		};
-	} else {
-		payload = { type: "text", text: raw };
-	}
-
-	return {
-		id: genId(),
-		source: "writer",
-		toolCallIndex,
-		toolCallId: parsed?.toolCallId ? String(parsed.toolCallId) : undefined,
-		toolName,
-		payload,
-	};
 }
 
 interface AssistantMessageShell {
@@ -655,8 +525,13 @@ export class ChatPanel {
 		let curTextEl: HTMLElement | null = null;
 		let curBuffer = "";
 		const pendingToolEls: HTMLElement[] = [];
-		let lastToolCallIndex = -1;
-		const toolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
+		const existingToolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
+		const input = mergeState(s.state ?? null, content) as any;
+		let latestState: AgentState = {
+			...s.state,
+			messages: input.messages,
+			toolUIEvents: existingToolUIEvents,
+		};
 
 		const getTextEl = (): HTMLElement => {
 			if (curTextEl) return curTextEl;
@@ -668,82 +543,76 @@ export class ChatPanel {
 			return curTextEl;
 		};
 
+		const showStreamError = (error: unknown): void => {
+			if (this.abortCtrl?.signal.aborted) return;
+			const errorEl = document.createElement("p");
+			errorEl.className = "chat-msg__error";
+			errorEl.textContent = `Error: ${String(error)}`;
+			assistantShell.stackEl.appendChild(errorEl);
+			this.scrollToBottom();
+		};
+
 		try {
 			const agent = await makeAgent(config, this.tools, extraSystemPrompt);
 			const tracer = makeTracer(config);
+			const result = await runAgentStream({
+				agent,
+				input,
+				callbacks: tracer ? [tracer] : undefined,
+				signal: this.abortCtrl?.signal,
+				existingToolUIEvents,
+				onUiEvent: (event) => {
+					if (event.type === "text_delta") {
+						const el = getTextEl();
+						curBuffer += event.text;
+						el.innerHTML = renderMarkdown(curBuffer);
+						this.scrollToBottom();
+						return;
+					}
 
-			/* Build input: deserialise saved state + append new human message */
-			const input = mergeState(s.state ?? null, content) as any;
+					if (event.type === "tool_call_start") {
+						curTextEl = null;
+						const el = this.createToolCallElement(
+							event.toolName,
+							event.args,
+							event.toolCallIndex,
+							event.toolCallId,
+						);
+						this.attachToolElementToShell(assistantShell, el);
+						pendingToolEls.push(el);
+						this.scrollToBottom();
+						return;
+					}
 
-			const streamOpts: any = {
-				streamMode: ["messages", "values", "custom"],
-				recursionLimit: 100,
-			};
-			if (tracer) streamOpts.callbacks = [tracer];
-			if (this.abortCtrl) streamOpts.signal = this.abortCtrl.signal;
-
-			const stream = await agent.stream(input, streamOpts);
-
-			let latestState: AgentState = {};
-
-			for await (const [streamType, data] of stream) {
-				if (streamType === "messages") {
-					const [message, _metadata] = data as [any, any];
-					const msgType = message._getType?.() || message.constructor?.name || "";
-
-					if (msgType === "ai" || msgType === "AIMessageChunk") {
-						/* Streaming AI text */
-						const textContent = typeof message.content === "string" ? message.content : "";
-						if (textContent) {
-							const el = getTextEl();
-							curBuffer += textContent;
-							el.innerHTML = renderMarkdown(curBuffer);
-							this.scrollToBottom();
-						}
-
-						/* Detect tool call start from tool_call_chunks */
-						const chunks = message.tool_call_chunks || [];
-						for (const tc of chunks) {
-							if (tc.name) {
-								curTextEl = null;
-								lastToolCallIndex += 1;
-								const el = this.createToolCallElement(tc.name, undefined, lastToolCallIndex, getToolCallId(tc));
-								this.attachToolElementToShell(assistantShell, el);
-								pendingToolEls.push(el);
-								this.scrollToBottom();
-							}
-						}
-					} else if (msgType === "tool" || msgType === "ToolMessage") {
-						/* Tool result */
-						const result = typeof message.content === "string"
-							? message.content : JSON.stringify(message.content);
-						const toolEl = this.findPendingToolElement(getMessageToolCallId(message), pendingToolEls);
+					if (event.type === "tool_result") {
+						const toolEl = this.findPendingToolElement(event.toolCallId || "", pendingToolEls);
 						if (toolEl) {
-							this.appendToolResultToElement(toolEl, result);
+							this.appendToolResultToElement(toolEl, event.result);
 							this.finalizeToolElement(toolEl);
 						}
 						curTextEl = null;
 						this.scrollToBottom();
+						return;
 					}
-				} else if (streamType === "values") {
-					latestState = data;
-				} else if (streamType === "custom") {
-					const raw = typeof data === "string" ? data : JSON.stringify(data);
-					const event = normalizeToolUIEvent(raw, lastToolCallIndex);
-					const toolEl = this.findToolElementForEvent(assistantShell, event, pendingToolEls);
-					if (toolEl && lastToolCallIndex >= 0) {
-						event.toolCallIndex = Number(toolEl.dataset.toolCallIndex || event.toolCallIndex);
-						event.toolName = event.toolName || toolEl.dataset.toolName;
-						toolUIEvents.push(event);
-						this.applyToolUIEvent(toolEl, event);
-					}
-				}
-			}
 
+					const toolEl = this.findToolElementForEvent(assistantShell, event.event, pendingToolEls);
+					if (toolEl && event.event.toolCallIndex >= 0) {
+						event.event.toolCallIndex = Number(toolEl.dataset.toolCallIndex || event.event.toolCallIndex);
+						event.event.toolName = event.event.toolName || toolEl.dataset.toolName;
+						this.applyToolUIEvent(toolEl, event.event);
+					}
+				},
+			});
+
+			latestState = result.lastState;
+			if (result.error && !result.aborted) {
+				showStreamError(result.error);
+			}
+		} catch (err) {
+			showStreamError(err);
+		} finally {
 			this.compactCompletedActivityBlocks(assistantShell, "lookup");
 
-			/* Persist the complete agent state */
-			latestState.toolUIEvents = toolUIEvents;
 			s.state = latestState;
 			s.updated = Date.now();
 			const indexEntry = this.sessionIndex.sessions.find(e => e.id === s.id);
@@ -756,12 +625,7 @@ export class ChatPanel {
 			this.saveIndex();
 			this.saveSession(s);
 			this.refreshSessionListUi();
-		} catch (err) {
-			if (!this.abortCtrl?.signal.aborted) {
-				const el = getTextEl();
-				el.innerHTML = `<p class="chat-msg__error">Error: ${this.escapeHtml(String(err))}</p>`;
-			}
-		} finally {
+
 			this.abortCtrl = null;
 			this.setLoading(false);
 		}
