@@ -1,21 +1,28 @@
 import { tool, StructuredToolInterface, ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
-import { fetchPost, openTab } from "siyuan";
+import { openTab } from "siyuan";
 import { listDocumentsViaApi } from "./list-documents";
 import { recentDocumentsViaApi } from "./recent-documents";
 import { createSubAgentTool } from "./sub-agent";
 import type { AgentConfig } from "../types";
 import type { ScheduledTaskManager } from "./scheduled-task-manager";
 
-function siyuanFetch(url: string, data: any): Promise<any> {
-	return new Promise((resolve, reject) => {
-		fetchPost(url, data, (resp: any) => {
-			if (resp.code !== 0)
-				reject(new Error(resp.msg || `API error code ${resp.code}`));
-			else
-				resolve(resp.data);
-		});
+/** Call a SiYuan kernel API and return `resp.data` on success.
+ *
+ *  Uses native `fetch` instead of the SDK's `fetchPost` to avoid the
+ *  hanging-Promise bug: `fetchPost` swallows the callback when
+ *  `processMessage` returns false (response.code < 0), leaving the
+ *  Promise unresolved forever.  */
+async function siyuanFetch(url: string, data: any): Promise<any> {
+	const resp = await fetch(url, {
+		method: "POST",
+		body: JSON.stringify(data),
 	});
+	const json = await resp.json();
+	if (json.code !== 0) {
+		throw new Error(json.msg || `API error code ${json.code}`);
+	}
+	return json.data;
 }
 
 function emitToolEvent(runtime: ToolRuntime, payload: Record<string, unknown>): void {

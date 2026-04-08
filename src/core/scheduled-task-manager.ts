@@ -349,8 +349,17 @@ export class ScheduledTaskManager {
 		const session = await this.getTaskSession(taskId);
 		if (!session?.task) return;
 		this.runningTaskIds.add(taskId);
+		try {
+			await this.executeTaskInner(session, reason);
+		} finally {
+			this.runningTaskIds.delete(taskId);
+			this.notify();
+		}
+	}
+
+	private async executeTaskInner(session: SessionData, reason: "manual" | "schedule"): Promise<void> {
 		const startedAt = Date.now();
-		const task = cloneTask(session.task);
+		const task = cloneTask(session.task!);
 		task.lastRunStatus = "running";
 		task.lastRunError = undefined;
 		task.updatedAt = startedAt;
@@ -413,8 +422,6 @@ export class ScheduledTaskManager {
 			state: appendTaskRunState(runningSession.state, latestState),
 		};
 		await this.options.store.saveSession(finishedSession);
-		this.runningTaskIds.delete(taskId);
-		this.notify();
 		const statusText = finalStatus === "success" ? "已完成" : `失败：${lastError}`;
 		showMessage(`⏰ 定时任务「${finishedTask.title}」${reason === "manual" ? "手动执行" : "执行"}${statusText ? `，${statusText}` : ""}`);
 	}

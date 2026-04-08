@@ -1,4 +1,4 @@
-import { Plugin, showMessage, fetchPost, openTab } from "siyuan";
+import { Plugin, showMessage, openTab } from "siyuan";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
 	AgentConfig,
@@ -156,6 +156,7 @@ export class ChatPanel {
 	private abortCtrl: AbortController | null = null;
 	private autoScroll = true;
 	private sessionListExpanded = false;
+	private renderingTasks = false;
 	private unsubs: Array<() => void> = [];
 
 	/* Autocomplete */
@@ -1426,6 +1427,16 @@ export class ChatPanel {
 	}
 
 	private async renderTasksView(): Promise<void> {
+		if (this.renderingTasks) return;
+		this.renderingTasks = true;
+		try {
+			await this.renderTasksViewInner();
+		} finally {
+			this.renderingTasks = false;
+		}
+	}
+
+	private async renderTasksViewInner(): Promise<void> {
 		const entries = this.taskManager.listTaskEntries();
 		const runningCount = entries.filter((entry) => entry.task?.lastRunStatus === "running").length;
 		const errorCount = entries.filter((entry) => entry.task?.lastRunStatus === "error").length;
@@ -1689,22 +1700,25 @@ export class ChatPanel {
 	}
 
 	private async queryDocs(keyword: string): Promise<{ id: string, title: string }[]> {
+		const escaped = keyword.replace(/'/g, "''");
 		const stmt = keyword
-			? `SELECT * FROM blocks WHERE type='d' AND content LIKE '%${keyword}%' ORDER BY updated DESC LIMIT 8`
+			? `SELECT * FROM blocks WHERE type='d' AND content LIKE '%${escaped}%' ORDER BY updated DESC LIMIT 8`
 			: `SELECT * FROM blocks WHERE type='d' ORDER BY updated DESC LIMIT 8`;
 
-		return new Promise((resolve) => {
-			fetchPost("/api/query/sql", { stmt }, (resp: any) => {
-				if (resp.code === 0) {
-					resolve(resp.data.map((d: any) => ({
-						id: d.id,
-						title: d.content
-					})));
-				} else {
-					resolve([]);
-				}
+		try {
+			const resp = await fetch("/api/query/sql", {
+				method: "POST",
+				body: JSON.stringify({ stmt }),
 			});
-		});
+			const json = await resp.json();
+			if (json.code === 0 && Array.isArray(json.data)) {
+				return json.data.map((d: any) => ({
+					id: d.id,
+					title: d.content,
+				}));
+			}
+		} catch { /* ignore */ }
+		return [];
 	}
 
 	private showCompletion(): void {
