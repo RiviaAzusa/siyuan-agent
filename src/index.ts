@@ -11,6 +11,8 @@ import "./index.scss";
 import { AgentConfig, DEFAULT_CONFIG } from "./types";
 import { ChatPanel } from "./ui/chat-panel";
 import { getDefaultTools } from "./core/tools";
+import { SessionStore } from "./core/session-store";
+import { ScheduledTaskManager } from "./core/scheduled-task-manager";
 
 const CONFIG_STORAGE = "agent-config";
 const DOCK_TYPE = "agent-chat";
@@ -20,9 +22,11 @@ type PanelPosition = "right" | "bottom";
 
 export default class SiYuanAgent extends Plugin {
 
-	private chatPanel: ChatPanel;
+	private chatPanel: ChatPanel | null = null;
 	private isMobile: boolean;
 	private pendingContexts: string[] = [];
+	private sessionStore: SessionStore;
+	private scheduledTaskManager: ScheduledTaskManager;
 
 	onload() {
 		const frontend = getFrontend();
@@ -31,7 +35,14 @@ export default class SiYuanAgent extends Plugin {
 		// Expose app instance for tools that need it (e.g., openTab)
 		(globalThis as any).siyuanApp = this.app;
 
-		const tools = getDefaultTools(() => this.getConfig());
+		let tools = getDefaultTools(() => this.getConfig(), () => this.scheduledTaskManager);
+		this.sessionStore = new SessionStore(this);
+		this.scheduledTaskManager = new ScheduledTaskManager({
+			store: this.sessionStore,
+			getConfig: () => this.getConfig(),
+			getTools: () => tools,
+		});
+		tools = getDefaultTools(() => this.getConfig(), () => this.scheduledTaskManager);
 
 		this.addIcons(`<symbol id="iconAgent" viewBox="0 0 24 24">
 <rect width="24" height="24" rx="4" fill="#F2E6D8"/>
@@ -80,7 +91,9 @@ export default class SiYuanAgent extends Plugin {
 					this.chatPanel = new ChatPanel(
 						dock.element.querySelector(".fn__flex-1"),
 						this,
-						tools
+						tools,
+						this.sessionStore,
+						this.scheduledTaskManager,
 					);
 					this.flushPendingContexts();
 				},
@@ -97,7 +110,9 @@ export default class SiYuanAgent extends Plugin {
 					this.chatPanel = new ChatPanel(
 						custom.element.querySelector(".fn__flex-1"),
 						this,
-						tools
+						tools,
+						this.sessionStore,
+						this.scheduledTaskManager,
 					);
 					this.flushPendingContexts();
 				},
@@ -143,6 +158,7 @@ export default class SiYuanAgent extends Plugin {
 
 	onLayoutReady() {
 		void this.loadData(CONFIG_STORAGE);
+		void this.scheduledTaskManager.start();
 		const topBarButton = this.addTopBar({
 			icon: "iconAgent",
 			title: DOCK_TITLE,
@@ -159,6 +175,7 @@ export default class SiYuanAgent extends Plugin {
 	}
 
 	onunload() {
+		this.scheduledTaskManager?.stop();
 		this.chatPanel?.destroy();
 	}
 

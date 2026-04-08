@@ -5,3 +5,7 @@ export function fetchPost(_url: string, _data: any, callback: (resp: any) => voi
 export function openTab(): void {
 	// no-op for tests
 }
+
+export function showMessage(): void {
+	// no-op for tests
+}

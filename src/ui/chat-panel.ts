@@ -3,8 +3,9 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
 	AgentConfig,
 	AgentState,
+	ScheduledTaskMeta,
 	SessionData,
-	SessionIndex,
+	SessionIndexEntry,
 	ToolUIEvent,
 	ToolUIEventPayload,
 	DEFAULT_CONFIG,
@@ -14,19 +15,9 @@ import {
 import { makeAgent, makeTracer } from "../core/agent";
 import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
-
-const INDEX_STORAGE = "chat-sessions-index";
-const SESSION_PREFIX = "chat-session-";
+import { SessionStore } from "../core/session-store";
+import { ScheduledTaskManager } from "../core/scheduled-task-manager";
 const CONFIG_STORAGE = "agent-config";
-
-function genId(): string {
-	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-function makeSessionData(): SessionData {
-	const now = Date.now();
-	return { id: genId(), title: "New Chat", created: now, updated: now, state: {} };
-}
 
 /** Extract the role string from either a live BaseMessage or a serialised dict. */
 function msgType(m: any): string {
@@ -141,7 +132,12 @@ export class ChatPanel {
 	private container: HTMLElement;
 	private plugin: Plugin;
 	private tools: StructuredToolInterface[];
+	private store: SessionStore;
+	private taskManager: ScheduledTaskManager;
 	private panelEl: HTMLElement;
+	private viewSwitchEl: HTMLElement;
+	private chatViewEl: HTMLElement;
+	private tasksViewEl: HTMLElement;
 
 	private sessionToggleEl: HTMLButtonElement;
 	private sessionListEl: HTMLElement;
@@ -149,13 +145,18 @@ export class ChatPanel {
 	private textareaEl: HTMLTextAreaElement;
 	private sendBtn: HTMLElement;
 	private contextBar: HTMLElement;
+	private tasksSummaryEl: HTMLElement;
+	private taskListEl: HTMLElement;
+	private taskDetailEl: HTMLElement;
 
-	private sessionIndex: SessionIndex;
 	private activeSession: SessionData;
+	private selectedTaskId: string | null = null;
+	private currentView: "chat" | "tasks" = "chat";
 	private pendingContext: string | null = null;
 	private abortCtrl: AbortController | null = null;
 	private autoScroll = true;
 	private sessionListExpanded = false;
+	private unsubs: Array<() => void> = [];
 
 	/* Autocomplete */
 	private completionEl: HTMLElement | null = null;
@@ -163,56 +164,92 @@ export class ChatPanel {
 	private completionList: { id: string, title: string }[] = [];
 	private completionRange: { start: number, end: number } | null = null;
 
-	constructor(element: HTMLElement, plugin: Plugin, tools: StructuredToolInterface[]) {
+	constructor(
+		element: HTMLElement,
+		plugin: Plugin,
+		tools: StructuredToolInterface[],
+		store: SessionStore,
+		taskManager: ScheduledTaskManager,
+	) {
 		this.container = element;
 		this.plugin = plugin;
 		this.tools = tools;
+		this.store = store;
+		this.taskManager = taskManager;
 		this.render();
-		this.loadStore();
+		this.unsubs.push(this.store.subscribe(() => {
+			void this.handleStoreChanged();
+		}));
+		void this.loadStore();
 	}
 
 	private render(): void {
 		this.container.innerHTML = `
 <div class="chat-panel fn__flex-column" style="height:100%">
-	<div class="chat-panel__session-bar">
-		<button class="chat-panel__session-toggle b3-button b3-button--text" type="button" aria-expanded="false">
-			<span class="chat-panel__session-toggle-main">
-				<span class="chat-panel__session-name">New Chat</span>
-			</span>
-			<span class="chat-panel__session-toggle-side">
-				<svg class="chat-panel__session-toggle-chevron" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
-			</span>
-		</button>
-		<span class="fn__flex-1"></span>
-		<span class="chat-panel__session-action chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="New Chat">
-			<svg style="width:16px;height:16px"><use xlink:href="#iconAdd"></use></svg>
-		</span>
-		<span class="chat-panel__session-action chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="Clear">
-			<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
-		</span>
+	<div class="chat-panel__view-switch">
+		<button class="chat-panel__view-tab chat-panel__view-tab--active b3-button b3-button--text" type="button" data-view="chat">聊天</button>
+		<button class="chat-panel__view-tab b3-button b3-button--text" type="button" data-view="tasks">定时任务</button>
 	</div>
-	<div class="chat-panel__session-list fn__none"></div>
-	<div class="chat-panel__context-bar fn__none"></div>
-	<div class="chat-panel__messages fn__flex-1"></div>
-	<div class="chat-panel__input">
-		<textarea class="chat-panel__textarea b3-text-field" rows="3" placeholder="Ask anything..."></textarea>
-		<div class="chat-panel__actions">
-			<button class="chat-panel__send b3-button b3-button--text">
-				<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>
-				Send
+	<div class="chat-panel__chat-view">
+		<div class="chat-panel__session-bar">
+			<button class="chat-panel__session-toggle b3-button b3-button--text" type="button" aria-expanded="false">
+				<span class="chat-panel__session-toggle-main">
+					<span class="chat-panel__session-name">New Chat</span>
+				</span>
+				<span class="chat-panel__session-toggle-side">
+					<svg class="chat-panel__session-toggle-chevron" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
+				</span>
 			</button>
+			<span class="fn__flex-1"></span>
+			<span class="chat-panel__session-action chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="New Chat">
+				<svg style="width:16px;height:16px"><use xlink:href="#iconAdd"></use></svg>
+			</span>
+			<span class="chat-panel__session-action chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="Clear">
+				<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
+			</span>
+		</div>
+		<div class="chat-panel__session-list fn__none"></div>
+		<div class="chat-panel__context-bar fn__none"></div>
+		<div class="chat-panel__messages fn__flex-1"></div>
+		<div class="chat-panel__input">
+			<textarea class="chat-panel__textarea b3-text-field" rows="3" placeholder="Ask anything..."></textarea>
+			<div class="chat-panel__actions">
+				<button class="chat-panel__send b3-button b3-button--text">
+					<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>
+					Send
+				</button>
+			</div>
+		</div>
+	</div>
+	<div class="chat-panel__tasks-view fn__none">
+		<div class="chat-panel__tasks-summary"></div>
+		<div class="chat-panel__tasks-board">
+			<div class="chat-panel__tasks-list"></div>
+			<div class="chat-panel__tasks-detail"></div>
 		</div>
 	</div>
 </div>`;
 
 		this.panelEl = this.container.querySelector(".chat-panel");
+		this.viewSwitchEl = this.container.querySelector(".chat-panel__view-switch");
+		this.chatViewEl = this.container.querySelector(".chat-panel__chat-view");
+		this.tasksViewEl = this.container.querySelector(".chat-panel__tasks-view");
 		this.sessionToggleEl = this.container.querySelector(".chat-panel__session-toggle");
 		this.sessionListEl = this.container.querySelector(".chat-panel__session-list");
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
+		this.tasksSummaryEl = this.container.querySelector(".chat-panel__tasks-summary");
+		this.taskListEl = this.container.querySelector(".chat-panel__tasks-list");
+		this.taskDetailEl = this.container.querySelector(".chat-panel__tasks-detail");
 		this.applyEditorFontFamily();
+
+		this.viewSwitchEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.setCurrentView(button.dataset.view === "tasks" ? "tasks" : "chat");
+			});
+		});
 
 		/* Auto-scroll detection */
 		this.messagesEl.addEventListener("scroll", () => {
@@ -253,12 +290,12 @@ export class ChatPanel {
 
 		/* New session */
 		this.container.querySelector(".chat-panel__new-session").addEventListener("click", () => {
-			this.newSession();
+			void this.newSession();
 		});
 
 		/* Delete current session */
 		this.container.querySelector(".chat-panel__clear").addEventListener("click", () => {
-			this.deleteSession(this.sessionIndex.activeId);
+			void this.deleteSession(this.activeSession.id);
 		});
 	}
 
@@ -322,8 +359,12 @@ export class ChatPanel {
 		return date.toLocaleDateString();
 	}
 
+	private getChatSessions(): SessionIndexEntry[] {
+		return this.store.listSessions("chat");
+	}
+
 	private renderSessionList(): void {
-		const sessions = this.sessionIndex.sessions;
+		const sessions = this.getChatSessions();
 		if (!sessions.length) {
 			this.sessionListEl.innerHTML = `<div class="chat-session-list__empty">暂无会话</div>`;
 			this.sessionListEl.classList.remove("chat-panel__session-list--expanded");
@@ -332,6 +373,7 @@ export class ChatPanel {
 
 		const previewCount = 3;
 		const sorted = [...sessions].sort((a, b) => b.updated - a.updated);
+		const activeChatId = this.store.getIndex().activeId;
 		const canExpand = sorted.length > previewCount;
 		if (!canExpand)
 			this.sessionListExpanded = false;
@@ -340,7 +382,7 @@ export class ChatPanel {
 		this.sessionListEl.classList.toggle("chat-panel__session-list--expanded", this.sessionListExpanded);
 		this.sessionListEl.innerHTML = `
 			<div class="chat-session-list__items">${visible.map(s => {
-			const active = s.id === this.sessionIndex.activeId ? " chat-session-item--active" : "";
+			const active = s.id === activeChatId ? " chat-session-item--active" : "";
 			const title = this.escapeHtml(s.title || "New Chat");
 			const date = this.escapeHtml(this.formatSessionDate(s.updated));
 			return `<div class="chat-session-item${active}" data-id="${s.id}">
@@ -370,8 +412,8 @@ export class ChatPanel {
 				if (target.closest("[data-delete]"))
 					return;
 				const id = (el as HTMLElement).dataset.id;
-				if (id && id !== this.sessionIndex.activeId)
-					this.switchSession(id);
+				if (id && id !== activeChatId)
+					void this.switchSession(id);
 			});
 		});
 
@@ -381,7 +423,7 @@ export class ChatPanel {
 				e.stopPropagation();
 				const id = (el as HTMLElement).dataset.delete;
 				if (id)
-					this.deleteSession(id);
+					void this.deleteSession(id);
 			});
 		});
 
@@ -394,70 +436,40 @@ export class ChatPanel {
 		}
 	}
 
-	private newSession(): void {
+	private async newSession(): Promise<void> {
 		const msgs = this.activeSession.state?.messages;
 		if (!msgs || msgs.length === 0) {
 			this.textareaEl.focus();
 			return;
 		}
-		const s = makeSessionData();
-		this.sessionIndex.sessions.push({
-			id: s.id, title: "New Chat", created: s.created, updated: s.updated,
-		});
-		this.sessionIndex.activeId = s.id;
+		const s = await this.store.createChatSession();
 		this.activeSession = s;
 		this.renderCurrentSession();
-		this.saveIndex();
-		this.saveSession(s);
 		this.refreshSessionListUi();
 		this.textareaEl.focus();
 	}
 
 	private async switchSession(id: string): Promise<void> {
-		this.saveSession(this.activeSession);
-		this.sessionIndex.activeId = id;
-		this.activeSession = await this.loadSession(id);
+		await this.store.saveSession(this.activeSession);
+		await this.store.setActiveChatSession(id);
+		this.activeSession = await this.store.loadSession(id);
 		this.renderCurrentSession();
-		this.saveIndex();
 		this.sessionListExpanded = false;
 		this.sessionListEl.classList.add("fn__none");
 		this.updateSessionToggleState();
 	}
 
-	private deleteSession(id: string): void {
-		const idx = this.sessionIndex.sessions.findIndex(s => s.id === id);
-		if (idx < 0) return;
-		this.sessionIndex.sessions.splice(idx, 1);
-
-		if (this.sessionIndex.activeId === id) {
-			if (this.sessionIndex.sessions.length) {
-				const next = [...this.sessionIndex.sessions].sort((a, b) => b.updated - a.updated)[0];
-				this.sessionIndex.activeId = next.id;
-				this.loadSession(next.id).then(s => {
-					this.activeSession = s;
-					this.renderCurrentSession();
-				});
-			} else {
-				const s = makeSessionData();
-				this.sessionIndex.sessions.push({
-					id: s.id, title: s.title, created: s.created, updated: s.updated,
-				});
-				this.sessionIndex.activeId = s.id;
-				this.activeSession = s;
-				this.renderCurrentSession();
-				this.saveSession(s);
-			}
-		}
-
-		this.saveIndex();
-		// TODO: could also delete the session file from storage
-
+	private async deleteSession(id: string): Promise<void> {
+		await this.store.deleteSession(id);
+		const activeId = this.store.getIndex().activeId;
+		this.activeSession = await this.store.loadSession(activeId);
+		this.renderCurrentSession();
 		this.refreshSessionListUi();
 	}
 
 	private renderCurrentSession(): void {
 		const s = this.activeSession;
-		const entry = this.sessionIndex.sessions.find(e => e.id === s.id);
+		const entry = this.store.getSessionSummary(s.id);
 		const nameEl = this.container.querySelector(".chat-panel__session-name");
 		if (nameEl)
 			nameEl.textContent = entry?.title || "New Chat";
@@ -615,15 +627,14 @@ export class ChatPanel {
 
 			s.state = latestState;
 			s.updated = Date.now();
-			const indexEntry = this.sessionIndex.sessions.find(e => e.id === s.id);
+			s.title = sessionTitle(latestState);
+			const indexEntry = this.store.getSessionSummary(s.id);
 			if (indexEntry) {
-				indexEntry.title = sessionTitle(latestState);
-				indexEntry.updated = s.updated;
+				indexEntry.title = s.title;
 			}
 			const nameEl = this.container.querySelector(".chat-panel__session-name");
-			if (nameEl) nameEl.textContent = indexEntry?.title || "New Chat";
-			this.saveIndex();
-			this.saveSession(s);
+			if (nameEl) nameEl.textContent = s.title || "New Chat";
+			await this.store.saveSession(s);
 			this.refreshSessionListUi();
 
 			this.abortCtrl = null;
@@ -660,11 +671,12 @@ export class ChatPanel {
 
 	destroy(): void {
 		this.stop();
+		this.unsubs.splice(0).forEach((unsubscribe) => unsubscribe());
 	}
 
 	/* --- DOM helpers --- */
 
-	private createConversationTurn(userContent?: string): { turnEl: HTMLElement; listEl: HTMLElement } {
+	private createConversationTurn(userContent?: string, targetEl?: HTMLElement): { turnEl: HTMLElement; listEl: HTMLElement } {
 		const turnEl = document.createElement("div");
 		turnEl.className = "chat-turn";
 
@@ -675,12 +687,12 @@ export class ChatPanel {
 		const listEl = document.createElement("div");
 		listEl.className = "chat-turn__messages";
 		turnEl.appendChild(listEl);
-		this.messagesEl.appendChild(turnEl);
+		(targetEl || this.messagesEl).appendChild(turnEl);
 		this.scrollToBottom();
 		return { turnEl, listEl };
 	}
 
-	private renderConversationMessages(messages: any[], toolUIEvents: ToolUIEvent[]): void {
+	private renderConversationMessages(messages: any[], toolUIEvents: ToolUIEvent[], targetEl?: HTMLElement): void {
 		let toolCallIndex = -1;
 		const pendingToolEls: HTMLElement[] = [];
 		let currentListEl: HTMLElement | null = null;
@@ -693,7 +705,10 @@ export class ChatPanel {
 			const toolName = msg.kwargs?.name ?? msg.name;
 
 			if (type === "human" || type === "user") {
-				const { listEl } = this.createConversationTurn(typeof content === "string" ? content : JSON.stringify(content));
+				const { listEl } = this.createConversationTurn(
+					typeof content === "string" ? content : JSON.stringify(content),
+					targetEl,
+				);
 				currentListEl = listEl;
 				currentAssistantShell = null;
 				pendingToolEls.length = 0;
@@ -702,7 +717,7 @@ export class ChatPanel {
 
 			if (type === "ai") {
 				if (!currentListEl) {
-					const turn = this.createConversationTurn();
+					const turn = this.createConversationTurn(undefined, targetEl);
 					currentListEl = turn.listEl;
 				}
 				if (!currentAssistantShell) {
@@ -724,7 +739,7 @@ export class ChatPanel {
 
 			if (type === "tool") {
 				if (!currentListEl) {
-					const turn = this.createConversationTurn();
+					const turn = this.createConversationTurn(undefined, targetEl);
 					currentListEl = turn.listEl;
 				}
 				const result = typeof content === "string" ? content : JSON.stringify(content);
@@ -932,7 +947,17 @@ export class ChatPanel {
 		if (payload?.type === "append_block" || payload?.type === "edit_blocks" || payload?.type === "created_document")
 			return "change";
 		const name = toolName || "";
-		if (["append_block", "edit_blocks", "create_document", "move_document", "rename_document", "delete_document"].includes(name))
+		if ([
+			"append_block",
+			"edit_blocks",
+			"create_document",
+			"move_document",
+			"rename_document",
+			"delete_document",
+			"create_scheduled_task",
+			"update_scheduled_task",
+			"delete_scheduled_task",
+		].includes(name))
 			return "change";
 		return "lookup";
 	}
@@ -949,6 +974,7 @@ export class ChatPanel {
 			case "list_notebooks":
 			case "list_documents":
 			case "recent_documents":
+			case "list_scheduled_tasks":
 				return "list";
 			case "get_document":
 			case "get_document_blocks":
@@ -957,16 +983,19 @@ export class ChatPanel {
 			case "search_documents":
 				return "search";
 			case "create_document":
+			case "create_scheduled_task":
 				return "create";
 			case "append_block":
 				return "append";
 			case "edit_blocks":
+			case "update_scheduled_task":
 				return "edit";
 			case "move_document":
 				return "move";
 			case "rename_document":
 				return "rename";
 			case "delete_document":
+			case "delete_scheduled_task":
 				return "delete";
 			default:
 				return "other";
@@ -988,6 +1017,10 @@ export class ChatPanel {
 			case "move_document": return "移动文档";
 			case "rename_document": return "重命名文档";
 			case "delete_document": return "删除文档";
+			case "create_scheduled_task": return "创建定时任务";
+			case "list_scheduled_tasks": return "列出定时任务";
+			case "update_scheduled_task": return "更新定时任务";
+			case "delete_scheduled_task": return "删除定时任务";
 			default: return toolName;
 		}
 	}
@@ -1335,82 +1368,247 @@ export class ChatPanel {
 	/* --- Persistence --- */
 
 	private async loadStore(): Promise<void> {
-		try {
-			await this.plugin.loadData(INDEX_STORAGE);
-			const index = this.plugin.data[INDEX_STORAGE];
-
-			if (index && index.sessions) {
-				this.sessionIndex = index as SessionIndex;
-				this.activeSession = await this.loadSession(this.sessionIndex.activeId);
-			} else {
-				/* Try migrating old format */
-				await this.plugin.loadData("chat-history");
-				const old = this.plugin.data["chat-history"];
-
-				if (old && old.sessions && old.sessions.length) {
-					/* Migrate old ChatStore to new per-session format */
-					const entries: SessionIndex["sessions"] = [];
-					for (const s of old.sessions) {
-						const data: SessionData = {
-							id: s.id,
-							title: s.title || "New Chat",
-							created: s.created || Date.now(),
-							updated: s.updated || Date.now(),
-							state: {
-								messages: (s.messages || []).map((m: any) => ({
-									role: m.role === "user" ? "human" : m.role,
-									content: m.content,
-								})),
-							},
-						};
-						entries.push({ id: data.id, title: data.title, created: data.created, updated: data.updated });
-						await this.plugin.saveData(SESSION_PREFIX + data.id, data);
-					}
-					this.sessionIndex = { activeId: old.activeId || entries[0].id, sessions: entries };
-					this.saveIndex();
-					this.activeSession = await this.loadSession(this.sessionIndex.activeId);
-				} else {
-					/* Fresh start */
-					const s = makeSessionData();
-					this.sessionIndex = {
-						activeId: s.id,
-						sessions: [{ id: s.id, title: s.title, created: s.created, updated: s.updated }],
-					};
-					this.activeSession = s;
-					this.saveIndex();
-					this.saveSession(s);
-				}
-			}
-		} catch {
-			const s = makeSessionData();
-			this.sessionIndex = {
-				activeId: s.id,
-				sessions: [{ id: s.id, title: s.title, created: s.created, updated: s.updated }],
-			};
-			this.activeSession = s;
-			this.saveIndex();
-			this.saveSession(s);
-		}
-
+		await this.store.ensureLoaded();
+		const activeId = this.store.getIndex().activeId;
+		this.activeSession = await this.store.loadSession(activeId);
+		this.selectedTaskId = this.taskManager.listTaskEntries()[0]?.id || null;
 		this.renderCurrentSession();
+		await this.renderTasksView();
+		this.setCurrentView(this.currentView);
 		this.updateSessionToggleState();
 	}
 
-	private saveIndex(): void {
-		this.plugin.saveData(INDEX_STORAGE, this.sessionIndex);
+	private async handleStoreChanged(): Promise<void> {
+		await this.store.ensureLoaded();
+		const chatSessions = this.getChatSessions();
+		if (!chatSessions.some((session) => session.id === this.activeSession?.id)) {
+			const activeId = this.store.getIndex().activeId;
+			this.activeSession = await this.store.loadSession(activeId);
+			this.renderCurrentSession();
+		}
+		if (this.currentView === "tasks") {
+			await this.renderTasksView();
+		}
+		this.refreshSessionListUi();
 	}
 
-	private saveSession(session: SessionData): void {
-		this.plugin.saveData(SESSION_PREFIX + session.id, session);
+	private setCurrentView(view: "chat" | "tasks"): void {
+		this.currentView = view;
+		this.chatViewEl.classList.toggle("fn__none", view !== "chat");
+		this.tasksViewEl.classList.toggle("fn__none", view !== "tasks");
+		this.viewSwitchEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
+			button.classList.toggle("chat-panel__view-tab--active", button.dataset.view === view);
+		});
+		if (view === "tasks") {
+			void this.renderTasksView();
+		}
 	}
 
-	private async loadSession(id: string): Promise<SessionData> {
-		const key = SESSION_PREFIX + id;
-		await this.plugin.loadData(key);
-		const data = this.plugin.data[key];
-		if (data) return data;
-		const now = Date.now();
-		return { id, title: "New Chat", created: now, updated: now, state: {} };
+	private formatDateTime(timestamp?: number): string {
+		if (!timestamp) return "—";
+		return new Date(timestamp).toLocaleString();
+	}
+
+	private formatTaskSchedule(task: ScheduledTaskMeta): string {
+		if (task.scheduleType === "once") {
+			return `一次性 · ${this.formatDateTime(task.triggerAt)}`;
+		}
+		return `循环 · ${task.cron || "未配置 cron"}`;
+	}
+
+	private taskStatusText(task: ScheduledTaskMeta): string {
+		switch (task.lastRunStatus) {
+			case "running": return "执行中";
+			case "success": return "最近成功";
+			case "error": return "最近失败";
+			default: return task.enabled ? "待执行" : "已停用";
+		}
+	}
+
+	private async renderTasksView(): Promise<void> {
+		const entries = this.taskManager.listTaskEntries();
+		const runningCount = entries.filter((entry) => entry.task?.lastRunStatus === "running").length;
+		const errorCount = entries.filter((entry) => entry.task?.lastRunStatus === "error").length;
+		this.tasksSummaryEl.innerHTML = `
+<div class="task-summary-card">
+	<div class="task-summary-card__value">${entries.length}</div>
+	<div class="task-summary-card__label">任务总数</div>
+</div>
+<div class="task-summary-card">
+	<div class="task-summary-card__value">${runningCount}</div>
+	<div class="task-summary-card__label">执行中</div>
+</div>
+<div class="task-summary-card">
+	<div class="task-summary-card__value">${errorCount}</div>
+	<div class="task-summary-card__label">失败</div>
+</div>
+<button class="chat-panel__task-create b3-button" type="button">新建任务</button>`;
+		this.tasksSummaryEl.querySelector(".chat-panel__task-create")?.addEventListener("click", () => {
+			void this.openTaskEditor();
+		});
+
+		if (!entries.length) {
+			this.taskListEl.innerHTML = `<div class="chat-session-list__empty">暂无定时任务</div>`;
+			this.taskDetailEl.innerHTML = `<div class="chat-session-list__empty">从这里创建你的第一个定时任务</div>`;
+			this.selectedTaskId = null;
+			return;
+		}
+
+		if (!this.selectedTaskId || !entries.some((entry) => entry.id === this.selectedTaskId)) {
+			this.selectedTaskId = entries[0].id;
+		}
+
+		this.taskListEl.innerHTML = entries.map((entry) => {
+			const task = entry.task!;
+			return `<button class="task-list-item${entry.id === this.selectedTaskId ? " task-list-item--active" : ""}" type="button" data-task-id="${entry.id}">
+				<div class="task-list-item__title">${this.escapeHtml(task.title)}</div>
+				<div class="task-list-item__meta">${this.escapeHtml(this.taskStatusText(task))}</div>
+				<div class="task-list-item__time">下次执行：${this.escapeHtml(this.formatDateTime(task.nextRunAt))}</div>
+			</button>`;
+		}).join("");
+		this.taskListEl.querySelectorAll<HTMLElement>("[data-task-id]").forEach((item) => {
+			item.addEventListener("click", () => {
+				this.selectedTaskId = item.dataset.taskId || null;
+				void this.renderTasksView();
+			});
+		});
+
+		const selected = this.selectedTaskId ? await this.taskManager.getTaskSession(this.selectedTaskId) : null;
+		if (!selected?.task) {
+			this.taskDetailEl.innerHTML = `<div class="chat-session-list__empty">请选择一个定时任务</div>`;
+			return;
+		}
+
+		const task = selected.task;
+		const historyHtml = this.renderTaskHistoryHtml(selected);
+		this.taskDetailEl.innerHTML = `
+<div class="task-detail">
+	<div class="task-detail__header">
+		<div>
+			<h3>${this.escapeHtml(task.title)}</h3>
+			<div class="task-detail__status">${this.escapeHtml(this.taskStatusText(task))}</div>
+		</div>
+		<div class="task-detail__actions">
+			<button class="b3-button b3-button--text" type="button" data-action="run">立即执行</button>
+			<button class="b3-button b3-button--text" type="button" data-action="toggle">${task.enabled ? "停用" : "启用"}</button>
+			<button class="b3-button b3-button--text" type="button" data-action="edit">编辑</button>
+			<button class="b3-button b3-button--text" type="button" data-action="delete">删除</button>
+		</div>
+	</div>
+	<div class="task-detail__grid">
+		<div><span>调度</span><strong>${this.escapeHtml(this.formatTaskSchedule(task))}</strong></div>
+		<div><span>时区</span><strong>${this.escapeHtml(task.timezone)}</strong></div>
+		<div><span>下次执行</span><strong>${this.escapeHtml(this.formatDateTime(task.nextRunAt))}</strong></div>
+		<div><span>上次执行</span><strong>${this.escapeHtml(this.formatDateTime(task.lastRunAt))}</strong></div>
+		<div><span>累计次数</span><strong>${task.runCount}</strong></div>
+		<div><span>最近错误</span><strong>${this.escapeHtml(task.lastRunError || "—")}</strong></div>
+	</div>
+	<div class="task-detail__prompt">
+		<div class="task-detail__section-title">任务指令</div>
+		<pre>${this.escapeHtml(task.prompt)}</pre>
+	</div>
+	<div class="task-detail__history">
+		<div class="task-detail__section-title">执行历史</div>
+		<div class="task-detail__history-body">${historyHtml}</div>
+	</div>
+</div>`;
+
+		this.taskDetailEl.querySelector<HTMLElement>("[data-action='run']")?.addEventListener("click", () => {
+			void this.taskManager.runTaskNow(task.id).catch((error) => showMessage(String(error)));
+		});
+		this.taskDetailEl.querySelector<HTMLElement>("[data-action='toggle']")?.addEventListener("click", () => {
+			void this.taskManager.setTaskEnabled(task.id, !task.enabled).catch((error) => showMessage(String(error)));
+		});
+		this.taskDetailEl.querySelector<HTMLElement>("[data-action='edit']")?.addEventListener("click", () => {
+			void this.openTaskEditor(task);
+		});
+		this.taskDetailEl.querySelector<HTMLElement>("[data-action='delete']")?.addEventListener("click", () => {
+			void this.taskManager.deleteTask(task.id).catch((error) => showMessage(String(error)));
+		});
+	}
+
+	private renderTaskHistoryHtml(session: SessionData): string {
+		const host = document.createElement("div");
+		const messages = normalizeMessagesForDisplay(session.state?.messages || []);
+		const toolUIEvents = Array.isArray(session.state?.toolUIEvents) ? session.state.toolUIEvents as ToolUIEvent[] : [];
+		this.renderConversationMessages(messages, toolUIEvents, host);
+		return host.innerHTML || `<div class="chat-session-list__empty">暂无执行记录</div>`;
+	}
+
+	private async openTaskEditor(task?: ScheduledTaskMeta): Promise<void> {
+		const isEditing = Boolean(task);
+		const scheduleType = task?.scheduleType || "recurring";
+		this.taskDetailEl.innerHTML = `
+<form class="task-editor">
+	<label class="task-editor__field">
+		<span>标题</span>
+		<input class="b3-text-field" name="title" value="${this.escapeHtml(task?.title || "")}" required />
+	</label>
+	<label class="task-editor__field">
+		<span>Prompt</span>
+		<textarea class="b3-text-field" name="prompt" rows="6" required>${this.escapeHtml(task?.prompt || "")}</textarea>
+	</label>
+	<label class="task-editor__field">
+		<span>类型</span>
+		<select class="b3-select" name="scheduleType">
+			<option value="recurring"${scheduleType === "recurring" ? " selected" : ""}>循环</option>
+			<option value="once"${scheduleType === "once" ? " selected" : ""}>一次性</option>
+		</select>
+	</label>
+	<label class="task-editor__field">
+		<span>Cron</span>
+		<input class="b3-text-field" name="cron" value="${this.escapeHtml(task?.cron || "")}" placeholder="0 18 * * *" />
+	</label>
+	<label class="task-editor__field">
+		<span>触发时间</span>
+		<input class="b3-text-field" name="triggerAt" value="${task?.triggerAt ? new Date(task.triggerAt).toISOString().slice(0, 16) : ""}" type="datetime-local" />
+	</label>
+	<label class="task-editor__field">
+		<span>时区</span>
+		<input class="b3-text-field" name="timezone" value="${this.escapeHtml(task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}" />
+	</label>
+	<label class="task-editor__checkbox">
+		<input type="checkbox" name="enabled"${task?.enabled !== false ? " checked" : ""} />
+		<span>启用</span>
+	</label>
+	<div class="task-editor__actions">
+		<button class="b3-button" type="submit">${isEditing ? "保存" : "创建"}</button>
+		<button class="b3-button b3-button--text" type="button" data-action="cancel">取消</button>
+	</div>
+</form>`;
+		const form = this.taskDetailEl.querySelector<HTMLFormElement>(".task-editor");
+		form?.addEventListener("submit", (event) => {
+			event.preventDefault();
+			const formData = new FormData(form);
+			const nextScheduleType = formData.get("scheduleType") === "once" ? "once" : "recurring";
+			const triggerAtValue = formData.get("triggerAt");
+			const triggerAt = typeof triggerAtValue === "string" && triggerAtValue
+				? new Date(triggerAtValue).getTime()
+				: undefined;
+			const payload = {
+				title: String(formData.get("title") || "").trim(),
+				prompt: String(formData.get("prompt") || "").trim(),
+				scheduleType: nextScheduleType as "once" | "recurring",
+				cron: String(formData.get("cron") || "").trim() || undefined,
+				triggerAt,
+				timezone: String(formData.get("timezone") || "").trim() || undefined,
+				enabled: formData.get("enabled") === "on",
+			};
+			if (isEditing && task) {
+				void this.taskManager.updateTask(task.id, payload).then(() => {
+					this.selectedTaskId = task.id;
+					return this.renderTasksView();
+				}).catch((error) => showMessage(String(error)));
+				return;
+			}
+			void this.taskManager.createTask(payload).then((session) => {
+				this.selectedTaskId = session.id;
+				return this.renderTasksView();
+			}).catch((error) => showMessage(String(error)));
+		});
+		this.taskDetailEl.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => {
+			void this.renderTasksView();
+		});
 	}
 
 	private async getConfig(): Promise<AgentConfig> {
