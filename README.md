@@ -1,206 +1,89 @@
+[简体中文](./README_zh_CN.md)
+
 # SiYuan Agent
 
-思源笔记 AI 助手插件，提供类似 Notion AI 的侧边栏对话体验，并允许 AI 直接在你的思源知识库中搜索、读取、创建和编辑笔记。
-
-目前，以及可预见的近期，都不会加入MCP，Skill.. 近期只想打磨一个更好用的个人助手。
-
-## 功能特性
-
-- 侧边栏聊天面板，支持流式输出
-- 
-
-
-## 功能特性
-
-- 侧边栏聊天面板，支持流式输出
-- 基于 OpenAI Compatible 接口接入任意兼容模型
-- 可把编辑器选中文本或右键选中文本直接发送到对话
-- 可搜索全文、搜索文档标题、读取整篇文档、读取文档块结构
-- 可创建文档、追加内容、重命名、移动文档
-- 可编辑已有块内容，适合做润色、改写、整理
-- 支持为 Agent 配置“用户指南文档”，把你的长期偏好注入系统提示词
-- 支持设置默认工作笔记本，减少反复指定目标库
-- 可选接入 LangSmith tracing 用于调试
-
-## 适用场景
-
-- 让 AI 基于你的思源笔记回答问题
-- 把零散记录整理成结构化笔记
-- 让 AI 在指定笔记本中新建文档、补充内容、改标题
-- 让 AI 先检索你的知识库，再给出总结或建议
-- 为自己建立一份“用户指南”，让 AI 更懂你的笔记结构和偏好
-
-## 安装
-
-### 方式一：从思源集市安装
-
-在思源笔记中打开集市，搜索 `SiYuan Agent`，安装并启用。
-
-### 方式二：手动安装
-
-1. 下载发布页中的 `package.zip`
-2. 解压到思源工作空间的 `data/plugins/siyuan-agent/`
-3. 重启思源笔记并启用插件
-
-项目地址：[RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent)
-
-## 首次配置
-
-启用插件后，打开插件设置，填写以下项目：
-
-### 1. API Base URL
-
-OpenAI 兼容接口地址，例如：
-
-```text
-https://api.openai.com/v1
-```
-
-如果你使用其他兼容服务，也填写其对应的 base URL。
-
-### 2. API Key
-
-模型服务提供的 API Key。
-
-### 3. Model
-
-模型名称，例如：
-
-```text
-gpt-4o
-deepseek-chat
-```
-
-### 4. 自定义指令
-
-可选。用于补充你的固定要求，例如：
-
-- 始终用中文回答
-- 回答尽量简洁
-- 修改文档时保留我的标题层级和列表风格
-
-### 5. 用户指南文档
-
-可选，但强烈建议配置。
-
-你可以指定一篇思源文档作为“用户指南”。该文档的内容会被拼接进系统提示词，作为 AI 的长期行为参考。适合写入：
-
-- 你的笔记结构
-- 常用笔记本和目录
-- 命名习惯
-- 写作偏好
-- 不希望 AI 做的事
-
-### 6. 默认工作笔记本
-
-可选。设置后，AI 在没有明确指定目标笔记本时，会优先在该笔记本中工作。
-
-### 7. LangSmith Tracing
-
-可选。用于调试 Agent 调用链。只有在你需要排查问题或观察调用过程时才需要开启。
-
-## 使用方式
-
-## 打开聊天面板
-
-插件启用后，会在右侧出现 `AI Agent` 停靠面板。
-
-你可以直接在面板中输入问题，例如：
-
-- “帮我搜索最近写过的项目计划”
-- “总结一下我关于提示词工程的笔记”
-- “在默认笔记本里新建一篇《本周复盘》”
-- “把这篇文档的语言润色得更自然”
-
-## 发送选中文本到对话
-
-插件支持两种方式把当前选区作为上下文发送给 AI：
-
-- 编辑器快捷键：`Option + Command + L`
-- 右键菜单：`发送选中文本到 AI 对话`
-
-发送后，选中文本会作为当前提问的引用上下文附加到聊天输入中。
-
-## `/init` 命令
-
-插件内置了一个初始化命令：
-
-```text
-/init
-```
-
-它会尝试探索你的笔记库结构，并把结果写入“用户指南文档”。
-
-使用前提：
-
-- 已配置 API
-- 已在插件设置中指定“用户指南文档”
-
-你也可以附加额外指令：
-
-```text
-/init 重点分析我的项目管理和日记结构
-```
-
-适合第一次使用时快速建立 Agent 对你知识库的理解。
-
-## AI 可用能力
-
-当前内置工具包括：
-
-- `list_notebooks`：列出全部笔记本
-- `list_documents`：以树形结构列出某个笔记本中的文档，支持分页、有限层级展开和简要摘要
-- `recent_documents`：列出最近修改的文档，默认返回 10 篇并附带简要摘要
-- `search_documents`：按标题搜索文档
-- `search_fulltext`：全文搜索块内容
-- `get_document`：读取整篇文档 Markdown
-- `get_document_blocks`：读取文档子块与 block ID
-- `create_document`：新建文档
-- `append_block`：向文档追加内容
-- `edit_blocks`：编辑已有块
-- `move_document`：移动文档
-- `rename_document`：重命名文档
-
-默认不开放删除文档能力，以降低误操作风险。
-
-## 推荐配置方法
-
-如果你想让插件更稳定、更像“你的私人助手”，建议这样配置：
-
-1. 先新建一篇文档，例如《AI 用户指南》
-2. 在文档里写清楚你的笔记本分工、常用目录、命名规则、语言偏好
-3. 在插件设置中把它设为“用户指南文档”
-4. 再执行一次 `/init`，让 AI 自动补全对知识库的整体认识
-
-这样后续在新建、整理、归档文档时，Agent 会更容易遵循你的习惯。
-
-## 注意事项
-
-- 本插件需要你自行提供可用的模型接口和 API Key
-- AI 的文档编辑会直接作用于思源内容，重要笔记建议先自行确认结果
-- 插件会优先使用真实工具查询笔记库，而不是凭空编造内容
-- 删除文档工具默认未启用
-- 首次使用时，建议先从只读类任务开始，例如搜索、总结、问答
-
-## 开发
+AI chat and automation for SiYuan. Connect an OpenAI-compatible model, search your notes, read documents, edit content, and run recurring tasks without leaving the workspace.
+
+![SiYuan Agent preview](./preview.png)
+
+## Highlights
+
+- Chat panel opened from the top bar, with right-click actions to open it on the right or bottom.
+- Streaming responses with tool activity grouped into lookup and change actions.
+- Compact chat history plus a separate scheduled tasks view.
+- OpenAI-compatible model setup: custom base URL, API key, and model name.
+- Send selected text from the editor directly into the chat context.
+- Read and write tools for notebooks and documents inside SiYuan.
+- `/init` command to bootstrap a long-lived guide document for the agent.
+- Optional LangSmith tracing for debugging.
+
+## Built-in tools
+
+- `list_notebooks`
+- `list_documents`
+- `recent_documents`
+- `search_fulltext`
+- `get_document`
+- `get_document_blocks`
+- `create_document`
+- `append_block`
+- `edit_blocks`
+- `move_document`
+- `rename_document`
+- `create_scheduled_task`
+- `list_scheduled_tasks`
+- `update_scheduled_task`
+- `delete_scheduled_task`
+
+## Installation
+
+### Bazaar
+
+Install `SiYuan Agent` from the SiYuan community bazaar and enable it in Settings.
+
+### Manual
+
+1. Download `package.zip` from the latest release.
+2. Extract it to `data/plugins/siyuan-agent/` in your SiYuan workspace.
+3. Restart SiYuan and enable the plugin.
+
+## Configuration
+
+After enabling the plugin, open its settings and fill in:
+
+- `API Base URL`: for example `https://api.openai.com/v1`
+- `API Key`
+- `Model`: for example `gpt-4o`, `gpt-4.1`, or another compatible model
+- `Custom Instructions`: optional behavior preferences
+- `Guide Document`: optional but recommended long-term instruction document
+- `Default Notebook`: optional default target for create/write tasks
+- `LangSmith Tracing`: optional debugging integration
+
+## Typical workflow
+
+1. Open the panel from the top bar.
+2. Ask a question, or send selected editor content with `Option + Command + L`.
+3. Let the agent search, read, summarize, create, or edit notes in SiYuan.
+4. Use `/init` once to help the agent learn your notebook structure and writing habits.
+5. Use scheduled tasks for recurring summaries, reminders, or routine note maintenance.
+
+## Notes
+
+- You need to provide your own model endpoint and API key.
+- Write operations act on real SiYuan content, so review important edits.
+- The plugin prefers real tool calls over invented answers.
+- Destructive document deletion is not exposed by default.
+
+## Development
 
 ```bash
-pnpm install
-pnpm run dev
+npm install
+npm run build
+npm run test
 ```
 
-构建发布包：
+Repository: [RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent)
 
-```bash
-pnpm run build
-```
-
-测试：
-
-```bash
-pnpm run test
-```
-
-## 许可证
+## License
 
 MIT

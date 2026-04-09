@@ -1,8 +1,8 @@
 {
   "name": "siyuan-agent",
   "version": "0.1.0",
-  "description": "AI agent assistant plugin for SiYuan",
-  "main": ".src/index.js",
+  "description": "AI agent plugin for SiYuan with chat, note actions, and scheduled tasks",
+  "main": "dist/index.js",
   "scripts": {
     "lint": "eslint . --fix --cache",
     "dev": "webpack --mode development",
@@ -11,8 +11,22 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": [],
+  "keywords": [
+    "siyuan",
+    "ai",
+    "agent",
+    "automation",
+    "notes"
+  ],
   "author": "azusa",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RiviaAzusa/siyuan-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RiviaAzusa/siyuan-agent/issues"
+  },
+  "homepage": "https://github.com/RiviaAzusa/siyuan-agent#readme",
   "license": "MIT",
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",

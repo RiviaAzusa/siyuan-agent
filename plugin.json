@@ -16,19 +16,22 @@
     "zh_CN": "思源 AI 助手"
   },
   "description": {
-    "default": "AI agent assistant for SiYuan with chat panel, streaming output, and tool calling",
-    "zh_CN": "思源笔记 AI 智能助手，支持对话面板、流式输出和工具调用"
+    "default": "AI agent for SiYuan with chat, note actions, and scheduled tasks",
+    "zh_CN": "思源笔记 AI 助手，支持对话、笔记操作和定时任务"
   },
   "readme": {
     "default": "README.md",
-    "zh_CN": "README.md"
+    "zh_CN": "README_zh_CN.md"
   },
   "funding": {},
   "keywords": [
     "AI",
     "agent",
     "chat",
+    "automation",
+    "siyuan",
     "智能助手",
-    "对话"
+    "对话",
+    "定时任务"
   ]
 }
