@@ -11,6 +11,80 @@ import type {
 export const INDEX_STORAGE = "chat-sessions-index";
 export const SESSION_PREFIX = "chat-session-";
 
+/* ── persistence abstraction ────────────────────────────────────────────
+ *  SiYuan's Plugin.saveData / loadData internally use `fetchPost`, which
+ *  silently swallows the callback when `processMessage` returns false
+ *  (response.code < 0). This leaves the returned Promise unresolved
+ *  forever. We bypass fetchPost with native fetch to avoid the hang.
+ * ──────────────────────────────────────────────────────────────────── */
+
+export interface PluginStorage {
+	save(name: string, data: any): Promise<void>;
+	load(name: string): Promise<any>;
+	remove(name: string): Promise<void>;
+}
+
+export function createPluginStorage(plugin: Plugin): PluginStorage {
+	function storagePath(name: string): string {
+		return `/data/storage/petal/${plugin.name}/${name.replace(/[/\\]+/g, "")}`;
+	}
+
+	return {
+		async save(name: string, data: any): Promise<void> {
+			const p = storagePath(name);
+			const blob = typeof data === "object"
+				? new Blob([JSON.stringify(data)], { type: "application/json" })
+				: new Blob([data]);
+			const file = new File([blob], p.split("/").pop()!);
+			const fd = new FormData();
+			fd.append("path", p);
+			fd.append("file", file);
+			fd.append("isDir", "false");
+			const resp = await fetch("/api/file/putFile", { method: "POST", body: fd });
+			const json = await resp.json();
+			if (json.code !== 0) {
+				throw new Error(json.msg || `putFile error code ${json.code}`);
+			}
+			plugin.data[name] = data;
+		},
+
+		async load(name: string): Promise<any> {
+			const p = storagePath(name);
+			const resp = await fetch("/api/file/getFile", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: p }),
+			});
+			if (resp.status === 202) {
+				plugin.data[name] = "";
+				return undefined;
+			}
+			const ct = resp.headers.get("content-type") || "";
+			if (ct.includes("application/json")) {
+				const data = await resp.json();
+				plugin.data[name] = data;
+				return data;
+			}
+			const text = await resp.text();
+			plugin.data[name] = text;
+			return text;
+		},
+
+		async remove(name: string): Promise<void> {
+			const p = storagePath(name);
+			const resp = await fetch("/api/file/removeFile", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: p }),
+			});
+			const json = await resp.json();
+			if (json.code !== 0) {
+				throw new Error(json.msg || `removeFile error code ${json.code}`);
+			}
+		},
+	};
+}
+
 function genId(): string {
 	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
@@ -146,7 +220,7 @@ export class SessionStore {
 	private loadPromise: Promise<void> | null = null;
 	private loaded = false;
 
-	constructor(private readonly plugin: Plugin) {}
+	constructor(private readonly storage: PluginStorage) {}
 
 	subscribe(listener: () => void): () => void {
 		this.listeners.add(listener);
@@ -191,8 +265,7 @@ export class SessionStore {
 	async loadSession(id: string): Promise<SessionData> {
 		await this.ensureLoaded();
 		const key = SESSION_PREFIX + id;
-		await this.plugin.loadData(key);
-		const raw = this.plugin.data[key];
+		const raw = await this.storage.load(key);
 		const fallbackEntry = this.sessionIndex.sessions.find((entry) => entry.id === id);
 		if (!raw) {
 			if (fallbackEntry) {
@@ -252,8 +325,7 @@ export class SessionStore {
 			this.sessionIndex.activeId = normalized.id;
 		}
 		await this.persistIndex();
-		await this.plugin.saveData(SESSION_PREFIX + normalized.id, normalized);
-		this.plugin.data[SESSION_PREFIX + normalized.id] = normalized;
+		await this.storage.save(SESSION_PREFIX + normalized.id, normalized);
 		if (options.notify !== false) {
 			this.notify();
 		}
@@ -273,16 +345,14 @@ export class SessionStore {
 		const index = this.sessionIndex.sessions.findIndex((session) => session.id === id);
 		if (index < 0) return;
 		const [removed] = this.sessionIndex.sessions.splice(index, 1);
-		await this.plugin.removeData(SESSION_PREFIX + id);
-		delete this.plugin.data[SESSION_PREFIX + id];
+		await this.storage.remove(SESSION_PREFIX + id);
 		if (removed.kind === "chat" && this.sessionIndex.activeId === id) {
 			const chatSessions = this.sessionIndex.sessions.filter((session) => session.kind === "chat");
 			if (chatSessions.length === 0) {
 				const created = makeChatSessionData();
 				this.sessionIndex.sessions.push(makeSessionIndexEntry(created));
 				this.sessionIndex.activeId = created.id;
-				await this.plugin.saveData(SESSION_PREFIX + created.id, created);
-				this.plugin.data[SESSION_PREFIX + created.id] = created;
+				await this.storage.save(SESSION_PREFIX + created.id, created);
 			} else {
 				const next = [...chatSessions].sort((a, b) => b.updated - a.updated)[0];
 				this.sessionIndex.activeId = next.id;
@@ -293,8 +363,7 @@ export class SessionStore {
 	}
 
 	private async loadInternal(): Promise<void> {
-		await this.plugin.loadData(INDEX_STORAGE);
-		const rawIndex = this.plugin.data[INDEX_STORAGE];
+		const rawIndex = await this.storage.load(INDEX_STORAGE);
 		if (rawIndex && Array.isArray(rawIndex.sessions)) {
 			this.sessionIndex = {
 				activeId: typeof rawIndex.activeId === "string" ? rawIndex.activeId : "",
@@ -322,8 +391,7 @@ export class SessionStore {
 	}
 
 	private async migrateLegacyStore(): Promise<void> {
-		await this.plugin.loadData("chat-history");
-		const legacy = this.plugin.data["chat-history"];
+		const legacy = await this.storage.load("chat-history");
 		if (legacy && Array.isArray(legacy.sessions) && legacy.sessions.length > 0) {
 			const entries: SessionIndexEntry[] = [];
 			for (const rawSession of legacy.sessions) {
@@ -342,8 +410,7 @@ export class SessionStore {
 					},
 				});
 				entries.push(makeSessionIndexEntry(session));
-				await this.plugin.saveData(SESSION_PREFIX + session.id, session);
-				this.plugin.data[SESSION_PREFIX + session.id] = session;
+				await this.storage.save(SESSION_PREFIX + session.id, session);
 			}
 			this.sessionIndex = {
 				activeId: typeof legacy.activeId === "string" ? legacy.activeId : entries[0].id,
@@ -356,8 +423,7 @@ export class SessionStore {
 			activeId: session.id,
 			sessions: [makeSessionIndexEntry(session)],
 		};
-		await this.plugin.saveData(SESSION_PREFIX + session.id, session);
-		this.plugin.data[SESSION_PREFIX + session.id] = session;
+		await this.storage.save(SESSION_PREFIX + session.id, session);
 	}
 
 	private async ensureChatSeed(): Promise<void> {
@@ -366,8 +432,7 @@ export class SessionStore {
 			const session = makeChatSessionData();
 			this.sessionIndex.sessions.push(makeSessionIndexEntry(session));
 			this.sessionIndex.activeId = session.id;
-			await this.plugin.saveData(SESSION_PREFIX + session.id, session);
-			this.plugin.data[SESSION_PREFIX + session.id] = session;
+			await this.storage.save(SESSION_PREFIX + session.id, session);
 			return;
 		}
 		const hasActiveChat = chatSessions.some((session) => session.id === this.sessionIndex.activeId);
@@ -378,7 +443,6 @@ export class SessionStore {
 	}
 
 	private async persistIndex(): Promise<void> {
-		await this.plugin.saveData(INDEX_STORAGE, this.sessionIndex);
-		this.plugin.data[INDEX_STORAGE] = this.sessionIndex;
+		await this.storage.save(INDEX_STORAGE, this.sessionIndex);
 	}
 }

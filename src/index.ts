@@ -11,7 +11,7 @@ import "./index.scss";
 import { AgentConfig, DEFAULT_CONFIG } from "./types";
 import { ChatPanel } from "./ui/chat-panel";
 import { getDefaultTools } from "./core/tools";
-import { SessionStore } from "./core/session-store";
+import { SessionStore, createPluginStorage } from "./core/session-store";
 import { ScheduledTaskManager } from "./core/scheduled-task-manager";
 
 const CONFIG_STORAGE = "agent-config";
@@ -36,7 +36,7 @@ export default class SiYuanAgent extends Plugin {
 		(globalThis as any).siyuanApp = this.app;
 
 		let tools = getDefaultTools(() => this.getConfig(), () => this.scheduledTaskManager);
-		this.sessionStore = new SessionStore(this);
+		this.sessionStore = new SessionStore(createPluginStorage(this));
 		this.scheduledTaskManager = new ScheduledTaskManager({
 			store: this.sessionStore,
 			getConfig: () => this.getConfig(),

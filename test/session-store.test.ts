@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { ScheduledTaskMeta } from "../src/types";
-import { SessionStore } from "../src/core/session-store";
+import { SessionStore, type PluginStorage } from "../src/core/session-store";
 
-class FakePlugin {
-	data: Record<string, any> = {};
-
-	async loadData(_storageName: string): Promise<void> {}
-
-	async saveData(storageName: string, content: any): Promise<void> {
-		this.data[storageName] = content;
-	}
-
-	async removeData(storageName: string): Promise<void> {
-		delete this.data[storageName];
-	}
+function createFakeStorage(): PluginStorage {
+	const data: Record<string, any> = {};
+	return {
+		async save(name: string, content: any): Promise<void> {
+			data[name] = content;
+		},
+		async load(name: string): Promise<any> {
+			return data[name] ?? undefined;
+		},
+		async remove(name: string): Promise<void> {
+			delete data[name];
+		},
+	};
 }
 
 function createTask(): ScheduledTaskMeta {
@@ -36,8 +37,7 @@ function createTask(): ScheduledTaskMeta {
 
 describe("SessionStore", () => {
 	it("keeps chat and scheduled task sessions in the same index with separate kinds", async () => {
-		const plugin = new FakePlugin();
-		const store = new SessionStore(plugin as any);
+		const store = new SessionStore(createFakeStorage());
 
 		await store.ensureLoaded();
 		const chatSessions = store.listSessions("chat");
@@ -54,8 +54,7 @@ describe("SessionStore", () => {
 	});
 
 	it("deleting a scheduled task session does not disturb the active chat session", async () => {
-		const plugin = new FakePlugin();
-		const store = new SessionStore(plugin as any);
+		const store = new SessionStore(createFakeStorage());
 
 		await store.ensureLoaded();
 		const activeChatId = store.getIndex().activeId;
