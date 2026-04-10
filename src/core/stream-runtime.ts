@@ -12,7 +12,9 @@ import type {
 	RunAgentStreamResult,
 	ToolUIEvent,
 	ToolUIEventPayload,
+	UiMessage,
 } from "../types";
+import { UiMessageBuilder, ensureMessagesUi } from "./ui-message-builder";
 
 function genId(): string {
 	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -47,6 +49,8 @@ function cloneState(source: AgentState | null | undefined): AgentState {
 	return {
 		...source,
 		messages: Array.isArray(source.messages) ? [...source.messages] : source.messages,
+		messagesUi: Array.isArray(source.messagesUi) ? [...source.messagesUi] : source.messagesUi,
+		compaction: source.compaction ? { ...source.compaction } : source.compaction,
 		toolUIEvents: Array.isArray(source.toolUIEvents) ? [...source.toolUIEvents] : source.toolUIEvents,
 	};
 }
@@ -212,6 +216,32 @@ function createPendingAiMessage(
 	});
 }
 
+/**
+ * Build a serialised AI message dict suitable for `messagesUi`.
+ * This mirrors the LangChain serialisation format so the UI can render
+ * it identically to a persisted message.
+ */
+function buildCurrentAiDict(
+	content: string,
+	reasoning: string,
+	toolCalls: any[],
+): Record<string, any> | null {
+	if (!content && !reasoning && toolCalls.length === 0) return null;
+	const kwargs: Record<string, any> = { content };
+	if (reasoning) {
+		kwargs.additional_kwargs = { reasoning_content: reasoning };
+	}
+	if (toolCalls.length > 0) {
+		kwargs.tool_calls = [...toolCalls];
+	}
+	return {
+		lc: 1,
+		type: "constructor",
+		id: ["langchain_core", "messages", "AIMessage"],
+		kwargs,
+	};
+}
+
 function shouldAppendRecoveredMessage(messages: any[], message: any): boolean {
 	const lastMessage = messages[messages.length - 1];
 	if (!lastMessage) return true;
@@ -262,15 +292,28 @@ function resetPendingRecovery(parserState: ChunkParserState): void {
 export function mergeState(
 	savedState: Record<string, any> | null,
 	inputMsgStr?: string,
-): { messages: BaseMessage[] } {
+): { messages: BaseMessage[]; messagesUi?: UiMessage[]; compaction?: any } {
 	let messages: BaseMessage[] = [];
+
+	/* Inject compaction summary as a leading system message so the LLM
+	   retains context from compressed turns. */
+	const compaction = savedState?.compaction ? { ...savedState.compaction } : undefined;
+	if (compaction?.summary) {
+		messages.push(new SystemMessage({
+			content: `[Conversation summary from earlier turns]\n${compaction.summary}`,
+		}));
+	}
+
 	if (savedState?.messages && Array.isArray(savedState.messages)) {
-		messages = messagesFromDict(savedState.messages);
+		messages = messages.concat(messagesFromDict(savedState.messages));
 	}
-	if (inputMsgStr) {
-		messages.push(new HumanMessage({ content: inputMsgStr }));
+	const humanMsg = inputMsgStr ? new HumanMessage({ content: inputMsgStr }) : null;
+	if (humanMsg) {
+		messages.push(humanMsg);
 	}
-	return { messages };
+
+	const messagesUi = Array.isArray(savedState?.messagesUi) ? [...savedState!.messagesUi] : undefined;
+	return { messages, messagesUi, compaction };
 }
 
 export function buildRecoverableState(parserState: ChunkParserState): AgentState {
@@ -309,7 +352,7 @@ interface RunAgentStreamParams {
 	agent: {
 		stream: (input: unknown, options: Record<string, any>) => Promise<AsyncIterable<[string, any]>>;
 	};
-	input: { messages: BaseMessage[] };
+	input: { messages: BaseMessage[]; messagesUi?: UiMessage[]; compaction?: any };
 	signal?: AbortSignal;
 	callbacks?: unknown[];
 	recursionLimit?: number;
@@ -327,6 +370,15 @@ export async function runAgentStream({
 	onUiEvent,
 }: RunAgentStreamParams): Promise<RunAgentStreamResult> {
 	const parserState = createParserState(input as AgentState, existingToolUIEvents);
+
+	/* Initialise UI message builder from existing messagesUi or empty */
+	const uiBuilder = Array.isArray(input.messagesUi) && input.messagesUi.length > 0
+		? UiMessageBuilder.fromExisting(input.messagesUi)
+		: new UiMessageBuilder();
+
+	/* Track the latest serialised AI message dict for the builder */
+	let currentAiDict: Record<string, any> | null = null;
+
 	let aborted = false;
 	let error: unknown;
 
@@ -359,6 +411,7 @@ export async function runAgentStream({
 					}
 
 					const toolCallChunks = Array.isArray(message?.tool_call_chunks) ? message.tool_call_chunks : [];
+					const newToolCallIds: string[] = [];
 					for (const toolCallChunk of toolCallChunks) {
 						if (!toolCallChunk?.name) continue;
 						const dedupeKey = resolveToolCallStartKey(toolCallChunk);
@@ -377,6 +430,7 @@ export async function runAgentStream({
 								index: parserState.lastToolCallIndex,
 								name: toolCallChunk.name,
 							};
+							newToolCallIds.push(toolCallId);
 						}
 						onUiEvent?.({
 							type: "tool_call_start",
@@ -385,6 +439,24 @@ export async function runAgentStream({
 							toolCallId: toolCallId || undefined,
 							args: toolCallChunk.args,
 						});
+					}
+
+					/* Update AI dict BEFORE creating ToolMessageUi entries
+					   so tool_calls live on the AI message in messagesUi. */
+					if (textContent || newToolCallIds.length > 0) {
+						currentAiDict = buildCurrentAiDict(
+							parserState.contentBuffer,
+							parserState.reasoningBuffer,
+							parserState.pendingToolCalls,
+						);
+						if (currentAiDict) {
+							uiBuilder.pushOrUpdateAi(currentAiDict);
+						}
+					}
+					for (const tcId of newToolCallIds) {
+						const mapped = parserState.toolCallMap[tcId];
+						if (!mapped) continue;
+						uiBuilder.onToolCallStart(mapped.name || "unknown", tcId);
 					}
 				} else if (messageType === "tool" || messageType === "ToolMessage") {
 					flushCurrentAiTurn(parserState, { allowToolOnly: true });
@@ -395,15 +467,21 @@ export async function runAgentStream({
 						content: result,
 						tool_call_id: getMessageToolCallId(message),
 					}));
+					const tcId = getMessageToolCallId(message);
+					const isError = typeof message.content === "string"
+						&& message.content.startsWith("Error:");
+					uiBuilder.onToolResult(tcId, isError);
 					onUiEvent?.({
 						type: "tool_result",
-						toolCallId: getMessageToolCallId(message) || undefined,
+						toolCallId: tcId || undefined,
 						result,
 					});
+					currentAiDict = null;
 				}
 			} else if (streamType === "values") {
 				parserState.currentState = data as AgentState;
 				resetPendingRecovery(parserState);
+				currentAiDict = null;
 			} else if (streamType === "custom") {
 				const raw = typeof data === "string" ? data : JSON.stringify(data);
 				const event = normalizeToolUIEvent(raw, parserState.lastToolCallIndex);
@@ -413,6 +491,7 @@ export async function runAgentStream({
 					event.toolName = event.toolName || mapped.name;
 				}
 				parserState.toolUIEvents.push(event);
+				uiBuilder.onToolUiEvent(event);
 				onUiEvent?.({
 					type: "tool_ui",
 					event,
@@ -428,6 +507,8 @@ export async function runAgentStream({
 
 	const lastState = buildRecoverableState(parserState);
 	lastState.toolUIEvents = [...parserState.toolUIEvents];
+	lastState.messagesUi = uiBuilder.finalise();
+	lastState.compaction = (input as AgentState).compaction;
 
 	return {
 		lastState,

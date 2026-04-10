@@ -1,4 +1,5 @@
 import { Plugin, showMessage, openTab } from "siyuan";
+import { ChatOpenAI } from "@langchain/openai";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
 	AgentConfig,
@@ -8,9 +9,12 @@ import {
 	SessionIndexEntry,
 	ToolUIEvent,
 	ToolUIEventPayload,
+	ToolMessageUi,
+	UiMessage,
 	DEFAULT_CONFIG,
 	INIT_PROMPT,
 	SLASH_COMMANDS,
+	isToolMessageUi,
 } from "../types";
 import { makeAgent, makeTracer } from "../core/agent";
 import { mergeState, runAgentStream } from "../core/stream-runtime";
@@ -18,6 +22,8 @@ import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
 import { groupTaskRuns, type TaskRunGroup } from "./task-run-group";
+import { UiMessageBuilder, ensureMessagesUi } from "../core/ui-message-builder";
+import { compactMessages } from "../core/compaction";
 const CONFIG_STORAGE = "agent-config";
 
 /** Extract the role string from either a live BaseMessage or a serialised dict. */
@@ -492,11 +498,14 @@ export class ChatPanel {
 			nameEl.textContent = entry?.title || "New Chat";
 		this.updateSessionToggleState();
 
-	/* Re-render messages from state */
+	/* Lazy-migrate old sessions that lack messagesUi */
+		if (!s.state) s.state = {};
+		ensureMessagesUi(s.state);
+
+	/* Re-render messages from messagesUi */
 		this.messagesEl.innerHTML = "";
-		const messages = normalizeMessagesForDisplay(s.state?.messages || []);
-		const toolUIEvents = Array.isArray(s.state?.toolUIEvents) ? s.state.toolUIEvents as ToolUIEvent[] : [];
-		this.renderConversationMessages(messages, toolUIEvents);
+		const messagesUi: UiMessage[] = Array.isArray(s.state?.messagesUi) ? s.state.messagesUi : [];
+		this.renderConversationMessagesUi(messagesUi);
 	}
 
 	/* --- Send --- */
@@ -515,6 +524,14 @@ export class ChatPanel {
 		const config = await this.getConfig();
 		if (!config.apiKey) {
 			showMessage("Please configure API Key in plugin settings first.");
+			return;
+		}
+
+		/* Handle /compact command */
+		const compactMatch = text.match(/^\/compac?t(?:\s+([\s\S]*))?$/i);
+		if (compactMatch) {
+			this.textareaEl.value = "";
+			await this.handleCompact(config, (compactMatch[1] || "").trim());
 			return;
 		}
 
@@ -567,10 +584,28 @@ export class ChatPanel {
 		let curBuffer = "";
 		const pendingToolEls: HTMLElement[] = [];
 		const existingToolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
+
+		/* Lazy-migrate old sessions before merging */
+		if (!s.state) s.state = {};
+		ensureMessagesUi(s.state);
+
 		const input = mergeState(s.state ?? null, content) as any;
+
+		/* Push the human message into the carried-over messagesUi */
+		const humanMsgDict = {
+			lc: 1,
+			type: "constructor",
+			id: ["langchain_core", "messages", "HumanMessage"],
+			kwargs: { content },
+		};
+		if (!Array.isArray(input.messagesUi)) input.messagesUi = [];
+		input.messagesUi.push(humanMsgDict);
+
 		let latestState: AgentState = {
 			...s.state,
 			messages: input.messages,
+			messagesUi: input.messagesUi,
+			compaction: input.compaction,
 			toolUIEvents: existingToolUIEvents,
 		};
 
@@ -686,6 +721,62 @@ export class ChatPanel {
 		}
 	}
 
+	/* --- /compact --- */
+
+	private async handleCompact(config: AgentConfig, requirement: string): Promise<void> {
+		const s = this.activeSession;
+		if (!s.state?.messages || s.state.messages.length === 0) {
+			showMessage("没有可压缩的上下文。");
+			return;
+		}
+
+		this.setLoading(true);
+		try {
+			const model = new ChatOpenAI({
+				model: config.model,
+				temperature: 0,
+				apiKey: config.apiKey,
+				configuration: {
+					dangerouslyAllowBrowser: true,
+					baseURL: config.apiBaseURL,
+				},
+			});
+			const summary = await compactMessages(s.state, {
+				model,
+				keepRecentTurns: 4,
+				requirement: requirement || undefined,
+				source: "manual",
+			});
+			if (!summary) {
+				showMessage("对话轮次过少，无需压缩。");
+				return;
+			}
+
+			/* Append a notice-style ToolMessageUi */
+			if (!Array.isArray(s.state.messagesUi)) s.state.messagesUi = [];
+			const notice: ToolMessageUi = {
+				type: "tool_message_ui",
+				toolCallId: `compact-${Date.now().toString(36)}`,
+				toolName: "compact",
+				status: "done",
+				summary: `已按要求压缩上下文（${requirement || "默认"}）`,
+				events: [],
+				startedAt: Date.now(),
+				finishedAt: Date.now(),
+			};
+			s.state.messagesUi.push(notice);
+
+			s.updated = Date.now();
+			await this.store.saveSession(s);
+			showMessage("上下文已压缩。");
+			this.renderCurrentSession();
+		} catch (err) {
+			showMessage(`压缩失败: ${String(err)}`);
+		} finally {
+			this.setLoading(false);
+		}
+	}
+
 	addContext(text: string): void {
 		this.pendingContext = text;
 		this.contextBar.classList.remove("fn__none");
@@ -795,6 +886,99 @@ export class ChatPanel {
 					this.appendStaticMessage("tool", result, null, toolName, undefined, -1, currentListEl);
 				}
 			}
+		}
+
+		if (currentAssistantShell)
+			this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
+	}
+
+	/**
+	 * Render conversation from `messagesUi`.
+	 *
+	 * UiMessage[] contains:
+	 *   - HumanMessage dicts  → conversation turn header
+	 *   - AIMessage dicts     → assistant shell with content + tool_calls
+	 *   - ToolMessageUi       → rendered via events, keyed by toolCallId
+	 *
+	 * AI messages and their following ToolMessageUi entries form one visual
+	 * "assistant turn".
+	 */
+	private renderConversationMessagesUi(messagesUi: UiMessage[], targetEl?: HTMLElement): void {
+		let currentListEl: HTMLElement | null = null;
+		let currentAssistantShell: AssistantMessageShell | null = null;
+
+		for (const m of messagesUi) {
+			if (isToolMessageUi(m)) {
+				/* ToolMessageUi: attach to current assistant shell */
+				if (!currentListEl) {
+					const turn = this.createConversationTurn(undefined, targetEl);
+					currentListEl = turn.listEl;
+				}
+				if (!currentAssistantShell) {
+					currentAssistantShell = this.createAssistantMessageShell();
+					currentListEl.appendChild(currentAssistantShell.el);
+				}
+				const toolEl = this.createToolCallElement(m.toolName, undefined, undefined, m.toolCallId);
+				this.attachToolElementToShell(currentAssistantShell, toolEl);
+				if (m.events.length > 0) {
+					for (const event of m.events) {
+						this.applyToolUIEvent(toolEl, event);
+					}
+				} else if (m.summary) {
+					/* No events but has a summary (e.g. /compact notice) */
+					const details = toolEl.querySelector("details");
+					const summary = details?.querySelector("summary");
+					if (summary) {
+						summary.innerHTML = this.buildToolSummaryHtml(
+							m.toolName,
+							`<span class="chat-msg__doc-meta">${this.escapeHtml(m.summary)}</span>`,
+						);
+					}
+				}
+				if (m.status === "done" || m.status === "error") {
+					this.finalizeToolElement(toolEl);
+				}
+				this.scrollToBottom();
+				continue;
+			}
+
+			const type = msgType(m);
+			const content = getMessageContent(m);
+			const toolCalls = getMessageToolCalls(m);
+
+			if (type === "human" || type === "user") {
+				const { listEl } = this.createConversationTurn(
+					typeof content === "string" ? content : JSON.stringify(content),
+					targetEl,
+				);
+				currentListEl = listEl;
+				currentAssistantShell = null;
+				continue;
+			}
+
+			if (type === "ai") {
+				if (!currentListEl) {
+					const turn = this.createConversationTurn(undefined, targetEl);
+					currentListEl = turn.listEl;
+				}
+				if (!currentAssistantShell) {
+					currentAssistantShell = this.createAssistantMessageShell();
+					currentListEl.appendChild(currentAssistantShell.el);
+				}
+				if (content) {
+					this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
+					const textEl = document.createElement("div");
+					textEl.className = "chat-msg__text";
+					textEl.innerHTML = renderMarkdown(content);
+					currentAssistantShell.stackEl.appendChild(textEl);
+				}
+				/* Tool call elements are created by the subsequent
+				   ToolMessageUi entries — not here. */
+				this.scrollToBottom();
+				continue;
+			}
+
+			/* Unknown message type — skip */
 		}
 
 		if (currentAssistantShell)
@@ -1535,7 +1719,8 @@ export class ChatPanel {
 		/* Execution history: split into run groups */
 		const messages = normalizeMessagesForDisplay(selected.state?.messages || []);
 		const toolUIEvents = Array.isArray(selected.state?.toolUIEvents) ? selected.state.toolUIEvents as ToolUIEvent[] : [];
-		const runGroups = groupTaskRuns(messages, toolUIEvents);
+		const messagesUi = Array.isArray(selected.state?.messagesUi) ? selected.state.messagesUi as UiMessage[] : [];
+		const runGroups = groupTaskRuns(messages, toolUIEvents, messagesUi);
 		const historyHtml = this.renderRunGroupsHtml(runGroups);
 
 		/* Build detail view */
@@ -1604,7 +1789,11 @@ export class ChatPanel {
 			const timeLabel = group.runAt || "未知时间";
 
 			const host = document.createElement("div");
-			this.renderConversationMessages(group.messages, group.toolUIEvents, host);
+			if (group.messagesUi.length > 0) {
+				this.renderConversationMessagesUi(group.messagesUi, host);
+			} else {
+				this.renderConversationMessages(group.messages, group.toolUIEvents, host);
+			}
 			const bodyHtml = host.innerHTML || `<div class="chat-session-list__empty">无内容</div>`;
 
 			return `<details class="task-run-card ${statusClass}" ${isLatest ? "open" : ""}>

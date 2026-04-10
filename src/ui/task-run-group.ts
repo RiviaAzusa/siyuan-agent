@@ -1,4 +1,5 @@
-import type { ToolUIEvent } from "../types";
+import type { ToolUIEvent, UiMessage, ToolMessageUi } from "../types";
+import { isToolMessageUi } from "../types";
 
 /**
  * Represents a single execution run within a scheduled task session.
@@ -17,6 +18,8 @@ export interface TaskRunGroup {
 	messages: any[];
 	/** ToolUIEvents associated with this run's tool call indices */
 	toolUIEvents: ToolUIEvent[];
+	/** UiMessages for this run (when available) */
+	messagesUi: UiMessage[];
 	/** Inferred run status based on message content */
 	status: "success" | "error" | "unknown";
 }
@@ -97,8 +100,11 @@ function getToolCallIndices(messages: any[]): Set<number> {
  * 
  * Each run starts with a human message whose content begins with "定时任务执行时间：".
  * If no such messages are found (legacy data), all messages are returned as a single group.
+ *
+ * When `messagesUi` is provided, the UI messages are split at the same boundaries
+ * so each group carries its own slice of `messagesUi`.
  */
-export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[]): TaskRunGroup[] {
+export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], messagesUi?: UiMessage[]): TaskRunGroup[] {
 	if (!messages || messages.length === 0) return [];
 
 	// Find run boundaries
@@ -109,6 +115,16 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[]): Tas
 		}
 	}
 
+	/* Build messagesUi run boundaries in parallel */
+	const uiBoundaries: number[] = [];
+	const uiArr = Array.isArray(messagesUi) ? messagesUi : [];
+	for (let i = 0; i < uiArr.length; i++) {
+		const m = uiArr[i];
+		if (!isToolMessageUi(m) && isScheduledRunStart(m)) {
+			uiBoundaries.push(i);
+		}
+	}
+
 	// No scheduled prefix found → legacy fallback as single group
 	if (boundaries.length === 0) {
 		return [{
@@ -116,14 +132,14 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[]): Tas
 			endIndex: messages.length - 1,
 			messages,
 			toolUIEvents,
+			messagesUi: uiArr,
 			status: inferRunStatus(messages),
 		}];
 	}
 
 	// Build tool call index → run mapping
-	// We need to count tool calls across all messages to match toolUIEvent indices
 	let globalToolCallIdx = -1;
-	const toolCallRunMap = new Map<number, number>();  // toolCallIndex → run boundary index
+	const toolCallRunMap = new Map<number, number>();
 	for (let i = 0; i < messages.length; i++) {
 		const runIdx = findRunBoundary(i, boundaries);
 		const toolCalls = messages[i].kwargs?.tool_calls ?? messages[i].tool_calls;
@@ -142,11 +158,18 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[]): Tas
 		const runMessages = messages.slice(start, end + 1);
 		const content = getContent(messages[start]);
 
-		// Collect toolUIEvents for this run
 		const runToolUIEvents = toolUIEvents.filter(ev => {
 			const runIdx = toolCallRunMap.get(ev.toolCallIndex);
 			return runIdx === start;
 		});
+
+		/* Slice messagesUi for this run */
+		let runMessagesUi: UiMessage[] = [];
+		if (uiBoundaries.length > 0) {
+			const uiStart = uiBoundaries[b] ?? 0;
+			const uiEnd = b + 1 < uiBoundaries.length ? uiBoundaries[b + 1] : uiArr.length;
+			runMessagesUi = uiArr.slice(uiStart, uiEnd);
+		}
 
 		groups.push({
 			startIndex: start,
@@ -155,6 +178,7 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[]): Tas
 			taskTitle: extractTaskTitle(content),
 			messages: runMessages,
 			toolUIEvents: runToolUIEvents,
+			messagesUi: runMessagesUi,
 			status: inferRunStatus(runMessages),
 		});
 	}

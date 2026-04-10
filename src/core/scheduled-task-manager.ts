@@ -90,6 +90,10 @@ export function appendTaskRunState(existingState: AgentState | undefined, latest
 			...(Array.isArray(existingState?.messages) ? existingState!.messages : []),
 			...(Array.isArray(latestState.messages) ? latestState.messages : []),
 		],
+		messagesUi: [
+			...(Array.isArray(existingState?.messagesUi) ? existingState!.messagesUi : []),
+			...(Array.isArray(latestState.messagesUi) ? latestState.messagesUi : []),
+		],
 		toolUIEvents: [
 			...(Array.isArray(existingState?.toolUIEvents) ? existingState!.toolUIEvents : []),
 			...(Array.isArray(latestState.toolUIEvents) ? latestState.toolUIEvents : []),
@@ -383,6 +387,14 @@ export class ScheduledTaskManager {
 			const agent = await makeAgent(config, this.options.getTools());
 			const tracer = makeTracer(config);
 			const input = mergeState(null, buildScheduledTaskRunPrompt(task, startedAt));
+			/* Ensure the human message also appears in messagesUi */
+			const promptContent = buildScheduledTaskRunPrompt(task, startedAt);
+			input.messagesUi = [{
+				lc: 1,
+				type: "constructor",
+				id: ["langchain_core", "messages", "HumanMessage"],
+				kwargs: { content: promptContent },
+			}];
 			const result = await runAgentStream({
 				agent,
 				input,
@@ -395,7 +407,16 @@ export class ScheduledTaskManager {
 		} catch (error) {
 			finalStatus = "error";
 			lastError = normalizeError(error);
-			latestState = appendTaskRunState(undefined, mergeState(null, `定时任务执行失败\n\n${lastError}`) as AgentState);
+			const errorContent = `定时任务执行失败\n\n${lastError}`;
+			const errorState = mergeState(null, errorContent) as AgentState;
+			/* Ensure the error human message also appears in messagesUi */
+			errorState.messagesUi = [{
+				lc: 1,
+				type: "constructor",
+				id: ["langchain_core", "messages", "HumanMessage"],
+				kwargs: { content: errorContent },
+			}];
+			latestState = appendTaskRunState(undefined, errorState);
 		}
 
 		const finishedAt = Date.now();

@@ -1,4 +1,4 @@
-import { createAgent } from "langchain";
+import { createAgent, summarizationMiddleware } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
 import { LangChainTracer } from "@langchain/core/tracers/tracer_langchain";
 import { Client } from "langsmith";
@@ -49,10 +49,19 @@ export async function makeAgent(config: AgentConfig, tools: StructuredToolInterf
 		systemPrompt += `\n\n${extraSystemPrompt}`;
 	}
 
+	const middleware = [
+		summarizationMiddleware({
+			model,
+			trigger: { messages: 30 },
+			keep: { messages: 12 },
+		}),
+	] as const;
+
 	return createAgent({
 		model,
 		tools,
 		systemPrompt,
+		middleware,
 	});
 }
 

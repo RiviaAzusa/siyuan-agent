@@ -149,8 +149,48 @@ export interface RunAgentStreamResult {
 	error?: unknown;
 }
 
+/* ── ToolMessageUi: replaces raw ToolMessage in the UI layer ─────────── */
+
+export interface ToolMessageUi {
+	type: "tool_message_ui";
+	toolCallId: string;
+	toolName: string;
+	status: "running" | "done" | "error";
+	summary?: string;
+	events: ToolUIEvent[];
+	startedAt: number;
+	finishedAt?: number;
+}
+
+/**
+ * A single element in `messagesUi`.
+ *   - HumanMessage / AIMessage are kept as LangChain objects (serialised dict).
+ *   - ToolMessage is *never* stored; ToolMessageUi takes its place.
+ */
+export type UiMessage = Record<string, any> | ToolMessageUi;
+
+export function isToolMessageUi(m: UiMessage): m is ToolMessageUi {
+	return (m as any).type === "tool_message_ui";
+}
+
+/* ── Compaction metadata ────────────────────────────────────────────── */
+
+export interface CompactionState {
+	summary: string;
+	summarizedTurnCount: number;
+	lastCompactedAt: number;
+	lastSource: "auto" | "manual";
+	lastRequirement?: string;
+	version: 1;
+}
+
+/* ── Agent state ────────────────────────────────────────────────────── */
+
 export type AgentState = Record<string, any> & {
 	messages?: any[];
+	messagesUi?: UiMessage[];
+	compaction?: CompactionState;
+	/** @deprecated kept for lazy migration only */
 	toolUIEvents?: ToolUIEvent[];
 };
 
@@ -289,6 +329,7 @@ export const INIT_PROMPT = `请对我的思源笔记库做一次全面的初始�
 
 export const SLASH_COMMANDS: { name: string; description: string }[] = [
 	{ name: "/init", description: "探索笔记库，生成用户指南" },
+	{ name: "/compact", description: "手动压缩对话上下文" },
 ];
 
 export const DEFAULT_CONFIG: AgentConfig = {
