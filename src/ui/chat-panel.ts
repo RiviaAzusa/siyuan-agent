@@ -17,6 +17,7 @@ import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
+import { groupTaskRuns, type TaskRunGroup } from "./task-run-group";
 const CONFIG_STORAGE = "agent-config";
 
 /** Extract the role string from either a live BaseMessage or a serialised dict. */
@@ -135,9 +136,11 @@ export class ChatPanel {
 	private store: SessionStore;
 	private taskManager: ScheduledTaskManager;
 	private panelEl: HTMLElement;
-	private viewSwitchEl: HTMLElement;
 	private chatViewEl: HTMLElement;
 	private tasksViewEl: HTMLElement;
+	private settingsViewEl: HTMLElement;
+	private bottomBarEl: HTMLElement;
+	private composerBodyEl: HTMLElement;
 
 	private sessionToggleEl: HTMLButtonElement;
 	private sessionListEl: HTMLElement;
@@ -151,9 +154,10 @@ export class ChatPanel {
 
 	private activeSession: SessionData;
 	private selectedTaskId: string | null = null;
-	private currentView: "chat" | "tasks" = "chat";
+	private currentView: "chat" | "tasks" | "settings" = "chat";
 	private pendingContext: string | null = null;
 	private abortCtrl: AbortController | null = null;
+	private pendingEl: HTMLElement | null = null;
 	private autoScroll = true;
 	private sessionListExpanded = false;
 	private renderingTasks = false;
@@ -187,10 +191,6 @@ export class ChatPanel {
 	private render(): void {
 		this.container.innerHTML = `
 <div class="chat-panel fn__flex-column" style="height:100%">
-	<div class="chat-panel__view-switch">
-		<button class="chat-panel__view-tab chat-panel__view-tab--active b3-button b3-button--text" type="button" data-view="chat">聊天</button>
-		<button class="chat-panel__view-tab b3-button b3-button--text" type="button" data-view="tasks">定时任务</button>
-	</div>
 	<div class="chat-panel__chat-view">
 		<div class="chat-panel__session-bar">
 			<button class="chat-panel__session-toggle b3-button b3-button--text" type="button" aria-expanded="false">
@@ -212,43 +212,59 @@ export class ChatPanel {
 		<div class="chat-panel__session-list fn__none"></div>
 		<div class="chat-panel__context-bar fn__none"></div>
 		<div class="chat-panel__messages fn__flex-1"></div>
-		<div class="chat-panel__input">
-			<textarea class="chat-panel__textarea b3-text-field" rows="3" placeholder="Ask anything..."></textarea>
+	</div>
+	<div class="chat-panel__tasks-view fn__none">
+		<div class="chat-panel__tasks-header"></div>
+		<div class="chat-panel__tasks-board">
+			<div class="chat-panel__tasks-list"></div>
+			<div class="chat-panel__tasks-detail"></div>
+		</div>
+	</div>
+	<div class="chat-panel__settings-view fn__none"></div>
+	<div class="chat-panel__bottom-bar">
+		<div class="chat-panel__composer-body">
+			<div class="chat-panel__input">
+				<textarea class="chat-panel__textarea b3-text-field" rows="3" placeholder="Ask anything..."></textarea>
+			</div>
+		</div>
+		<div class="chat-panel__bottom-footer">
+			<div class="chat-panel__view-switcher" role="tablist" aria-label="视图切换">
+				<button class="chat-panel__switch-btn chat-panel__switch-btn--active" type="button" data-view="chat">聊天</button>
+				<button class="chat-panel__switch-btn" type="button" data-view="tasks">任务</button>
+				<button class="chat-panel__switch-btn" type="button" data-view="settings">设置</button>
+			</div>
 			<div class="chat-panel__actions">
-				<button class="chat-panel__send b3-button b3-button--text">
+				<button class="chat-panel__send b3-button b3-button--text" type="button">
 					<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>
 					Send
 				</button>
 			</div>
 		</div>
 	</div>
-	<div class="chat-panel__tasks-view fn__none">
-		<div class="chat-panel__tasks-summary"></div>
-		<div class="chat-panel__tasks-board">
-			<div class="chat-panel__tasks-list"></div>
-			<div class="chat-panel__tasks-detail"></div>
-		</div>
-	</div>
 </div>`;
 
 		this.panelEl = this.container.querySelector(".chat-panel");
-		this.viewSwitchEl = this.container.querySelector(".chat-panel__view-switch");
 		this.chatViewEl = this.container.querySelector(".chat-panel__chat-view");
 		this.tasksViewEl = this.container.querySelector(".chat-panel__tasks-view");
+		this.settingsViewEl = this.container.querySelector(".chat-panel__settings-view");
+		this.bottomBarEl = this.container.querySelector(".chat-panel__bottom-bar");
+		this.composerBodyEl = this.container.querySelector(".chat-panel__composer-body");
 		this.sessionToggleEl = this.container.querySelector(".chat-panel__session-toggle");
 		this.sessionListEl = this.container.querySelector(".chat-panel__session-list");
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
-		this.tasksSummaryEl = this.container.querySelector(".chat-panel__tasks-summary");
+		this.tasksSummaryEl = this.container.querySelector(".chat-panel__tasks-header");
 		this.taskListEl = this.container.querySelector(".chat-panel__tasks-list");
 		this.taskDetailEl = this.container.querySelector(".chat-panel__tasks-detail");
 		this.applyEditorFontFamily();
 
-		this.viewSwitchEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
+		/* Bottom view switching */
+		this.bottomBarEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
 			button.addEventListener("click", () => {
-				this.setCurrentView(button.dataset.view === "tasks" ? "tasks" : "chat");
+				const view = button.dataset.view;
+				this.setCurrentView(view === "tasks" || view === "settings" ? view : "chat");
 			});
 		});
 
@@ -486,6 +502,12 @@ export class ChatPanel {
 	/* --- Send --- */
 
 	private async send(): Promise<void> {
+		if (this.currentView !== "chat") {
+			this.setCurrentView("chat");
+			this.textareaEl.focus();
+			return;
+		}
+
 		let text = this.textareaEl.value.trim();
 		if (!text && !this.pendingContext)
 			return;
@@ -531,6 +553,12 @@ export class ChatPanel {
 		/* Create assistant message container for streaming */
 		const assistantShell = this.createAssistantMessageShell();
 		listEl.appendChild(assistantShell.el);
+
+		/* Insert pending placeholder (waiting state) */
+		this.pendingEl = document.createElement("div");
+		this.pendingEl.className = "chat-msg__pending";
+		this.pendingEl.innerHTML = `<span class="chat-msg__pending-spinner"></span><span class="chat-msg__pending-text">思考中</span>`;
+		assistantShell.stackEl.appendChild(this.pendingEl);
 		this.scrollToBottom();
 
 		this.abortCtrl = new AbortController();
@@ -546,8 +574,16 @@ export class ChatPanel {
 			toolUIEvents: existingToolUIEvents,
 		};
 
+		const removePending = (): void => {
+			if (this.pendingEl) {
+				this.pendingEl.remove();
+				this.pendingEl = null;
+			}
+		};
+
 		const getTextEl = (): HTMLElement => {
 			if (curTextEl) return curTextEl;
+			removePending();
 			curBuffer = "";
 			this.compactCompletedActivityBlocks(assistantShell, "lookup");
 			curTextEl = document.createElement("div");
@@ -558,6 +594,7 @@ export class ChatPanel {
 
 		const showStreamError = (error: unknown): void => {
 			if (this.abortCtrl?.signal.aborted) return;
+			removePending();
 			const errorEl = document.createElement("p");
 			errorEl.className = "chat-msg__error";
 			errorEl.textContent = `Error: ${String(error)}`;
@@ -584,6 +621,7 @@ export class ChatPanel {
 					}
 
 					if (event.type === "tool_call_start") {
+						removePending();
 						curTextEl = null;
 						const el = this.createToolCallElement(
 							event.toolName,
@@ -624,6 +662,11 @@ export class ChatPanel {
 		} catch (err) {
 			showStreamError(err);
 		} finally {
+			removePending();
+			/* If aborted and assistant shell is empty, remove it */
+			if (this.abortCtrl?.signal.aborted && assistantShell.stackEl.children.length === 0) {
+				assistantShell.el.remove();
+			}
 			this.compactCompletedActivityBlocks(assistantShell, "lookup");
 
 			s.state = latestState;
@@ -1375,6 +1418,7 @@ export class ChatPanel {
 		this.selectedTaskId = this.taskManager.listTaskEntries()[0]?.id || null;
 		this.renderCurrentSession();
 		await this.renderTasksView();
+		await this.renderSettingsView();
 		this.setCurrentView(this.currentView);
 		this.updateSessionToggleState();
 	}
@@ -1393,15 +1437,21 @@ export class ChatPanel {
 		this.refreshSessionListUi();
 	}
 
-	private setCurrentView(view: "chat" | "tasks"): void {
+	private setCurrentView(view: "chat" | "tasks" | "settings"): void {
 		this.currentView = view;
 		this.chatViewEl.classList.toggle("fn__none", view !== "chat");
 		this.tasksViewEl.classList.toggle("fn__none", view !== "tasks");
-		this.viewSwitchEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
-			button.classList.toggle("chat-panel__view-tab--active", button.dataset.view === view);
+		this.settingsViewEl.classList.toggle("fn__none", view !== "settings");
+		this.bottomBarEl.classList.toggle("chat-panel__bottom-bar--chat", view === "chat");
+		this.composerBodyEl.classList.toggle("chat-panel__composer-body--collapsed", view !== "chat");
+		this.bottomBarEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
+			button.classList.toggle("chat-panel__switch-btn--active", button.dataset.view === view);
+			button.setAttribute("aria-selected", String(button.dataset.view === view));
 		});
 		if (view === "tasks") {
 			void this.renderTasksView();
+		} else if (view === "settings") {
+			void this.renderSettingsView();
 		}
 	}
 
@@ -1441,18 +1491,7 @@ export class ChatPanel {
 		const runningCount = entries.filter((entry) => entry.task?.lastRunStatus === "running").length;
 		const errorCount = entries.filter((entry) => entry.task?.lastRunStatus === "error").length;
 		this.tasksSummaryEl.innerHTML = `
-<div class="task-summary-card">
-	<div class="task-summary-card__value">${entries.length}</div>
-	<div class="task-summary-card__label">任务总数</div>
-</div>
-<div class="task-summary-card">
-	<div class="task-summary-card__value">${runningCount}</div>
-	<div class="task-summary-card__label">执行中</div>
-</div>
-<div class="task-summary-card">
-	<div class="task-summary-card__value">${errorCount}</div>
-	<div class="task-summary-card__label">失败</div>
-</div>
+<span class="chat-panel__tasks-stats">${entries.length} 个任务${runningCount ? ` / ${runningCount} 执行中` : ""}${errorCount ? ` / ${errorCount} 失败` : ""}</span>
 <button class="chat-panel__task-create b3-button" type="button">新建任务</button>`;
 		this.tasksSummaryEl.querySelector(".chat-panel__task-create")?.addEventListener("click", () => {
 			void this.openTaskEditor();
@@ -1471,10 +1510,11 @@ export class ChatPanel {
 
 		this.taskListEl.innerHTML = entries.map((entry) => {
 			const task = entry.task!;
+			const statusLabel = this.taskStatusText(task);
+			const scheduleLabel = this.formatTaskSchedule(task);
 			return `<button class="task-list-item${entry.id === this.selectedTaskId ? " task-list-item--active" : ""}" type="button" data-task-id="${entry.id}">
 				<div class="task-list-item__title">${this.escapeHtml(task.title)}</div>
-				<div class="task-list-item__meta">${this.escapeHtml(this.taskStatusText(task))}</div>
-				<div class="task-list-item__time">下次执行：${this.escapeHtml(this.formatDateTime(task.nextRunAt))}</div>
+				<div class="task-list-item__meta">${this.escapeHtml(statusLabel)} · ${this.escapeHtml(scheduleLabel)}</div>
 			</button>`;
 		}).join("");
 		this.taskListEl.querySelectorAll<HTMLElement>("[data-task-id]").forEach((item) => {
@@ -1491,42 +1531,56 @@ export class ChatPanel {
 		}
 
 		const task = selected.task;
-		const historyHtml = this.renderTaskHistoryHtml(selected);
+
+		/* Execution history: split into run groups */
+		const messages = normalizeMessagesForDisplay(selected.state?.messages || []);
+		const toolUIEvents = Array.isArray(selected.state?.toolUIEvents) ? selected.state.toolUIEvents as ToolUIEvent[] : [];
+		const runGroups = groupTaskRuns(messages, toolUIEvents);
+		const historyHtml = this.renderRunGroupsHtml(runGroups);
+
+		/* Build detail view */
+		const nextRunText = task.nextRunAt ? this.formatDateTime(task.nextRunAt) : "—";
+		const lastErrorHtml = task.lastRunError
+			? `<div class="task-detail__error">⚠ ${this.escapeHtml(task.lastRunError)}</div>`
+			: "";
+
 		this.taskDetailEl.innerHTML = `
 <div class="task-detail">
 	<div class="task-detail__header">
-		<div>
+		<div class="task-detail__title-area">
 			<h3>${this.escapeHtml(task.title)}</h3>
-			<div class="task-detail__status">${this.escapeHtml(this.taskStatusText(task))}</div>
+			<span class="task-detail__badge task-detail__badge--${task.lastRunStatus}">${this.escapeHtml(this.taskStatusText(task))}</span>
+			<span class="task-detail__next-run">下次执行：${this.escapeHtml(nextRunText)}</span>
 		</div>
 		<div class="task-detail__actions">
-			<button class="b3-button b3-button--text" type="button" data-action="run">立即执行</button>
-			<button class="b3-button b3-button--text" type="button" data-action="toggle">${task.enabled ? "停用" : "启用"}</button>
-			<button class="b3-button b3-button--text" type="button" data-action="edit">编辑</button>
-			<button class="b3-button b3-button--text" type="button" data-action="delete">删除</button>
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${task.enabled ? "停用" : "启用"}" data-action="toggle">
+				<svg style="width:16px;height:16px"><use xlink:href="${task.enabled ? "#iconPause" : "#iconPlay"}"></use></svg>
+			</span>
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="编辑" data-action="edit">
+				<svg style="width:16px;height:16px"><use xlink:href="#iconEdit"></use></svg>
+			</span>
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="删除" data-action="delete">
+				<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
+			</span>
 		</div>
 	</div>
-	<div class="task-detail__grid">
-		<div><span>调度</span><strong>${this.escapeHtml(this.formatTaskSchedule(task))}</strong></div>
-		<div><span>时区</span><strong>${this.escapeHtml(task.timezone)}</strong></div>
-		<div><span>下次执行</span><strong>${this.escapeHtml(this.formatDateTime(task.nextRunAt))}</strong></div>
-		<div><span>上次执行</span><strong>${this.escapeHtml(this.formatDateTime(task.lastRunAt))}</strong></div>
-		<div><span>累计次数</span><strong>${task.runCount}</strong></div>
-		<div><span>最近错误</span><strong>${this.escapeHtml(task.lastRunError || "—")}</strong></div>
-	</div>
-	<div class="task-detail__prompt">
-		<div class="task-detail__section-title">任务指令</div>
-		<pre>${this.escapeHtml(task.prompt)}</pre>
+	${lastErrorHtml}
+	<div class="task-detail__meta-row">
+		<span>调度：${this.escapeHtml(this.formatTaskSchedule(task))}</span>
+		<span>时区：${this.escapeHtml(task.timezone)}</span>
+		<span>累计 ${task.runCount} 次</span>
+		${task.lastRunAt ? `<span>上次：${this.escapeHtml(this.formatDateTime(task.lastRunAt))}</span>` : ""}
 	</div>
 	<div class="task-detail__history">
 		<div class="task-detail__section-title">执行历史</div>
-		<div class="task-detail__history-body">${historyHtml}</div>
+		${historyHtml}
 	</div>
+	<details class="task-detail__prompt-section">
+		<summary class="task-detail__section-title">任务指令</summary>
+		<pre class="task-detail__prompt-body">${this.escapeHtml(task.prompt)}</pre>
+	</details>
 </div>`;
 
-		this.taskDetailEl.querySelector<HTMLElement>("[data-action='run']")?.addEventListener("click", () => {
-			void this.taskManager.runTaskNow(task.id).catch((error) => showMessage(String(error)));
-		});
 		this.taskDetailEl.querySelector<HTMLElement>("[data-action='toggle']")?.addEventListener("click", () => {
 			void this.taskManager.setTaskEnabled(task.id, !task.enabled).catch((error) => showMessage(String(error)));
 		});
@@ -1538,12 +1592,124 @@ export class ChatPanel {
 		});
 	}
 
-	private renderTaskHistoryHtml(session: SessionData): string {
-		const host = document.createElement("div");
-		const messages = normalizeMessagesForDisplay(session.state?.messages || []);
-		const toolUIEvents = Array.isArray(session.state?.toolUIEvents) ? session.state.toolUIEvents as ToolUIEvent[] : [];
-		this.renderConversationMessages(messages, toolUIEvents, host);
-		return host.innerHTML || `<div class="chat-session-list__empty">暂无执行记录</div>`;
+	private renderRunGroupsHtml(groups: TaskRunGroup[]): string {
+		if (!groups.length) {
+			return `<div class="chat-session-list__empty">暂无执行记录</div>`;
+		}
+		const reversed = [...groups].reverse();
+		return reversed.map((group, idx) => {
+			const isLatest = idx === 0;
+			const statusClass = group.status === "error" ? "task-run-card--error" : group.status === "success" ? "task-run-card--success" : "";
+			const statusLabel = group.status === "error" ? "失败" : group.status === "success" ? "成功" : "";
+			const timeLabel = group.runAt || "未知时间";
+
+			const host = document.createElement("div");
+			this.renderConversationMessages(group.messages, group.toolUIEvents, host);
+			const bodyHtml = host.innerHTML || `<div class="chat-session-list__empty">无内容</div>`;
+
+			return `<details class="task-run-card ${statusClass}" ${isLatest ? "open" : ""}>
+				<summary class="task-run-card__header">
+					<span class="task-run-card__time">${this.escapeHtml(timeLabel)}</span>
+					${statusLabel ? `<span class="task-run-card__status">${this.escapeHtml(statusLabel)}</span>` : ""}
+				</summary>
+				<div class="task-run-card__body">${bodyHtml}</div>
+			</details>`;
+		}).join("");
+	}
+
+	private async renderSettingsView(): Promise<void> {
+		const config = await this.getConfig();
+		const guideDocLabel = config.guideDoc?.title || "未设置";
+		const notebookLabel = config.defaultNotebook?.name || "未设置";
+		this.settingsViewEl.innerHTML = `
+<div class="settings-panel">
+	<div class="settings-panel__header">
+		<div>
+			<h3>设置</h3>
+			<p>常用模型与连接配置放在这里，复杂项仍可打开完整设置。</p>
+		</div>
+	</div>
+	<form class="settings-panel__form">
+		<div class="settings-panel__section">
+			<div class="settings-panel__section-title">模型与连接</div>
+			<label class="settings-panel__field">
+				<span>API Base URL</span>
+				<input class="b3-text-field" name="apiBaseURL" value="${this.escapeHtml(config.apiBaseURL || DEFAULT_CONFIG.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
+			</label>
+			<label class="settings-panel__field">
+				<span>API Key</span>
+				<input class="b3-text-field" name="apiKey" type="password" value="${this.escapeHtml(config.apiKey || "")}" placeholder="sk-..." />
+			</label>
+			<label class="settings-panel__field">
+				<span>Model</span>
+				<input class="b3-text-field" name="model" value="${this.escapeHtml(config.model || DEFAULT_CONFIG.model)}" placeholder="gpt-4o" />
+			</label>
+			<label class="settings-panel__field">
+				<span>自定义指令</span>
+				<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(config.customInstructions || "")}</textarea>
+			</label>
+		</div>
+		<div class="settings-panel__section">
+			<div class="settings-panel__section-title">追踪</div>
+			<label class="settings-panel__checkbox">
+				<input type="checkbox" name="langSmithEnabled"${config.langSmithEnabled ? " checked" : ""} />
+				<span>启用 LangSmith Tracing</span>
+			</label>
+			<label class="settings-panel__field">
+				<span>LangSmith API Key</span>
+				<input class="b3-text-field" name="langSmithApiKey" type="password" value="${this.escapeHtml(config.langSmithApiKey || "")}" placeholder="lsv2_..." />
+			</label>
+			<label class="settings-panel__field">
+				<span>LangSmith Endpoint</span>
+				<input class="b3-text-field" name="langSmithEndpoint" value="${this.escapeHtml(config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint)}" placeholder="https://api.smith.langchain.com" />
+			</label>
+			<label class="settings-panel__field">
+				<span>LangSmith Project</span>
+				<input class="b3-text-field" name="langSmithProject" value="${this.escapeHtml(config.langSmithProject || DEFAULT_CONFIG.langSmithProject)}" placeholder="SiYuan-Agent" />
+			</label>
+		</div>
+		<div class="settings-panel__section settings-panel__section--compact">
+			<div class="settings-panel__section-title">知识库默认项</div>
+			<div class="settings-panel__meta-grid">
+				<div><span>用户指南文档</span><strong>${this.escapeHtml(guideDocLabel)}</strong></div>
+				<div><span>默认工作笔记本</span><strong>${this.escapeHtml(notebookLabel)}</strong></div>
+			</div>
+		</div>
+		<div class="settings-panel__actions">
+			<button class="b3-button" type="submit">保存设置</button>
+			<button class="b3-button b3-button--text" type="button" data-action="open-native-settings">更多设置</button>
+		</div>
+	</form>
+</div>`;
+
+		const form = this.settingsViewEl.querySelector<HTMLFormElement>(".settings-panel__form");
+		form?.addEventListener("submit", (event) => {
+			event.preventDefault();
+			void this.saveSettingsForm(form);
+		});
+		this.settingsViewEl.querySelector<HTMLElement>("[data-action='open-native-settings']")?.addEventListener("click", () => {
+			const pluginAny = this.plugin as Plugin & { openSetting?: () => void };
+			pluginAny.openSetting?.();
+		});
+	}
+
+	private async saveSettingsForm(form: HTMLFormElement): Promise<void> {
+		const formData = new FormData(form);
+		const currentConfig = await this.getConfig();
+		const nextConfig: AgentConfig = {
+			...currentConfig,
+			apiBaseURL: String(formData.get("apiBaseURL") || "").trim() || DEFAULT_CONFIG.apiBaseURL,
+			apiKey: String(formData.get("apiKey") || "").trim(),
+			model: String(formData.get("model") || "").trim() || DEFAULT_CONFIG.model,
+			customInstructions: String(formData.get("customInstructions") || ""),
+			langSmithEnabled: formData.get("langSmithEnabled") === "on",
+			langSmithApiKey: String(formData.get("langSmithApiKey") || "").trim(),
+			langSmithEndpoint: String(formData.get("langSmithEndpoint") || "").trim() || DEFAULT_CONFIG.langSmithEndpoint,
+			langSmithProject: String(formData.get("langSmithProject") || "").trim() || DEFAULT_CONFIG.langSmithProject,
+		};
+		this.plugin.data[CONFIG_STORAGE] = nextConfig;
+		await this.plugin.saveData(CONFIG_STORAGE, nextConfig);
+		showMessage("设置已保存");
 	}
 
 	private async openTaskEditor(task?: ScheduledTaskMeta): Promise<void> {
