@@ -2007,14 +2007,14 @@ export class ChatPanel {
 		<span>累计 ${task.runCount} 次</span>
 		${task.lastRunAt ? `<span>上次：${this.escapeHtml(this.formatDateTime(task.lastRunAt))}</span>` : ""}
 	</div>
-	<div class="task-detail__history">
-		<div class="task-detail__section-title">执行历史</div>
-		${historyHtml}
-	</div>
 	<details class="task-detail__prompt-section">
 		<summary class="task-detail__section-title">任务指令</summary>
 		<pre class="task-detail__prompt-body">${this.escapeHtml(task.prompt)}</pre>
 	</details>
+	<div class="task-detail__history">
+		<div class="task-detail__section-title">执行历史</div>
+		${historyHtml}
+	</div>
 </div>`;
 
 		this.taskDetailEl.querySelector<HTMLElement>("[data-action='toggle']")?.addEventListener("click", () => {
