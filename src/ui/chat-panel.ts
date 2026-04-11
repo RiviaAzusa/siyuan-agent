@@ -670,6 +670,9 @@ export class ChatPanel {
 			content = text;
 		}
 
+		/* Remove welcome screen if present */
+		this.messagesEl.querySelector(".chat-panel__welcome")?.remove();
+
 		/* Show user message in UI */
 		const { listEl } = this.createConversationTurn(content);
 
