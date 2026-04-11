@@ -1125,6 +1125,17 @@ export class ChatPanel {
 		let currentListEl: HTMLElement | null = null;
 		let currentAssistantShell: AssistantMessageShell | null = null;
 
+		/* Build toolCallId → args map from AI messages */
+		const toolCallArgsMap = new Map<string, unknown>();
+		for (const m of messagesUi) {
+			if (isToolMessageUi(m)) continue;
+			const toolCalls = getMessageToolCalls(m);
+			for (const tc of toolCalls) {
+				const tcId = getToolCallId(tc);
+				if (tcId && tc.args) toolCallArgsMap.set(tcId, tc.args);
+			}
+		}
+
 		for (const m of messagesUi) {
 			if (isToolMessageUi(m)) {
 				/* ToolMessageUi: attach to current assistant shell */
@@ -1136,7 +1147,8 @@ export class ChatPanel {
 					currentAssistantShell = this.createAssistantMessageShell();
 					currentListEl.appendChild(currentAssistantShell.el);
 				}
-				const toolEl = this.createToolCallElement(m.toolName, undefined, undefined, m.toolCallId);
+				const args = toolCallArgsMap.get(m.toolCallId);
+				const toolEl = this.createToolCallElement(m.toolName, args, undefined, m.toolCallId);
 				this.attachToolElementToShell(currentAssistantShell, toolEl);
 				if (m.events.length > 0) {
 					for (const event of m.events) {
@@ -1374,10 +1386,14 @@ export class ChatPanel {
 		);
 		details.appendChild(summary);
 
-		if (args !== undefined) {
-			const pre = document.createElement("pre");
-			pre.textContent = JSON.stringify(args, null, 2);
-			details.appendChild(pre);
+		if (args !== undefined && args !== null && args !== "") {
+			const argsStr = typeof args === "string" ? args : JSON.stringify(args, null, 2);
+			if (argsStr && argsStr !== "{}" && argsStr !== "\"\"") {
+				const pre = document.createElement("pre");
+				pre.className = "chat-msg__tool-args";
+				pre.textContent = argsStr;
+				details.appendChild(pre);
+			}
 		}
 
 		el.appendChild(details);
@@ -1654,6 +1670,7 @@ export class ChatPanel {
 	private applyToolUIEvent(toolEl: HTMLElement, event: ToolUIEvent): void {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
+		toolEl.dataset.hasEvents = "true";
 		const category = this.getToolCategory(event.toolName || toolEl.dataset.toolName, event.payload);
 		toolEl.dataset.toolCategory = category;
 		toolEl.dataset.toolAction = this.getToolAction(event.toolName || toolEl.dataset.toolName, event.payload);
@@ -1744,6 +1761,9 @@ export class ChatPanel {
 	private appendToolResultToElement(toolEl: HTMLElement, result: string): void {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
+
+		// Skip raw result if the tool already has rich UI events
+		if (toolEl.dataset.hasEvents === "true") return;
 
 		// Skip empty or whitespace-only results
 		const trimmed = result?.trim();
