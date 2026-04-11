@@ -4,6 +4,7 @@ export interface ModelConfig {
 	id: string;
 	name: string;
 	provider: string;
+	serviceId?: string;
 	model: string;
 	apiBaseURL: string;
 	apiKey: string;
@@ -11,6 +12,24 @@ export interface ModelConfig {
 	maxTokens?: number;
 	/** Default temperature */
 	temperature?: number;
+}
+
+export interface ModelServiceModelConfig {
+	id: string;
+	name: string;
+	model: string;
+	/** Max tokens for context window (informational, used for prompt budget) */
+	maxTokens?: number;
+	/** Default temperature */
+	temperature?: number;
+}
+
+export interface ModelServiceConfig {
+	id: string;
+	name: string;
+	apiBaseURL: string;
+	apiKey: string;
+	models: ModelServiceModelConfig[];
 }
 
 export interface AgentConfig {
@@ -25,6 +44,8 @@ export interface AgentConfig {
 	langSmithApiKey?: string;
 	langSmithEndpoint?: string;
 	langSmithProject?: string;
+	/** Model services grouped by provider / endpoint */
+	modelServices?: ModelServiceConfig[];
 	/** Multi-model registry */
 	models?: ModelConfig[];
 	/** Default model ID from the registry (falls back to legacy apiBaseURL/apiKey/model) */
@@ -424,50 +445,97 @@ export const DEFAULT_CONFIG: AgentConfig = {
 	langSmithApiKey: "",
 	langSmithEndpoint: "https://api.smith.langchain.com",
 	langSmithProject: "SiYuan-Agent",
+	modelServices: [],
 	models: [],
 	defaultModelId: "",
 	subAgentModelId: "",
 };
 
-/* ── Model provider presets ─────────────────────────────────────────── */
-
-export interface ModelProviderPreset {
-	provider: string;
-	label: string;
-	apiBaseURL: string;
-	models: string[];
+function cloneLegacyModels(models?: ModelConfig[]): ModelConfig[] {
+	return Array.isArray(models) ? models.map((item) => ({ ...item })) : [];
 }
 
-export const MODEL_PROVIDER_PRESETS: ModelProviderPreset[] = [
-  {
-    provider: "ark",
-    label: "火山引擎",
-    apiBaseURL: "https://ark.cn-beijing.volces.com/api/v3",
-    models: [
-      "doubao-seed-2-0-pro",
-      "doubao-seed-2-0-mini",
-      "doubao-seed-2-0-lite",
-    ],
-  },
-  {
-    provider: "bailian",
-    label: "阿里云百炼",
-    apiBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    models: ["qwen3.6-plus", "qwen3.5-plus"],
-  },
-  {
-    provider: "custom",
-    label: "自定义",
-    apiBaseURL: "",
-    models: [],
-  },
-];
+export function cloneModelServices(services?: ModelServiceConfig[]): ModelServiceConfig[] {
+	return Array.isArray(services)
+		? services.map((service) => ({
+			...service,
+			models: Array.isArray(service.models) ? service.models.map((model) => ({ ...model })) : [],
+		}))
+		: [];
+}
+
+function migrateLegacyModels(models?: ModelConfig[]): ModelServiceConfig[] {
+	const legacyModels = cloneLegacyModels(models);
+	if (legacyModels.length === 0) return [];
+	const services = new Map<string, ModelServiceConfig>();
+	for (const legacyModel of legacyModels) {
+		const serviceKey = `${legacyModel.provider}\u0000${legacyModel.apiBaseURL}\u0000${legacyModel.apiKey}`;
+		let service = services.get(serviceKey);
+		if (!service) {
+			service = {
+				id: `svc_${legacyModel.id}`,
+				name: legacyModel.provider || "OpenAI Compatible",
+				apiBaseURL: legacyModel.apiBaseURL,
+				apiKey: legacyModel.apiKey,
+				models: [],
+			};
+			services.set(serviceKey, service);
+		}
+		service.models.push({
+			id: legacyModel.id,
+			name: legacyModel.name,
+			model: legacyModel.model,
+			maxTokens: legacyModel.maxTokens,
+			temperature: legacyModel.temperature,
+		});
+	}
+	return Array.from(services.values());
+}
+
+export function normalizeAgentConfig(raw?: Partial<AgentConfig> | null): AgentConfig {
+	const hasModelServices = Array.isArray(raw?.modelServices);
+	const modelServices = Array.isArray(raw?.modelServices)
+		? cloneModelServices(raw?.modelServices)
+		: migrateLegacyModels(raw?.models);
+	return {
+		...DEFAULT_CONFIG,
+		...(raw || {}),
+		modelServices,
+		models: hasModelServices ? [] : cloneLegacyModels(raw?.models),
+	};
+}
+
+export function flattenModelServices(services?: ModelServiceConfig[]): ModelConfig[] {
+	if (!Array.isArray(services)) return [];
+	const flattened: ModelConfig[] = [];
+	for (const service of services) {
+		for (const model of service.models || []) {
+			flattened.push({
+				id: model.id,
+				name: model.name,
+				provider: service.name,
+				serviceId: service.id,
+				model: model.model,
+				apiBaseURL: service.apiBaseURL,
+				apiKey: service.apiKey,
+				maxTokens: model.maxTokens,
+				temperature: model.temperature,
+			});
+		}
+	}
+	return flattened;
+}
+
+export function listConfiguredModels(config: AgentConfig): ModelConfig[] {
+	return flattenModelServices(config.modelServices);
+}
 
 /** Resolve a ModelConfig from the registry by ID, falling back to legacy fields. */
 export function resolveModelConfig(config: AgentConfig, modelId?: string): ModelConfig {
 	const id = modelId || config.defaultModelId || "";
-	if (id && Array.isArray(config.models)) {
-		const found = config.models.find((m) => m.id === id);
+	const models = listConfiguredModels(config);
+	if (id) {
+		const found = models.find((m) => m.id === id);
 		if (found) return found;
 	}
 	// Legacy fallback: construct from top-level fields
@@ -493,4 +561,9 @@ export function resolveSubAgentModelConfig(config: AgentConfig): ModelConfig {
 /** Generate a unique model config ID. */
 export function genModelId(): string {
 	return "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+/** Generate a unique model service ID. */
+export function genModelServiceId(): string {
+	return "svc_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }

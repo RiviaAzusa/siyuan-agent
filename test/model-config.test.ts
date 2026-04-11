@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
 	resolveModelConfig,
 	resolveSubAgentModelConfig,
+	normalizeAgentConfig,
 	genModelId,
 	buildSystemPrompt,
 	type AgentConfig,
 	type ModelConfig,
-	DEFAULT_CONFIG,
+	type ModelServiceConfig,
 } from "../src/types";
 
 function makeConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
-	return { ...DEFAULT_CONFIG, ...overrides };
+	return normalizeAgentConfig(overrides);
 }
 
 function makeModel(overrides: Partial<ModelConfig> = {}): ModelConfig {
@@ -21,6 +22,19 @@ function makeModel(overrides: Partial<ModelConfig> = {}): ModelConfig {
 		model: "gpt-4o",
 		apiBaseURL: "https://api.openai.com/v1",
 		apiKey: "sk-test",
+		...overrides,
+	};
+}
+
+function makeService(overrides: Partial<ModelServiceConfig> = {}): ModelServiceConfig {
+	return {
+		id: "svc_1",
+		name: "OpenAI",
+		apiBaseURL: "https://api.openai.com/v1",
+		apiKey: "sk-test",
+		models: [
+			{ id: "test-1", name: "Test Model", model: "gpt-4o" },
+		],
 		...overrides,
 	};
 }
@@ -36,8 +50,16 @@ describe("resolveModelConfig", () => {
 	});
 
 	it("resolves model by ID from registry", () => {
-		const model = makeModel({ id: "m1", name: "My Model", model: "deepseek-chat", apiKey: "ds-key" });
-		const config = makeConfig({ models: [model], defaultModelId: "m1" });
+		const config = makeConfig({
+			modelServices: [makeService({
+				id: "svc_ds",
+				name: "DeepSeek",
+				apiBaseURL: "https://api.deepseek.com/v1",
+				apiKey: "ds-key",
+				models: [{ id: "m1", name: "My Model", model: "deepseek-chat" }],
+			})],
+			defaultModelId: "m1",
+		});
 		const result = resolveModelConfig(config);
 		expect(result.id).toBe("m1");
 		expect(result.model).toBe("deepseek-chat");
@@ -45,27 +67,45 @@ describe("resolveModelConfig", () => {
 	});
 
 	it("uses explicit modelId over defaultModelId", () => {
-		const m1 = makeModel({ id: "m1", name: "A" });
-		const m2 = makeModel({ id: "m2", name: "B", model: "gpt-4o-mini" });
-		const config = makeConfig({ models: [m1, m2], defaultModelId: "m1" });
+		const config = makeConfig({
+			modelServices: [makeService({
+				models: [
+					{ id: "m1", name: "A", model: "gpt-4o" },
+					{ id: "m2", name: "B", model: "gpt-4o-mini" },
+				],
+			})],
+			defaultModelId: "m1",
+		});
 		const result = resolveModelConfig(config, "m2");
 		expect(result.id).toBe("m2");
 		expect(result.model).toBe("gpt-4o-mini");
 	});
 
 	it("falls back to legacy if model ID not found", () => {
-		const config = makeConfig({ models: [makeModel()], defaultModelId: "nonexistent" });
+		const config = makeConfig({ modelServices: [makeService()], defaultModelId: "nonexistent" });
 		const result = resolveModelConfig(config);
 		expect(result.id).toBe("__legacy__");
+	});
+
+	it("migrates legacy flat models into model services", () => {
+		const legacyModel = makeModel({ id: "m_legacy", provider: "Legacy Vendor", apiKey: "legacy-key" });
+		const config = normalizeAgentConfig({ models: [legacyModel], defaultModelId: "m_legacy" });
+		expect(config.modelServices).toHaveLength(1);
+		expect(config.modelServices?.[0].name).toBe("Legacy Vendor");
+		expect(config.modelServices?.[0].models[0].id).toBe("m_legacy");
 	});
 });
 
 describe("resolveSubAgentModelConfig", () => {
 	it("returns sub-agent model when configured", () => {
-		const mainModel = makeModel({ id: "main", model: "gpt-4o" });
-		const cheapModel = makeModel({ id: "cheap", model: "gpt-4o-mini", apiKey: "cheap-key" });
 		const config = makeConfig({
-			models: [mainModel, cheapModel],
+			modelServices: [makeService({
+				models: [
+					{ id: "main", name: "Main", model: "gpt-4o" },
+					{ id: "cheap", name: "Cheap", model: "gpt-4o-mini" },
+				],
+				apiKey: "cheap-key",
+			})],
 			defaultModelId: "main",
 			subAgentModelId: "cheap",
 		});
@@ -75,16 +115,21 @@ describe("resolveSubAgentModelConfig", () => {
 	});
 
 	it("falls back to main model when subAgentModelId not set", () => {
-		const mainModel = makeModel({ id: "main", model: "gpt-4o" });
-		const config = makeConfig({ models: [mainModel], defaultModelId: "main" });
+		const config = makeConfig({
+			modelServices: [makeService({
+				models: [{ id: "main", name: "Main", model: "gpt-4o" }],
+			})],
+			defaultModelId: "main",
+		});
 		const result = resolveSubAgentModelConfig(config);
 		expect(result.id).toBe("main");
 	});
 
 	it("falls back to main model when subAgentModelId not found", () => {
-		const mainModel = makeModel({ id: "main", model: "gpt-4o" });
 		const config = makeConfig({
-			models: [mainModel],
+			modelServices: [makeService({
+				models: [{ id: "main", name: "Main", model: "gpt-4o" }],
+			})],
 			defaultModelId: "main",
 			subAgentModelId: "nonexistent",
 		});

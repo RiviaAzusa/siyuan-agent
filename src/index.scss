@@ -1456,16 +1456,21 @@
 		padding: 8px 0;
 	}
 
-	&__item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
+		&__item {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
 		padding: 6px 8px;
 		border-radius: 6px;
 		margin-bottom: 4px;
-		background: var(--b3-theme-surface);
-		border: 1px solid var(--b3-border-color);
-	}
+			background: var(--b3-theme-surface);
+			border: 1px solid var(--b3-border-color);
+		}
+
+		&__item--sub {
+			margin-left: 12px;
+			background: color-mix(in srgb, var(--b3-theme-surface) 72%, var(--b3-theme-background) 28%);
+		}
 
 	&__info {
 		display: flex;
@@ -1492,6 +1497,19 @@
 		display: flex;
 		gap: 4px;
 		flex-shrink: 0;
+	}
+}
+
+.agent-model-service {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 8px;
+
+	&__models {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
 	}
 }
 

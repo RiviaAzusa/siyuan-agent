@@ -14,11 +14,16 @@ import {
 	DEFAULT_CONFIG,
 	INIT_PROMPT,
 	SLASH_COMMANDS,
-	MODEL_PROVIDER_PRESETS,
+	cloneModelServices,
+	flattenModelServices,
+	genModelServiceId,
 	genModelId,
 	isToolMessageUi,
+	normalizeAgentConfig,
 	resolveModelConfig,
 	type ModelConfig,
+	type ModelServiceConfig,
+	type ModelServiceModelConfig,
 	type McpServerConfig,
 } from "../types";
 import { makeAgent, makeTracer } from "../core/agent";
@@ -141,12 +146,9 @@ interface ActivityBlockRefs {
 	archiveListEl: HTMLElement;
 }
 
-type SettingsSection = "general" | "knowledge" | "models" | "tools" | "tracing";
+type SettingsSection = "general" | "knowledge" | "model-services" | "default-models" | "tools" | "tracing";
 
 interface SettingsDraft {
-	apiBaseURL: string;
-	apiKey: string;
-	model: string;
 	customInstructions: string;
 	guideDoc: { id: string; title: string } | null;
 	defaultNotebook: { id: string; name: string } | null;
@@ -154,7 +156,7 @@ interface SettingsDraft {
 	langSmithApiKey: string;
 	langSmithEndpoint: string;
 	langSmithProject: string;
-	models: ModelConfig[];
+	modelServices: ModelServiceConfig[];
 	defaultModelId: string;
 	subAgentModelId: string;
 	mcpServers: McpServerConfig[];
@@ -221,6 +223,10 @@ export class ChatPanel {
 			void this.handleStoreChanged();
 		}));
 		void this.loadStore();
+	}
+
+	public openSettingsView(): void {
+		this.setCurrentView("settings");
 	}
 
 	private render(): void {
@@ -446,7 +452,7 @@ export class ChatPanel {
 	private renderSessionList(): void {
 		const sessions = this.getChatSessions();
 		if (!sessions.length) {
-			this.sessionListEl.innerHTML = `<div class="chat-session-list__empty">暂无会话</div>`;
+			this.sessionListEl.innerHTML = "<div class=\"chat-session-list__empty\">暂无会话</div>";
 			this.sessionListEl.classList.remove("chat-panel__session-list--expanded");
 			return;
 		}
@@ -607,7 +613,7 @@ export class ChatPanel {
 			return;
 		}
 
-		let text = this.textareaEl.value.trim();
+		const text = this.textareaEl.value.trim();
 		if (!text && !this.pendingContext)
 			return;
 
@@ -644,10 +650,10 @@ export class ChatPanel {
 		const initMatch = text.match(/^\/init(?:\s+([\s\S]*))?$/i);
 		if (initMatch) {
 			const guideDocId = config.guideDoc?.id;
-			if (!guideDocId) {
-				showMessage("请先在插件设置中配置「用户指南文档」，/init 将把探索结果写入该文档。");
-				return;
-			}
+				if (!guideDocId) {
+					showMessage("请先在面板设置中配置「用户指南文档」，/init 将把探索结果写入该文档。");
+					return;
+				}
 			const extra = (initMatch[1] || "").trim();
 			extraSystemPrompt = INIT_PROMPT.replace(
 				"请开始探索。",
@@ -678,7 +684,7 @@ export class ChatPanel {
 		/* Insert pending placeholder (waiting state) */
 		this.pendingEl = document.createElement("div");
 		this.pendingEl.className = "chat-msg__pending";
-		this.pendingEl.innerHTML = `<span class="chat-msg__pending-spinner"></span><span class="chat-msg__pending-text">思考中</span>`;
+		this.pendingEl.innerHTML = "<span class=\"chat-msg__pending-spinner\"></span><span class=\"chat-msg__pending-text\">思考中</span>";
 		assistantShell.stackEl.appendChild(this.pendingEl);
 		this.scrollToBottom();
 
@@ -745,13 +751,13 @@ export class ChatPanel {
 			if (errStr.includes("function.arguments") && errStr.includes("JSON")) {
 				msg = `模型返回了无效的工具调用参数格式。该模型可能不完全支持 Function Calling。建议切换到支持 Function Calling 的模型（如 GPT-4o、DeepSeek-Chat）。\n\n原始错误: ${errStr}`;
 			} else if (errStr.includes("401") || errStr.includes("Unauthorized")) {
-				msg = `API 认证失败，请检查 API Key 是否正确。`;
+				msg = "API 认证失败，请检查 API Key 是否正确。";
 			} else if (errStr.includes("429") || errStr.includes("rate limit")) {
-				msg = `请求频率超限，请稍后重试。`;
+				msg = "请求频率超限，请稍后重试。";
 			} else if (errStr.includes("insufficient_quota") || errStr.includes("quota")) {
-				msg = `API 额度不足，请检查账户余额。`;
+				msg = "API 额度不足，请检查账户余额。";
 			} else if (errStr.includes("Stream idle timeout")) {
-				msg = `模型响应超时（120秒无数据），可能是网络问题或模型服务繁忙。请重试。`;
+				msg = "模型响应超时（120秒无数据），可能是网络问题或模型服务繁忙。请重试。";
 			} else if (errStr.includes("子智能体执行失败")) {
 				msg = errStr;
 			}
@@ -792,7 +798,7 @@ export class ChatPanel {
 							reasoningEl = document.createElement("details");
 							reasoningEl.className = "chat-msg__reasoning";
 							reasoningEl.open = true;
-							reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary">💭 思考中…</summary><div class="chat-msg__reasoning-content"></div>`;
+							reasoningEl.innerHTML = "<summary class=\"chat-msg__reasoning-summary\">💭 思考中…</summary><div class=\"chat-msg__reasoning-content\"></div>";
 							assistantShell.stackEl.appendChild(reasoningEl);
 						}
 						reasoningBuffer += event.text;
@@ -1359,7 +1365,7 @@ export class ChatPanel {
 		const summary = document.createElement("summary");
 		summary.innerHTML = this.buildToolSummaryHtml(
 			toolName,
-			`<span class="chat-msg__doc-meta">进行中</span>`,
+			"<span class=\"chat-msg__doc-meta\">进行中</span>",
 			el.dataset.toolCategory as "lookup" | "change"
 		);
 		details.appendChild(summary);
@@ -1808,12 +1814,12 @@ export class ChatPanel {
 
 	private setLoading(loading: boolean): void {
 		if (loading) {
-			this.sendBtn.innerHTML = `<svg class="chat-panel__send-icon"><use xlink:href="#iconClose"></use></svg>`;
+			this.sendBtn.innerHTML = "<svg class=\"chat-panel__send-icon\"><use xlink:href=\"#iconClose\"></use></svg>";
 			this.sendBtn.title = "停止生成 (Esc)";
 			this.sendBtn.onclick = () => this.stop();
 			this.textareaEl.placeholder = "AI 正在生成… (Shift+Enter 换行, Esc 停止)";
 		} else {
-			this.sendBtn.innerHTML = `<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>`;
+			this.sendBtn.innerHTML = "<svg class=\"chat-panel__send-icon\"><use xlink:href=\"#iconPlay\"></use></svg>";
 			this.sendBtn.title = "发送 (Enter)";
 			this.sendBtn.onclick = () => this.send();
 			this.textareaEl.placeholder = "问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)";
@@ -1923,8 +1929,8 @@ export class ChatPanel {
 		});
 
 		if (!entries.length) {
-			this.taskListEl.innerHTML = `<div class="chat-session-list__empty">暂无定时任务</div>`;
-			this.taskDetailEl.innerHTML = `<div class="chat-session-list__empty">从这里创建你的第一个定时任务</div>`;
+			this.taskListEl.innerHTML = "<div class=\"chat-session-list__empty\">暂无定时任务</div>";
+			this.taskDetailEl.innerHTML = "<div class=\"chat-session-list__empty\">从这里创建你的第一个定时任务</div>";
 			this.selectedTaskId = null;
 			return;
 		}
@@ -1951,7 +1957,7 @@ export class ChatPanel {
 
 		const selected = this.selectedTaskId ? await this.taskManager.getTaskSession(this.selectedTaskId) : null;
 		if (!selected?.task) {
-			this.taskDetailEl.innerHTML = `<div class="chat-session-list__empty">请选择一个定时任务</div>`;
+			this.taskDetailEl.innerHTML = "<div class=\"chat-session-list__empty\">请选择一个定时任务</div>";
 			return;
 		}
 
@@ -2020,7 +2026,7 @@ export class ChatPanel {
 
 	private renderRunGroupsHtml(groups: TaskRunGroup[]): string {
 		if (!groups.length) {
-			return `<div class="chat-session-list__empty">暂无执行记录</div>`;
+			return "<div class=\"chat-session-list__empty\">暂无执行记录</div>";
 		}
 		const reversed = [...groups].reverse();
 		return reversed.map((group, idx) => {
@@ -2035,7 +2041,7 @@ export class ChatPanel {
 			} else {
 				this.renderConversationMessages(group.messages, group.toolUIEvents, host);
 			}
-			const bodyHtml = host.innerHTML || `<div class="chat-session-list__empty">无内容</div>`;
+			const bodyHtml = host.innerHTML || "<div class=\"chat-session-list__empty\">无内容</div>";
 
 			return `<details class="task-run-card ${statusClass}" ${isLatest ? "open" : ""}>
 				<summary class="task-run-card__header">
@@ -2053,9 +2059,6 @@ export class ChatPanel {
 			? this.settingsDraft.notebookOptions
 			: await this.loadNotebookOptions();
 		const draft = this.settingsDraft ?? {
-			apiBaseURL: config.apiBaseURL || DEFAULT_CONFIG.apiBaseURL,
-			apiKey: config.apiKey || "",
-			model: config.model || DEFAULT_CONFIG.model,
 			customInstructions: config.customInstructions || "",
 			guideDoc: config.guideDoc || null,
 			defaultNotebook: config.defaultNotebook || null,
@@ -2063,7 +2066,7 @@ export class ChatPanel {
 			langSmithApiKey: config.langSmithApiKey || "",
 			langSmithEndpoint: config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
 			langSmithProject: config.langSmithProject || DEFAULT_CONFIG.langSmithProject,
-			models: Array.isArray(config.models) ? config.models.map((item) => ({ ...item })) : [],
+			modelServices: cloneModelServices(config.modelServices),
 			defaultModelId: config.defaultModelId || "",
 			subAgentModelId: config.subAgentModelId || "",
 			mcpServers: Array.isArray(config.mcpServers) ? config.mcpServers.map((item) => ({ ...item })) : [],
@@ -2071,14 +2074,15 @@ export class ChatPanel {
 		};
 		this.settingsDraft = draft;
 
-		const modelOptions = draft.models.map((item) => `
+		const configuredModels = flattenModelServices(draft.modelServices);
+		const modelOptions = configuredModels.map((item) => `
 			<option value="${this.escapeHtml(item.id)}"${item.id === draft.defaultModelId ? " selected" : ""}>
-				${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
+				${this.escapeHtml(item.provider)} / ${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
 			</option>
 		`).join("");
-		const subAgentOptions = draft.models.map((item) => `
+		const subAgentOptions = configuredModels.map((item) => `
 			<option value="${this.escapeHtml(item.id)}"${item.id === draft.subAgentModelId ? " selected" : ""}>
-				${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
+				${this.escapeHtml(item.provider)} / ${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
 			</option>
 		`).join("");
 		const notebookOptionsHtml = draft.notebookOptions.map((item) => `
@@ -2097,9 +2101,10 @@ export class ChatPanel {
 			: `<div><span>默认笔记本</span><strong>未设置</strong></div>
 				<div><span>说明</span><strong>Agent 将优先在这里工作</strong></div>`;
 		const settingsSections: Array<{ id: SettingsSection; label: string; meta: string }> = [
-			{ id: "general", label: "基础配置", meta: "模型、Key、自定义指令" },
+			{ id: "general", label: "常规", meta: "自定义指令" },
 			{ id: "knowledge", label: "知识库默认项", meta: "指南文档、默认笔记本" },
-			{ id: "models", label: "模型管理", meta: "多模型、默认模型、子智能体" },
+			{ id: "model-services", label: "模型服务", meta: "供应商连接与模型列表" },
+			{ id: "default-models", label: "默认模型", meta: "对话模型、子智能体模型" },
 			{ id: "tools", label: "工具扩展", meta: "MCP 服务连接与状态" },
 			{ id: "tracing", label: "追踪调试", meta: "LangSmith tracing" },
 		];
@@ -2127,26 +2132,14 @@ export class ChatPanel {
 				`).join("")}
 			</aside>
 			<div class="settings-panel__content">
-				<section class="settings-panel__section${this.currentSettingsSection === "general" ? " settings-panel__section--active" : ""}" data-settings-panel="general">
-					<div class="settings-panel__section-title">基础配置</div>
-					<p class="settings-panel__section-copy">保留基础兼容配置。未选择默认模型时，会直接使用这里的连接信息。</p>
-					<label class="settings-panel__field">
-						<span>API Base URL</span>
-						<input class="b3-text-field" name="apiBaseURL" value="${this.escapeHtml(draft.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
-					</label>
-					<label class="settings-panel__field">
-						<span>API Key</span>
-						<input class="b3-text-field" name="apiKey" type="password" value="${this.escapeHtml(draft.apiKey)}" placeholder="sk-..." />
-					</label>
-					<label class="settings-panel__field">
-						<span>Model</span>
-						<input class="b3-text-field" name="model" value="${this.escapeHtml(draft.model)}" placeholder="gpt-4o" />
-					</label>
-					<label class="settings-panel__field">
-						<span>自定义指令</span>
-						<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(draft.customInstructions)}</textarea>
-					</label>
-				</section>
+					<section class="settings-panel__section${this.currentSettingsSection === "general" ? " settings-panel__section--active" : ""}" data-settings-panel="general">
+						<div class="settings-panel__section-title">常规</div>
+						<p class="settings-panel__section-copy">这里只保留行为相关配置。模型连接统一在“模型服务”里维护。</p>
+						<label class="settings-panel__field">
+							<span>自定义指令</span>
+							<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(draft.customInstructions)}</textarea>
+						</label>
+					</section>
 
 				<section class="settings-panel__section${this.currentSettingsSection === "knowledge" ? " settings-panel__section--active" : ""}" data-settings-panel="knowledge">
 					<div class="settings-panel__section-title">知识库默认项</div>
@@ -2173,49 +2166,73 @@ export class ChatPanel {
 						<span>默认工作笔记本</span>
 						<select class="b3-select" name="defaultNotebookId">
 							<option value="">（不指定）</option>
-							${notebookOptionsHtml || `<option value="">（暂无可用笔记本）</option>`}
+							${notebookOptionsHtml || "<option value=\"\">（暂无可用笔记本）</option>"}
 						</select>
 					</label>
 					<div class="settings-panel__meta-grid">${notebookMeta}</div>
 				</section>
 
-				<section class="settings-panel__section${this.currentSettingsSection === "models" ? " settings-panel__section--active" : ""}" data-settings-panel="models">
-					<div class="settings-panel__section-title">模型管理</div>
-					<p class="settings-panel__section-copy">在这里维护多模型列表，并指定默认模型与子智能体模型。</p>
-					<div class="agent-model-list">
-						${draft.models.length
-							? draft.models.map((item) => `
-								<div class="agent-model-list__item">
-									<div class="agent-model-list__info">
-										<span class="agent-model-list__name">${this.escapeHtml(item.name)}</span>
-										<span class="agent-model-list__detail">${this.escapeHtml(item.provider)} · ${this.escapeHtml(item.model)}</span>
+					<section class="settings-panel__section${this.currentSettingsSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
+						<div class="settings-panel__section-title">模型服务</div>
+						<p class="settings-panel__section-copy">供应商只配置一次连接信息。每个供应商下维护多个 OpenAI compatible 模型。</p>
+						<div class="agent-model-list">
+							${draft.modelServices.length
+								? draft.modelServices.map((service) => `
+									<div class="agent-model-service">
+										<div class="agent-model-list__item">
+											<div class="agent-model-list__info">
+												<span class="agent-model-list__name">${this.escapeHtml(service.name)}</span>
+												<span class="agent-model-list__detail">${this.escapeHtml(service.apiBaseURL)} · ${service.models.length} 个模型</span>
+											</div>
+											<div class="agent-model-list__actions">
+												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="add-service-model" data-service-id="${this.escapeHtml(service.id)}">添加模型</button>
+												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model-service" data-service-id="${this.escapeHtml(service.id)}">编辑服务</button>
+												<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model-service" data-service-id="${this.escapeHtml(service.id)}">删除服务</button>
+											</div>
+										</div>
+										<div class="agent-model-service__models">
+											${service.models.length
+												? service.models.map((item) => `
+													<div class="agent-model-list__item agent-model-list__item--sub">
+														<div class="agent-model-list__info">
+															<span class="agent-model-list__name">${this.escapeHtml(item.name)}</span>
+															<span class="agent-model-list__detail">${this.escapeHtml(item.model)}</span>
+														</div>
+														<div class="agent-model-list__actions">
+															<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-service-id="${this.escapeHtml(service.id)}" data-model-id="${this.escapeHtml(item.id)}">编辑</button>
+															<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-service-id="${this.escapeHtml(service.id)}" data-model-id="${this.escapeHtml(item.id)}">删除</button>
+														</div>
+													</div>
+												`).join("")
+												: "<div class=\"agent-model-list__empty\">尚未添加模型。</div>"}
+										</div>
 									</div>
-									<div class="agent-model-list__actions">
-										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-model-id="${this.escapeHtml(item.id)}">编辑</button>
-										<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-model-id="${this.escapeHtml(item.id)}">删除</button>
-									</div>
-								</div>
-							`).join("")
-							: `<div class="agent-model-list__empty">尚未配置模型。点击下方按钮添加。</div>`}
-					</div>
-					<div class="settings-panel__actions settings-panel__actions--inline">
-						<button class="b3-button b3-button--outline" type="button" data-action="add-model">添加模型</button>
-					</div>
-					<label class="settings-panel__field">
-						<span>默认模型</span>
-						<select class="b3-select" name="defaultModelId">
-							<option value="">（使用基础配置）</option>
-							${modelOptions}
-						</select>
-					</label>
-					<label class="settings-panel__field">
-						<span>子智能体模型</span>
-						<select class="b3-select" name="subAgentModelId">
-							<option value="">（跟随默认模型）</option>
-							${subAgentOptions}
-						</select>
-					</label>
-				</section>
+								`).join("")
+								: "<div class=\"agent-model-list__empty\">尚未配置模型服务。点击下方按钮添加。</div>"}
+						</div>
+						<div class="settings-panel__actions settings-panel__actions--inline">
+							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">添加模型服务</button>
+						</div>
+					</section>
+
+					<section class="settings-panel__section${this.currentSettingsSection === "default-models" ? " settings-panel__section--active" : ""}" data-settings-panel="default-models">
+						<div class="settings-panel__section-title">默认模型</div>
+						<p class="settings-panel__section-copy">这里只选择对话默认模型和子智能体默认模型。</p>
+						<label class="settings-panel__field">
+							<span>对话模型</span>
+							<select class="b3-select" name="defaultModelId">
+								<option value="">（未设置）</option>
+								${modelOptions}
+							</select>
+						</label>
+						<label class="settings-panel__field">
+							<span>子智能体模型</span>
+							<select class="b3-select" name="subAgentModelId">
+								<option value="">（跟随对话模型）</option>
+								${subAgentOptions}
+							</select>
+						</label>
+					</section>
 
 				<section class="settings-panel__section${this.currentSettingsSection === "tools" ? " settings-panel__section--active" : ""}" data-settings-panel="tools">
 					<div class="settings-panel__section-title">工具扩展</div>
@@ -2235,7 +2252,7 @@ export class ChatPanel {
 									</div>
 								</div>
 							`).join("")
-							: `<div class="agent-model-list__empty">尚未配置 MCP 服务。</div>`}
+							: "<div class=\"agent-model-list__empty\">尚未配置 MCP 服务。</div>"}
 					</div>
 					<div class="settings-panel__actions settings-panel__actions--inline">
 						<button class="b3-button b3-button--outline" type="button" data-action="add-mcp">添加 MCP 服务</button>
@@ -2306,13 +2323,11 @@ export class ChatPanel {
 		if (!draft) return;
 		const nextConfig: AgentConfig = {
 			...currentConfig,
-			apiBaseURL: String(formData.get("apiBaseURL") || "").trim() || DEFAULT_CONFIG.apiBaseURL,
-			apiKey: String(formData.get("apiKey") || "").trim(),
-			model: String(formData.get("model") || "").trim() || DEFAULT_CONFIG.model,
 			customInstructions: String(formData.get("customInstructions") || ""),
 			guideDoc: draft.guideDoc,
 			defaultNotebook: draft.defaultNotebook,
-			models: draft.models.map((item) => ({ ...item })),
+			modelServices: cloneModelServices(draft.modelServices),
+			models: [],
 			defaultModelId: String(formData.get("defaultModelId") || "").trim(),
 			subAgentModelId: String(formData.get("subAgentModelId") || "").trim(),
 			mcpServers: draft.mcpServers.map((item) => ({ ...item })),
@@ -2333,9 +2348,6 @@ export class ChatPanel {
 		];
 		this.settingsDraft = {
 			...draft,
-			apiBaseURL: nextConfig.apiBaseURL,
-			apiKey: nextConfig.apiKey,
-			model: nextConfig.model,
 			customInstructions: nextConfig.customInstructions,
 			guideDoc: nextConfig.guideDoc || null,
 			defaultNotebook: nextConfig.defaultNotebook || null,
@@ -2343,7 +2355,7 @@ export class ChatPanel {
 			langSmithApiKey: nextConfig.langSmithApiKey || "",
 			langSmithEndpoint: nextConfig.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
 			langSmithProject: nextConfig.langSmithProject || DEFAULT_CONFIG.langSmithProject,
-			models: (nextConfig.models || []).map((item) => ({ ...item })),
+			modelServices: cloneModelServices(nextConfig.modelServices),
 			defaultModelId: nextConfig.defaultModelId || "",
 			subAgentModelId: nextConfig.subAgentModelId || "",
 			mcpServers: (nextConfig.mcpServers || []).map((item) => ({ ...item })),
@@ -2433,22 +2445,51 @@ export class ChatPanel {
 	}
 
 	private bindSettingsModelActions(): void {
-		this.settingsViewEl.querySelector<HTMLElement>("[data-action='add-model']")?.addEventListener("click", () => {
+		this.settingsViewEl.querySelector<HTMLElement>("[data-action='add-model-service']")?.addEventListener("click", () => {
 			this.syncSettingsDraftFromForm();
-			this.openModelEditor();
+			this.openModelServiceEditor();
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model-service']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.syncSettingsDraftFromForm();
+				this.openModelServiceEditor(button.dataset.serviceId);
+			});
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model-service']").forEach((button) => {
+			button.addEventListener("click", () => {
+				if (!this.settingsDraft) return;
+				this.syncSettingsDraftFromForm();
+				const serviceId = button.dataset.serviceId || "";
+				const service = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
+				if (!service) return;
+				const removedModelIds = new Set(service.models.map((item) => item.id));
+				this.settingsDraft.modelServices = this.settingsDraft.modelServices.filter((item) => item.id !== serviceId);
+				if (removedModelIds.has(this.settingsDraft.defaultModelId)) this.settingsDraft.defaultModelId = "";
+				if (removedModelIds.has(this.settingsDraft.subAgentModelId)) this.settingsDraft.subAgentModelId = "";
+				void this.renderSettingsView();
+			});
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='add-service-model']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.syncSettingsDraftFromForm();
+				this.openServiceModelEditor(button.dataset.serviceId || "");
+			});
 		});
 		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model']").forEach((button) => {
 			button.addEventListener("click", () => {
 				this.syncSettingsDraftFromForm();
-				this.openModelEditor(button.dataset.modelId);
+				this.openServiceModelEditor(button.dataset.serviceId || "", button.dataset.modelId);
 			});
 		});
 		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model']").forEach((button) => {
 			button.addEventListener("click", () => {
 				if (!this.settingsDraft) return;
 				this.syncSettingsDraftFromForm();
+				const serviceId = button.dataset.serviceId || "";
 				const modelId = button.dataset.modelId || "";
-				this.settingsDraft.models = this.settingsDraft.models.filter((item) => item.id !== modelId);
+				const service = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
+				if (!service) return;
+				service.models = service.models.filter((item) => item.id !== modelId);
 				if (this.settingsDraft.defaultModelId === modelId) this.settingsDraft.defaultModelId = "";
 				if (this.settingsDraft.subAgentModelId === modelId) this.settingsDraft.subAgentModelId = "";
 				void this.renderSettingsView();
@@ -2456,44 +2497,98 @@ export class ChatPanel {
 		});
 	}
 
-	private openModelEditor(modelId?: string): void {
+	private openModelServiceEditor(serviceId?: string): void {
 		if (!this.settingsDraft) return;
-		const existing = this.settingsDraft.models.find((item) => item.id === modelId) || null;
-		const draftModel: ModelConfig = existing ? { ...existing } : {
-			id: genModelId(),
+		const existing = this.settingsDraft.modelServices.find((item) => item.id === serviceId) || null;
+		const draftService: ModelServiceConfig = existing ? {
+			...existing,
+			models: existing.models.map((item) => ({ ...item })),
+		} : {
+			id: genModelServiceId(),
 			name: "",
-			provider: "openai",
-			model: "",
 			apiBaseURL: DEFAULT_CONFIG.apiBaseURL,
 			apiKey: "",
+			models: [],
 		};
 		const overlay = document.createElement("div");
 		overlay.className = "agent-model-editor-overlay";
-		const preset = MODEL_PROVIDER_PRESETS.find((item) => item.provider === draftModel.provider);
+		overlay.innerHTML = `
+			<div class="agent-model-editor">
+				<h4 class="agent-model-editor__title">${existing ? "编辑模型服务" : "添加模型服务"}</h4>
+				<label class="agent-model-editor__label">服务名称
+					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(draftService.name)}" placeholder="OpenAI / Azure / 自建网关" />
+				</label>
+				<label class="agent-model-editor__label">API Base URL
+					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${this.escapeHtml(draftService.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
+				</label>
+				<label class="agent-model-editor__label">API Key
+					<input class="b3-text-field fn__block" type="password" data-field="apiKey" value="${this.escapeHtml(draftService.apiKey)}" placeholder="sk-..." />
+				</label>
+				<div class="agent-model-editor__buttons">
+					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
+					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
+				</div>
+			</div>`;
+		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
+		const baseUrlField = overlay.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
+		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
+		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
+			if (!this.settingsDraft) return;
+			const nextService: ModelServiceConfig = {
+				...draftService,
+				name: nameField?.value.trim() || "Unnamed Service",
+				apiBaseURL: baseUrlField?.value.trim() || DEFAULT_CONFIG.apiBaseURL,
+				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
+			};
+			if (!nextService.name.trim()) {
+				showMessage("请填写服务名称");
+				return;
+			}
+			if (!nextService.apiBaseURL.trim()) {
+				showMessage("请填写 API Base URL");
+				return;
+			}
+			const existingIndex = this.settingsDraft.modelServices.findIndex((item) => item.id === nextService.id);
+			if (existingIndex >= 0) {
+				this.settingsDraft.modelServices[existingIndex] = nextService;
+			} else {
+				this.settingsDraft.modelServices.push(nextService);
+			}
+			overlay.remove();
+			void this.renderSettingsView();
+		});
+		overlay.addEventListener("click", (event) => {
+			if (event.target === overlay) overlay.remove();
+		});
+		document.body.appendChild(overlay);
+	}
+
+	private openServiceModelEditor(serviceId: string, modelId?: string): void {
+		if (!this.settingsDraft) return;
+		const service = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
+		if (!service) {
+			showMessage("未找到模型服务");
+			return;
+		}
+		const existing = service.models.find((item) => item.id === modelId) || null;
+		const draftModel: ModelServiceModelConfig = existing ? { ...existing } : {
+			id: genModelId(),
+			name: "",
+			model: "",
+		};
+		const overlay = document.createElement("div");
+		overlay.className = "agent-model-editor-overlay";
 		overlay.innerHTML = `
 			<div class="agent-model-editor">
 				<h4 class="agent-model-editor__title">${existing ? "编辑模型" : "添加模型"}</h4>
-				<label class="agent-model-editor__label">供应商
-					<select class="b3-select fn__block" data-field="provider">
-						${MODEL_PROVIDER_PRESETS.map((item) => `<option value="${item.provider}"${item.provider === draftModel.provider ? " selected" : ""}>${item.label}</option>`).join("")}
-					</select>
+				<label class="agent-model-editor__label">所属服务
+					<input class="b3-text-field fn__block" value="${this.escapeHtml(service.name)}" disabled />
 				</label>
 				<label class="agent-model-editor__label">显示名称
-					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(draftModel.name)}" placeholder="My GPT-4o" />
+					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(draftModel.name)}" placeholder="GPT-4o / Claude Sonnet" />
 				</label>
-				<label class="agent-model-editor__label">模型
-					<div style="display:flex;gap:4px">
-						<input class="b3-text-field" style="flex:1" data-field="model" value="${this.escapeHtml(draftModel.model)}" placeholder="gpt-4o" list="agent-model-suggestions" />
-						<datalist id="agent-model-suggestions">
-							${(preset?.models || []).map((name) => `<option value="${name}">`).join("")}
-						</datalist>
-					</div>
-				</label>
-				<label class="agent-model-editor__label">API Base URL
-					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${this.escapeHtml(draftModel.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
-				</label>
-				<label class="agent-model-editor__label">API Key
-					<input class="b3-text-field fn__block" type="password" data-field="apiKey" value="${this.escapeHtml(draftModel.apiKey)}" placeholder="sk-..." />
+				<label class="agent-model-editor__label">模型标识
+					<input class="b3-text-field fn__block" data-field="model" value="${this.escapeHtml(draftModel.model)}" placeholder="gpt-4o" />
 				</label>
 				<label class="agent-model-editor__label">Temperature（可选）
 					<input class="b3-text-field fn__block" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${draftModel.temperature ?? ""}" placeholder="0" />
@@ -2503,43 +2598,29 @@ export class ChatPanel {
 					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
 				</div>
 			</div>`;
-		const providerSelect = overlay.querySelector<HTMLSelectElement>("[data-field='provider']");
 		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
 		const modelField = overlay.querySelector<HTMLInputElement>("[data-field='model']");
-		const baseUrlField = overlay.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
-		const dataList = overlay.querySelector<HTMLDataListElement>("#agent-model-suggestions");
-		providerSelect?.addEventListener("change", () => {
-			const nextPreset = MODEL_PROVIDER_PRESETS.find((item) => item.provider === providerSelect.value);
-			if (!nextPreset || !baseUrlField || !dataList || !nameField || !modelField) return;
-			baseUrlField.value = nextPreset.apiBaseURL;
-			dataList.innerHTML = nextPreset.models.map((name) => `<option value="${name}">`).join("");
-			if (!nameField.value.trim() && nextPreset.models[0]) {
-				modelField.value = nextPreset.models[0];
-				nameField.value = `${nextPreset.label} ${nextPreset.models[0]}`;
-			}
-		});
 		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
 		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
 			if (!this.settingsDraft) return;
-			const nextModel: ModelConfig = {
+			const nextService = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
+			if (!nextService) return;
+			const nextModel: ModelServiceModelConfig = {
 				...draftModel,
-				provider: providerSelect?.value || draftModel.provider,
 				name: nameField?.value.trim() || modelField?.value.trim() || "Unnamed Model",
 				model: modelField?.value.trim() || "",
-				apiBaseURL: baseUrlField?.value.trim() || DEFAULT_CONFIG.apiBaseURL,
-				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
 			};
 			const temperature = overlay.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
 			nextModel.temperature = temperature ? Number(temperature) : undefined;
 			if (!nextModel.model) {
-				showMessage("请填写模型名称");
+				showMessage("请填写模型标识");
 				return;
 			}
-			const existingIndex = this.settingsDraft.models.findIndex((item) => item.id === nextModel.id);
+			const existingIndex = nextService.models.findIndex((item) => item.id === nextModel.id);
 			if (existingIndex >= 0) {
-				this.settingsDraft.models[existingIndex] = nextModel;
+				nextService.models[existingIndex] = nextModel;
 			} else {
-				this.settingsDraft.models.push(nextModel);
+				nextService.models.push(nextModel);
 			}
 			overlay.remove();
 			void this.renderSettingsView();
@@ -2729,13 +2810,13 @@ export class ChatPanel {
 
 	private async refreshModelSelector(): Promise<void> {
 		const config = await this.getConfig();
-		const models: ModelConfig[] = Array.isArray(config.models) ? config.models : [];
+		const models: ModelConfig[] = flattenModelServices(config.modelServices);
 		const currentModelId = this.activeSession?.modelId || "";
 
-		let html = `<option value="">默认模型</option>`;
+		let html = "<option value=\"\">默认模型</option>";
 		for (const m of models) {
 			const sel = m.id === currentModelId ? " selected" : "";
-			html += `<option value="${m.id}"${sel}>${m.name}</option>`;
+			html += `<option value="${m.id}"${sel}>${m.provider} / ${m.name}</option>`;
 		}
 		this.modelSelectEl.innerHTML = html;
 
@@ -2751,11 +2832,11 @@ export class ChatPanel {
 			await this.plugin.loadData(CONFIG_STORAGE);
 			const saved = this.plugin.data[CONFIG_STORAGE];
 			if (saved)
-				return { ...DEFAULT_CONFIG, ...saved };
+				return normalizeAgentConfig(saved);
 		} catch {
 			/* Use defaults */
 		}
-		return { ...DEFAULT_CONFIG };
+		return normalizeAgentConfig();
 	}
 
 	/* --- Autocomplete --- */
@@ -2827,7 +2908,7 @@ export class ChatPanel {
 		const escaped = keyword.replace(/'/g, "''");
 		const stmt = keyword
 			? `SELECT * FROM blocks WHERE type='d' AND content LIKE '%${escaped}%' ORDER BY updated DESC LIMIT 8`
-			: `SELECT * FROM blocks WHERE type='d' ORDER BY updated DESC LIMIT 8`;
+			: "SELECT * FROM blocks WHERE type='d' ORDER BY updated DESC LIMIT 8";
 
 		try {
 			const resp = await fetch("/api/query/sql", {
