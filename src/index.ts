@@ -209,6 +209,10 @@ export default class SiYuanAgent extends Plugin {
 		void this.mcpManager.disconnectAll();
 	}
 
+	openSetting(): void {
+		void this.openCustomSettings();
+	}
+
 	private openTopBarMenu(event: MouseEvent): void {
 		const menu = new Menu();
 		menu.addItem({
