@@ -2117,7 +2117,6 @@ export class ChatPanel {
 	<div class="settings-panel__header">
 		<div>
 			<h3>设置</h3>
-			<p>所有常用配置都集中在这里，左侧分类切换，右侧直接编辑。</p>
 		</div>
 	</div>
 	<form class="settings-panel__form">
@@ -2137,7 +2136,6 @@ export class ChatPanel {
 			<div class="settings-panel__content">
 					<section class="settings-panel__section${this.currentSettingsSection === "general" ? " settings-panel__section--active" : ""}" data-settings-panel="general">
 						<div class="settings-panel__section-title">常规</div>
-						<p class="settings-panel__section-copy">这里只保留行为相关配置。模型连接统一在“模型服务”里维护。</p>
 						<label class="settings-panel__field">
 							<span>自定义指令</span>
 							<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(draft.customInstructions)}</textarea>
@@ -2146,7 +2144,6 @@ export class ChatPanel {
 
 				<section class="settings-panel__section${this.currentSettingsSection === "knowledge" ? " settings-panel__section--active" : ""}" data-settings-panel="knowledge">
 					<div class="settings-panel__section-title">知识库默认项</div>
-					<p class="settings-panel__section-copy">这里直接决定 Agent 默认参考哪篇指南文档，以及优先在哪个笔记本里执行操作。</p>
 					<div class="settings-panel__picker">
 						<label class="settings-panel__field">
 							<span>用户指南文档</span>
@@ -2160,9 +2157,6 @@ export class ChatPanel {
 							/>
 						</label>
 						<div class="settings-panel__picker-dropdown b3-menu fn__none" data-role="guide-doc-dropdown"></div>
-						<div class="settings-panel__picker-actions">
-							<button class="b3-button b3-button--outline" type="button" data-action="clear-guide-doc">清除文档</button>
-						</div>
 					</div>
 					<div class="settings-panel__meta-grid">${guideDocMeta}</div>
 					<label class="settings-panel__field">
@@ -2177,7 +2171,6 @@ export class ChatPanel {
 
 					<section class="settings-panel__section${this.currentSettingsSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
 						<div class="settings-panel__section-title">模型服务</div>
-						<p class="settings-panel__section-copy">供应商只配置一次连接信息。每个供应商下维护多个 OpenAI compatible 模型。</p>
 						<div class="agent-model-list">
 							${draft.modelServices.length
 								? draft.modelServices.map((service) => `
@@ -2220,7 +2213,6 @@ export class ChatPanel {
 
 					<section class="settings-panel__section${this.currentSettingsSection === "default-models" ? " settings-panel__section--active" : ""}" data-settings-panel="default-models">
 						<div class="settings-panel__section-title">默认模型</div>
-						<p class="settings-panel__section-copy">这里只选择对话默认模型和子智能体默认模型。</p>
 						<label class="settings-panel__field">
 							<span>对话模型</span>
 							<select class="b3-select" name="defaultModelId">
@@ -2239,7 +2231,6 @@ export class ChatPanel {
 
 				<section class="settings-panel__section${this.currentSettingsSection === "tools" ? " settings-panel__section--active" : ""}" data-settings-panel="tools">
 					<div class="settings-panel__section-title">工具扩展</div>
-					<p class="settings-panel__section-copy">管理 MCP 外部工具服务。保存后会立即重连并刷新对话可用工具。</p>
 					<div class="agent-model-list">
 						${draft.mcpServers.length
 							? draft.mcpServers.map((item) => `
@@ -2264,7 +2255,6 @@ export class ChatPanel {
 
 				<section class="settings-panel__section${this.currentSettingsSection === "tracing" ? " settings-panel__section--active" : ""}" data-settings-panel="tracing">
 					<div class="settings-panel__section-title">追踪调试</div>
-					<p class="settings-panel__section-copy">LangSmith 仅用于 tracing 与调试。不开启时不会发送相关链路数据。</p>
 					<label class="settings-panel__checkbox">
 						<input type="checkbox" name="langSmithEnabled"${draft.langSmithEnabled ? " checked" : ""} />
 						<span>启用 LangSmith Tracing</span>
