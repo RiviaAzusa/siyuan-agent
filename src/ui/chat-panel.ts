@@ -199,6 +199,7 @@ export class ChatPanel {
 	private unsubs: Array<() => void> = [];
 	private currentSettingsSection: SettingsSection = "general";
 	private settingsDraft: SettingsDraft | null = null;
+	private settingsAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	/* Autocomplete */
 	private completionEl: HTMLElement | null = null;
@@ -2274,9 +2275,6 @@ export class ChatPanel {
 				</section>
 			</div>
 		</div>
-		<div class="settings-panel__actions">
-			<button class="b3-button" type="submit">保存设置</button>
-		</div>
 	</form>
 </div>`;
 
@@ -2284,6 +2282,29 @@ export class ChatPanel {
 		form?.addEventListener("submit", (event) => {
 			event.preventDefault();
 			void this.saveSettingsForm(form);
+		});
+
+		/* Auto-save: immediate on select/checkbox change, debounced on text input */
+		const scheduleAutoSave = (immediate = false): void => {
+			if (!form) return;
+			if (this.settingsAutoSaveTimer) clearTimeout(this.settingsAutoSaveTimer);
+			if (immediate) {
+				void this.saveSettingsForm(form);
+			} else {
+				this.settingsAutoSaveTimer = setTimeout(() => {
+					void this.saveSettingsForm(form);
+				}, 600);
+			}
+		};
+		form?.addEventListener("change", (e) => {
+			const target = e.target as HTMLElement;
+			const isText = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && (target as HTMLInputElement).type === "text");
+			if (!isText) scheduleAutoSave(true);
+		});
+		form?.addEventListener("input", (e) => {
+			const target = e.target as HTMLElement;
+			const isText = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && (target as HTMLInputElement).type !== "checkbox");
+			if (isText) scheduleAutoSave(false);
 		});
 		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((button) => {
 			button.addEventListener("click", () => {
@@ -2354,7 +2375,6 @@ export class ChatPanel {
 			mcpServers: (nextConfig.mcpServers || []).map((item) => ({ ...item })),
 			notebookOptions: draft.notebookOptions,
 		};
-		showMessage("设置已保存");
 		await this.refreshModelSelector();
 		void this.renderSettingsView();
 	}
