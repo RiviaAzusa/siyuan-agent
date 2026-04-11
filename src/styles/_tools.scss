@@ -1,0 +1,212 @@
+/* Tool call display */
+.chat-msg__assistant-shell {
+	display: block;
+}
+
+.chat-msg__assistant-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.chat-msg__activity-block {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 2px 0 4px;
+}
+
+.chat-msg__activity-current,
+.chat-msg__activity-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.chat-msg__activity-archive {
+	padding: 0;
+	border: none;
+	background: transparent;
+
+	> summary {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: 0;
+		cursor: pointer;
+		list-style: none;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--agent-text-muted, var(--b3-theme-on-surface));
+		opacity: 0.88;
+	}
+
+	> summary::-webkit-details-marker {
+		display: none;
+	}
+}
+
+.chat-msg__activity-title {
+	margin-right: 2px;
+}
+
+.chat-msg__activity-chip {
+	display: inline-flex;
+	align-items: center;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: rgba(127, 127, 127, 0.08);
+	font-size: 11px;
+	font-weight: 400;
+}
+
+.chat-msg__tool {
+	margin: 0;
+
+	details {
+		background: transparent;
+		border: none;
+		padding: 0;
+		font-size: 12px;
+	}
+
+	summary {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px 6px;
+		padding: 0;
+		cursor: pointer;
+		font-weight: 500;
+		color: var(--agent-text-muted, var(--b3-theme-primary));
+		list-style: none;
+	}
+
+	summary::-webkit-details-marker {
+		display: none;
+	}
+
+	pre {
+		user-select: text;
+		-webkit-user-select: text;
+		margin: 6px 0 0 20px;
+		padding: 6px 8px;
+		font-size: 11px;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+}
+
+.chat-msg__tool--archived details {
+	opacity: 0.92;
+}
+
+.chat-msg__tool-title {
+	font-weight: 500;
+	color: var(--agent-text, var(--b3-theme-on-surface));
+}
+
+.chat-msg__doc-link {
+	display: inline-flex;
+	align-items: center;
+	min-height: 22px;
+	padding: 0;
+	margin: 0;
+	border-radius: 0;
+	color: color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 88%, var(--agent-text, var(--b3-theme-on-surface)) 12%);
+	text-decoration: underline;
+	cursor: pointer;
+	text-underline-offset: 2px;
+	transition: background-color 0.15s ease, color 0.15s ease;
+
+	&:hover {
+		background: transparent;
+	}
+
+	&:focus-visible {
+		outline: none;
+		background: transparent;
+	}
+}
+
+.chat-msg__doc-label {
+	display: inline-flex;
+	align-items: center;
+	min-height: 22px;
+	padding: 0;
+	margin: 0;
+	border-radius: 0;
+	color: var(--agent-text, var(--b3-theme-on-surface));
+	background: transparent;
+}
+
+.chat-msg__tool-progress {
+	font-size: 11px;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+	opacity: 0.85;
+	padding: 4px 0 0;
+}
+
+.chat-msg__tool-result {
+	user-select: text;
+	-webkit-user-select: text;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+	opacity: 0.92;
+	border-top: 1px solid var(--agent-border, var(--b3-border-color));
+	margin-top: 6px;
+	padding-top: 6px;
+}
+
+.chat-msg__error {
+	color: var(--b3-card-error-color, #e53935);
+	font-style: italic;
+	white-space: pre-wrap;
+}
+
+.chat-msg__retry-btn {
+	margin-top: 6px;
+	font-size: 12px;
+	padding: 4px 12px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+/* Reasoning / thinking display */
+.chat-msg__reasoning {
+	border: 1px solid var(--agent-border, var(--b3-border-color));
+	border-radius: 6px;
+	padding: 0;
+	margin-bottom: 4px;
+	background: var(--agent-surface, var(--b3-theme-surface));
+	font-size: 13px;
+	opacity: 0.85;
+}
+
+.chat-msg__reasoning-summary {
+	padding: 6px 10px;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+	user-select: none;
+	list-style: none;
+
+	&::marker,
+	&::-webkit-details-marker {
+		display: none;
+	}
+}
+
+.chat-msg__reasoning-content {
+	padding: 4px 10px 8px;
+	border-top: 1px solid var(--agent-border, var(--b3-border-color));
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+	font-size: 13px;
+	line-height: 1.5;
+	max-height: 300px;
+	overflow-y: auto;
+
+	p {
+		margin: 4px 0;
+	}
+}

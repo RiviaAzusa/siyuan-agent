@@ -5,7 +5,7 @@ import {
 	Menu,
 	openTab,
 } from "siyuan";
-import "./index.scss";
+import "./styles/index.scss";
 import {
 	AgentConfig,
 	DEFAULT_CONFIG,

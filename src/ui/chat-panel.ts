@@ -8,12 +8,10 @@ import {
 	SessionData,
 	SessionIndexEntry,
 	ToolUIEvent,
-	ToolUIEventPayload,
 	ToolMessageUi,
 	UiMessage,
 	DEFAULT_CONFIG,
 	INIT_PROMPT,
-	SLASH_COMMANDS,
 	cloneModelServices,
 	flattenModelServices,
 	genModelServiceId,
@@ -31,137 +29,20 @@ import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
-import { groupTaskRuns, type TaskRunGroup } from "./task-run-group";
 import { UiMessageBuilder, ensureMessagesUi } from "../core/ui-message-builder";
 import { compactMessages, shouldCompact } from "../core/compaction";
 import { getDefaultTools } from "../core/tools";
+import { SettingsView, type SettingsViewContext } from "./settings-view";
+import { TasksView, type TasksViewContext } from "./tasks-view";
+import { Autocomplete } from "./autocomplete";
+import {
+	msgType, sessionTitle, cloneMessage, getMessageContent, getMessageToolCalls,
+	getMessageToolCallId, getToolCallId, setMessageContent, setMessageToolCalls,
+	normalizeMessagesForDisplay, escapeHtml, getToolCategory, getToolAction,
+	getToolDisplayTitle, getActionLabel,
+	type AssistantMessageShell, type ActivityBlockRefs,
+} from "./chat-helpers";
 const CONFIG_STORAGE = "agent-config";
-
-/** Extract the role string from either a live BaseMessage or a serialised dict. */
-function msgType(m: any): string {
-	// Live BaseMessage instance
-	if (typeof m._getType === "function") return m._getType();
-	// LangChain JS serialised format
-	if (m.lc === 1 && Array.isArray(m.id)) {
-		const cls = m.id[m.id.length - 1] as string;
-		if (cls === "HumanMessage") return "human";
-		if (cls === "AIMessage" || cls === "AIMessageChunk") return "ai";
-		if (cls === "SystemMessage") return "system";
-		if (cls === "ToolMessage") return "tool";
-	}
-	// Legacy plain-object
-	return m.type ?? m.role ?? "";
-}
-
-function sessionTitle(state: AgentState): string {
-	const msgs = state?.messages || [];
-	const first = msgs.find((m: any) => {
-		const t = msgType(m);
-		return t === "human" || t === "user";
-	});
-	if (!first) return "New Chat";
-	const rawContent = first.kwargs?.content ?? first.content;
-	const text = (typeof rawContent === "string" ? rawContent : "").replace(/^>.*\n\n/s, "").trim();
-	return text.length > 30 ? text.slice(0, 30) + "..." : text;
-}
-
-function cloneMessage(raw: Record<string, any>): Record<string, any> {
-	return {
-		...raw,
-		kwargs: raw.kwargs ? { ...raw.kwargs } : raw.kwargs,
-	};
-}
-
-function getMessageContent(raw: Record<string, any>): string {
-	const content = raw.kwargs?.content ?? raw.content;
-	return typeof content === "string" ? content : "";
-}
-
-function getMessageToolCalls(raw: Record<string, any>): any[] {
-	const toolCalls = raw.kwargs?.tool_calls ?? raw.tool_calls;
-	return Array.isArray(toolCalls) ? toolCalls : [];
-}
-
-function getMessageToolCallId(raw: Record<string, any>): string {
-	const toolCallId = raw.kwargs?.tool_call_id ?? raw.tool_call_id;
-	return typeof toolCallId === "string" ? toolCallId : "";
-}
-
-function getToolCallId(raw: Record<string, any>): string {
-	const toolCallId = raw?.id ?? raw?.tool_call_id;
-	return typeof toolCallId === "string" ? toolCallId : "";
-}
-
-function setMessageContent(raw: Record<string, any>, content: string): void {
-	if (raw.kwargs && "content" in raw.kwargs) {
-		raw.kwargs.content = content;
-	} else {
-		raw.content = content;
-	}
-}
-
-function setMessageToolCalls(raw: Record<string, any>, toolCalls: any[]): void {
-	if (raw.kwargs && ("tool_calls" in raw.kwargs || raw.lc === 1)) {
-		raw.kwargs = raw.kwargs || {};
-		raw.kwargs.tool_calls = toolCalls;
-	} else {
-		raw.tool_calls = toolCalls;
-	}
-}
-
-function normalizeMessagesForDisplay(messages: any[]): any[] {
-	const normalized: any[] = [];
-	for (const raw of messages || []) {
-		const type = msgType(raw);
-		if (type !== "ai") {
-			normalized.push(raw);
-			continue;
-		}
-
-		const prev = normalized[normalized.length - 1];
-		if (prev && msgType(prev) === "ai") {
-			const merged = cloneMessage(prev);
-			setMessageContent(merged, getMessageContent(prev) + getMessageContent(raw));
-			setMessageToolCalls(merged, [...getMessageToolCalls(prev), ...getMessageToolCalls(raw)]);
-			normalized[normalized.length - 1] = merged;
-			continue;
-		}
-
-		normalized.push(cloneMessage(raw));
-	}
-	return normalized;
-}
-
-interface AssistantMessageShell {
-	el: HTMLElement;
-	contentEl: HTMLElement;
-	stackEl: HTMLElement;
-}
-
-interface ActivityBlockRefs {
-	el: HTMLElement;
-	category: "lookup" | "change";
-	currentEl: HTMLElement;
-	archiveEl: HTMLDetailsElement;
-	archiveListEl: HTMLElement;
-}
-
-type SettingsSection = "general" | "knowledge" | "model-services" | "default-models" | "tools" | "tracing";
-
-interface SettingsDraft {
-	customInstructions: string;
-	guideDoc: { id: string; title: string } | null;
-	defaultNotebook: { id: string; name: string } | null;
-	langSmithEnabled: boolean;
-	langSmithApiKey: string;
-	langSmithEndpoint: string;
-	langSmithProject: string;
-	modelServices: ModelServiceConfig[];
-	defaultModelId: string;
-	subAgentModelId: string;
-	mcpServers: McpServerConfig[];
-	notebookOptions: Array<{ id: string; name: string }>;
-}
 
 export class ChatPanel {
 	private container: HTMLElement;
@@ -183,29 +64,19 @@ export class ChatPanel {
 	private sendBtn: HTMLElement;
 	private modelSelectEl: HTMLSelectElement;
 	private contextBar: HTMLElement;
-	private tasksSummaryEl: HTMLElement;
-	private taskListEl: HTMLElement;
-	private taskDetailEl: HTMLElement;
 
 	private activeSession: SessionData;
-	private selectedTaskId: string | null = null;
 	private currentView: "chat" | "tasks" | "settings" = "chat";
 	private pendingContext: string | null = null;
 	private abortCtrl: AbortController | null = null;
 	private pendingEl: HTMLElement | null = null;
 	private autoScroll = true;
 	private sessionListExpanded = false;
-	private renderingTasks = false;
 	private unsubs: Array<() => void> = [];
-	private currentSettingsSection: SettingsSection = "general";
-	private settingsDraft: SettingsDraft | null = null;
-	private settingsAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-	/* Autocomplete */
-	private completionEl: HTMLElement | null = null;
-	private completionIdx = 0;
-	private completionList: { id: string, title: string }[] = [];
-	private completionRange: { start: number, end: number } | null = null;
+	private settingsView: SettingsView;
+	private tasksView: TasksView;
+	private autocomplete: Autocomplete;
 
 	constructor(
 		element: HTMLElement,
@@ -301,10 +172,33 @@ export class ChatPanel {
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
 		this.modelSelectEl = this.container.querySelector(".chat-model-selector__select");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
-		this.tasksSummaryEl = this.container.querySelector(".chat-panel__tasks-header");
-		this.taskListEl = this.container.querySelector(".chat-panel__tasks-list");
-		this.taskDetailEl = this.container.querySelector(".chat-panel__tasks-detail");
 		this.applyEditorFontFamily();
+
+		// Create delegates
+		this.autocomplete = new Autocomplete(this.textareaEl);
+
+		this.tasksView = new TasksView({
+			tasksSummaryEl: this.container.querySelector(".chat-panel__tasks-header"),
+			taskListEl: this.container.querySelector(".chat-panel__tasks-list"),
+			taskDetailEl: this.container.querySelector(".chat-panel__tasks-detail"),
+			taskManager: this.taskManager,
+			renderConversationMessages: (messages, toolUIEvents, targetEl) =>
+				this.renderConversationMessages(messages, toolUIEvents, targetEl),
+			renderConversationMessagesUi: (messagesUi, targetEl) =>
+				this.renderConversationMessagesUi(messagesUi, targetEl),
+		});
+
+		this.settingsView = new SettingsView({
+			settingsViewEl: this.settingsViewEl,
+			plugin: this.plugin,
+			getConfig: () => this.getConfig(),
+			refreshModelSelector: () => this.refreshModelSelector(),
+			openTaskEditor: (task?) => this.tasksView.openTaskEditor(task),
+			queryDocs: (keyword) => this.queryDocs(keyword),
+			onConfigSaved: async (nextConfig) => {
+				await this.handleConfigSaved(nextConfig);
+			},
+		});
 
 		/* Bottom view switching */
 		this.bottomBarEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
@@ -334,8 +228,8 @@ export class ChatPanel {
 
 		/* Send on Enter (Shift+Enter for new line) */
 		this.textareaEl.addEventListener("keydown", (e) => {
-			if (this.completionEl) {
-				this.handleCompletionKey(e);
+			if (this.autocomplete.isActive) {
+				this.autocomplete.handleKey(e);
 				return;
 			}
 			if (e.key === "Enter" && !e.shiftKey) {
@@ -361,13 +255,13 @@ export class ChatPanel {
 
 		/* Autocomplete trigger */
 		this.textareaEl.addEventListener("input", (e) => {
-			this.handleInput(e);
+			void this.autocomplete.handleInput(e);
 		});
 		this.textareaEl.addEventListener("click", () => {
-			this.hideCompletion();
+			this.autocomplete.hide();
 		});
 		this.textareaEl.addEventListener("blur", () => {
-			setTimeout(() => this.hideCompletion(), 200);
+			setTimeout(() => this.autocomplete.hide(), 200);
 		});
 
 		/* Toggle session list */
@@ -470,8 +364,8 @@ export class ChatPanel {
 		this.sessionListEl.innerHTML = `
 			<div class="chat-session-list__items">${visible.map(s => {
 			const active = s.id === activeChatId ? " chat-session-item--active" : "";
-			const title = this.escapeHtml(s.title || "New Chat");
-			const date = this.escapeHtml(this.formatSessionDate(s.updated));
+			const title = escapeHtml(s.title || "New Chat");
+			const date = escapeHtml(this.formatSessionDate(s.updated));
 			return `<div class="chat-session-item${active}" data-id="${s.id}">
 				<div class="chat-session-item__info">
 					<div class="chat-session-item__line">
@@ -1001,7 +895,7 @@ export class ChatPanel {
 		this.contextBar.innerHTML = `
 <div class="chat-panel__context">
 	<span class="chat-panel__context-label">📎 Reference</span>
-	<span class="chat-panel__context-text">${this.escapeHtml(text.length > 100 ? text.slice(0, 100) + "..." : text)}</span>
+	<span class="chat-panel__context-text">${escapeHtml(text.length > 100 ? text.slice(0, 100) + "..." : text)}</span>
 	<span class="chat-panel__context-close block__icon b3-tooltips b3-tooltips__sw" aria-label="Remove">
 		<svg><use xlink:href="#iconClose"></use></svg>
 	</span>
@@ -1161,7 +1055,7 @@ export class ChatPanel {
 					if (summary) {
 						summary.innerHTML = this.buildToolSummaryHtml(
 							m.toolName,
-							`<span class="chat-msg__doc-meta">${this.escapeHtml(m.summary)}</span>`,
+							`<span class="chat-msg__doc-meta">${escapeHtml(m.summary)}</span>`,
 						);
 					}
 				}
@@ -1278,8 +1172,8 @@ export class ChatPanel {
 				// skip empty tool results entirely
 			} else {
 				html = `<div class="chat-msg__tool-result">
-				<div class="chat-msg__tool-header">🔧 Result${toolName ? `: ${this.escapeHtml(toolName)}` : ""}</div>
-				<pre style="max-height: 200px; overflow-y: auto;">${this.escapeHtml(trimmed)}</pre>
+				<div class="chat-msg__tool-header">🔧 Result${toolName ? `: ${escapeHtml(toolName)}` : ""}</div>
+				<pre style="max-height: 200px; overflow-y: auto;">${escapeHtml(trimmed)}</pre>
 			</div>`;
 			}
 		} else {
@@ -1288,7 +1182,7 @@ export class ChatPanel {
 				if (toolCalls && toolCalls.length) {
 					for (const tc of toolCalls) {
 						toolCallIndex += 1;
-						html += `<div class="chat-msg__tool" data-tool-call-index="${toolCallIndex}" data-tool-name="${this.escapeHtml(tc.name)}">
+						html += `<div class="chat-msg__tool" data-tool-call-index="${toolCallIndex}" data-tool-name="${escapeHtml(tc.name)}">
 							<details>
 								<summary>${this.buildToolSummaryHtml(tc.name)}</summary>
 							</details>
@@ -1368,8 +1262,8 @@ export class ChatPanel {
 		const el = document.createElement("div");
 		el.className = "chat-msg__tool";
 		el.dataset.toolName = toolName;
-		el.dataset.toolCategory = this.getToolCategory(toolName);
-		el.dataset.toolAction = this.getToolAction(toolName);
+		el.dataset.toolCategory = getToolCategory(toolName);
+		el.dataset.toolAction = getToolAction(toolName);
 		el.dataset.toolStatus = "pending";
 		if (typeof toolCallIndex === "number")
 			el.dataset.toolCallIndex = String(toolCallIndex);
@@ -1406,126 +1300,6 @@ export class ChatPanel {
 
 	private getActivityBlockFromElement(el: HTMLElement | null): ActivityBlockRefs | null {
 		return el ? ((el as any).__activityBlock ?? null) : null;
-	}
-
-	private getToolCategory(toolName?: string, payload?: ToolUIEventPayload): "lookup" | "change" {
-		if (payload?.type === "activity")
-			return payload.category === "change" ? "change" : "lookup";
-		if (payload?.type === "append_block" || payload?.type === "edit_blocks" || payload?.type === "created_document")
-			return "change";
-		const name = toolName || "";
-		if ([
-			"append_block",
-			"edit_blocks",
-			"create_document",
-			"move_document",
-			"rename_document",
-			"delete_document",
-			"create_scheduled_task",
-			"update_scheduled_task",
-			"delete_scheduled_task",
-			"toggle_todo",
-		].includes(name))
-			return "change";
-		return "lookup";
-	}
-
-	private getToolAction(toolName?: string, payload?: ToolUIEventPayload): string {
-		if (payload?.type === "activity")
-			return payload.action;
-		if (payload?.type === "created_document") return "create";
-		if (payload?.type === "append_block") return "append";
-		if (payload?.type === "edit_blocks") return "edit";
-		if (payload?.type === "document_link" || payload?.type === "document_blocks") return "read";
-
-		switch (toolName) {
-			case "list_notebooks":
-			case "list_documents":
-			case "recent_documents":
-			case "list_scheduled_tasks":
-				return "list";
-			case "get_document":
-			case "get_document_blocks":
-			case "get_document_outline":
-			case "read_block":
-				return "read";
-			case "search_fulltext":
-			case "search_documents":
-			case "search_todos":
-			case "get_todo_stats":
-				return "search";
-			case "create_document":
-			case "create_scheduled_task":
-				return "create";
-			case "append_block":
-				return "append";
-			case "edit_blocks":
-			case "update_scheduled_task":
-			case "toggle_todo":
-				return "edit";
-			case "move_document":
-				return "move";
-			case "rename_document":
-				return "rename";
-			case "delete_document":
-			case "delete_scheduled_task":
-				return "delete";
-			case "explore_notes":
-				return "search";
-			default:
-				return "other";
-		}
-	}
-
-	private getToolDisplayTitle(toolName: string): string {
-		switch (toolName) {
-			case "list_notebooks": return "列出笔记本";
-			case "list_documents": return "列出文档";
-			case "recent_documents": return "浏览最近文档";
-			case "get_document": return "读取文档";
-			case "get_document_blocks": return "读取文档块";
-			case "get_document_outline": return "文档大纲";
-			case "read_block": return "读取块";
-			case "search_fulltext": return "全文搜索";
-			case "search_documents": return "搜索文档";
-			case "append_block": return "追加内容";
-			case "edit_blocks": return "编辑块";
-			case "create_document": return "新建文档";
-			case "move_document": return "移动文档";
-			case "rename_document": return "重命名文档";
-			case "delete_document": return "删除文档";
-			case "create_scheduled_task": return "创建定时任务";
-			case "list_scheduled_tasks": return "列出定时任务";
-			case "update_scheduled_task": return "更新定时任务";
-			case "delete_scheduled_task": return "删除定时任务";
-			case "explore_notes": return "探索笔记";
-			case "search_todos": return "搜索待办";
-			case "toggle_todo": return "切换任务状态";
-			case "get_todo_stats": return "任务统计";
-			default:
-				// MCP tools are named mcp_{serverId}_{toolName}
-				if (toolName.startsWith("mcp_")) {
-					const parts = toolName.split("_");
-					// Remove "mcp" prefix and server ID, join the rest as tool name
-					return `🔌 ${parts.slice(2).join("_")}`;
-				}
-				return toolName;
-		}
-	}
-
-	private getActionLabel(action: string): string {
-		switch (action) {
-			case "list": return "列表";
-			case "read": return "读取";
-			case "search": return "搜索";
-			case "create": return "新建";
-			case "append": return "追加";
-			case "edit": return "编辑";
-			case "move": return "移动";
-			case "rename": return "重命名";
-			case "delete": return "删除";
-			default: return "其他";
-		}
 	}
 
 	private attachToolElementToShell(shell: AssistantMessageShell, toolEl: HTMLElement): void {
@@ -1629,10 +1403,10 @@ export class ChatPanel {
 			counts.set(action, (counts.get(action) || 0) + 1);
 		}
 		const chips = [...counts.entries()]
-			.map(([action, count]) => `<span class="chat-msg__activity-chip">${this.escapeHtml(this.getActionLabel(action))} ${count}</span>`)
+			.map(([action, count]) => `<span class="chat-msg__activity-chip">${escapeHtml(getActionLabel(action))} ${count}</span>`)
 			.join("");
 		const title = block.category === "change" ? `已更改 ${total} 项` : `已查找 ${total} 项`;
-		summary.innerHTML = `<span class="chat-msg__activity-title">${this.escapeHtml(title)}</span>${chips}`;
+		summary.innerHTML = `<span class="chat-msg__activity-title">${escapeHtml(title)}</span>${chips}`;
 	}
 
 	private findPendingToolElement(toolCallId: string, pendingToolEls: HTMLElement[]): HTMLElement | null {
@@ -1671,9 +1445,9 @@ export class ChatPanel {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
 		toolEl.dataset.hasEvents = "true";
-		const category = this.getToolCategory(event.toolName || toolEl.dataset.toolName, event.payload);
+		const category = getToolCategory(event.toolName || toolEl.dataset.toolName, event.payload);
 		toolEl.dataset.toolCategory = category;
-		toolEl.dataset.toolAction = this.getToolAction(event.toolName || toolEl.dataset.toolName, event.payload);
+		toolEl.dataset.toolAction = getToolAction(event.toolName || toolEl.dataset.toolName, event.payload);
 
 		if (event.payload.type === "activity") {
 			this.renderToolActivitySummary(toolEl, details, event, event.payload);
@@ -1797,11 +1571,11 @@ export class ChatPanel {
 		if (!summary) return;
 
 		const docId = options.id || "";
-		const docTitle = this.escapeHtml(options.label || options.path || docId || "文档");
-		const meta = options.meta ? `<span class="chat-msg__doc-meta">${this.escapeHtml(options.meta)}</span>` : "";
+		const docTitle = escapeHtml(options.label || options.path || docId || "文档");
+		const meta = options.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(options.meta)}</span>` : "";
 		const canOpen = Boolean(docId) && options.open !== false;
 		const contentHtml = docId
-			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${this.escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`
+			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`
 			: `<span class="chat-msg__doc-label">${docTitle}</span>${meta}`;
 		summary.innerHTML = this.buildToolSummaryHtml(
 			event.toolName || toolEl.dataset.toolName || "tool",
@@ -1826,9 +1600,9 @@ export class ChatPanel {
 	}
 
 	private buildToolSummaryHtml(toolName: string, contentHtml = "", category?: "lookup" | "change"): string {
-		const resolvedCategory = category || this.getToolCategory(toolName);
+		const resolvedCategory = category || getToolCategory(toolName);
 		const badge = resolvedCategory === "change" ? "更改" : "查找";
-		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${this.escapeHtml(badge)}</span><span class="chat-msg__tool-title">${this.escapeHtml(this.getToolDisplayTitle(toolName))}</span>${contentHtml}`;
+		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(badge)}</span><span class="chat-msg__tool-title">${escapeHtml(getToolDisplayTitle(toolName))}</span>${contentHtml}`;
 	}
 
 	private scrollToBottom(): void {
@@ -1850,12 +1624,6 @@ export class ChatPanel {
 		}
 	}
 
-	private escapeHtml(text: string): string {
-		const div = document.createElement("div");
-		div.textContent = text;
-		return div.innerHTML;
-	}
-
 	/* --- Edit blocks diff rendering (commented out for future reimplementation) --- */
 
 	// private renderEditBlocksDiff(resultJson: string): HTMLElement { ... }
@@ -1870,10 +1638,10 @@ export class ChatPanel {
 		await this.store.ensureLoaded();
 		const activeId = this.store.getIndex().activeId;
 		this.activeSession = await this.store.loadSession(activeId);
-		this.selectedTaskId = this.taskManager.listTaskEntries()[0]?.id || null;
+		this.tasksView.selectedTaskId = this.taskManager.listTaskEntries()[0]?.id || null;
 		this.renderCurrentSession();
-		await this.renderTasksView();
-		await this.renderSettingsView();
+		await this.tasksView.render();
+		await this.settingsView.render();
 		this.setCurrentView(this.currentView);
 		this.updateSessionToggleState();
 	}
@@ -1887,7 +1655,7 @@ export class ChatPanel {
 			this.renderCurrentSession();
 		}
 		if (this.currentView === "tasks") {
-			await this.renderTasksView();
+			await this.tasksView.render();
 		}
 		this.refreshSessionListUi();
 	}
@@ -1904,943 +1672,11 @@ export class ChatPanel {
 			button.setAttribute("aria-selected", String(button.dataset.view === view));
 		});
 		if (view === "tasks") {
-			void this.renderTasksView();
+			void this.tasksView.render();
 		} else if (view === "settings") {
-			void this.renderSettingsView();
+			void this.settingsView.render();
 		}
 	}
-
-	private formatDateTime(timestamp?: number): string {
-		if (!timestamp) return "—";
-		return new Date(timestamp).toLocaleString();
-	}
-
-	private formatTaskSchedule(task: ScheduledTaskMeta): string {
-		if (task.scheduleType === "once") {
-			return `一次性 · ${this.formatDateTime(task.triggerAt)}`;
-		}
-		return `循环 · ${task.cron || "未配置 cron"}`;
-	}
-
-	private taskStatusText(task: ScheduledTaskMeta): string {
-		switch (task.lastRunStatus) {
-			case "running": return "执行中";
-			case "success": return "最近成功";
-			case "error": return "最近失败";
-			default: return task.enabled ? "待执行" : "已停用";
-		}
-	}
-
-	private async renderTasksView(): Promise<void> {
-		if (this.renderingTasks) return;
-		this.renderingTasks = true;
-		try {
-			await this.renderTasksViewInner();
-		} finally {
-			this.renderingTasks = false;
-		}
-	}
-
-	private async renderTasksViewInner(): Promise<void> {
-		const entries = this.taskManager.listTaskEntries();
-		const runningCount = entries.filter((entry) => entry.task?.lastRunStatus === "running").length;
-		const errorCount = entries.filter((entry) => entry.task?.lastRunStatus === "error").length;
-		this.tasksSummaryEl.innerHTML = `
-<span class="chat-panel__tasks-stats">${entries.length} 个任务${runningCount ? ` / ${runningCount} 执行中` : ""}${errorCount ? ` / ${errorCount} 失败` : ""}</span>
-<button class="chat-panel__task-create b3-button" type="button">新建任务</button>`;
-		this.tasksSummaryEl.querySelector(".chat-panel__task-create")?.addEventListener("click", () => {
-			void this.openTaskEditor();
-		});
-
-		if (!entries.length) {
-			this.taskListEl.innerHTML = "<div class=\"chat-session-list__empty\">暂无定时任务</div>";
-			this.taskDetailEl.innerHTML = "<div class=\"chat-session-list__empty\">从这里创建你的第一个定时任务</div>";
-			this.selectedTaskId = null;
-			return;
-		}
-
-		if (!this.selectedTaskId || !entries.some((entry) => entry.id === this.selectedTaskId)) {
-			this.selectedTaskId = entries[0].id;
-		}
-
-		this.taskListEl.innerHTML = entries.map((entry) => {
-			const task = entry.task!;
-			const statusLabel = this.taskStatusText(task);
-			const scheduleLabel = this.formatTaskSchedule(task);
-			return `<button class="task-list-item${entry.id === this.selectedTaskId ? " task-list-item--active" : ""}" type="button" data-task-id="${entry.id}">
-				<div class="task-list-item__title">${this.escapeHtml(task.title)}</div>
-				<div class="task-list-item__meta">${this.escapeHtml(statusLabel)} · ${this.escapeHtml(scheduleLabel)}</div>
-			</button>`;
-		}).join("");
-		this.taskListEl.querySelectorAll<HTMLElement>("[data-task-id]").forEach((item) => {
-			item.addEventListener("click", () => {
-				this.selectedTaskId = item.dataset.taskId || null;
-				void this.renderTasksView();
-			});
-		});
-
-		const selected = this.selectedTaskId ? await this.taskManager.getTaskSession(this.selectedTaskId) : null;
-		if (!selected?.task) {
-			this.taskDetailEl.innerHTML = "<div class=\"chat-session-list__empty\">请选择一个定时任务</div>";
-			return;
-		}
-
-		const task = selected.task;
-
-		/* Execution history: split into run groups */
-		const messages = normalizeMessagesForDisplay(selected.state?.messages || []);
-		const toolUIEvents = Array.isArray(selected.state?.toolUIEvents) ? selected.state.toolUIEvents as ToolUIEvent[] : [];
-		const messagesUi = Array.isArray(selected.state?.messagesUi) ? selected.state.messagesUi as UiMessage[] : [];
-		const runGroups = groupTaskRuns(messages, toolUIEvents, messagesUi);
-		const historyHtml = this.renderRunGroupsHtml(runGroups);
-
-		/* Build detail view */
-		const nextRunText = task.nextRunAt ? this.formatDateTime(task.nextRunAt) : "—";
-		const lastErrorHtml = task.lastRunError
-			? `<div class="task-detail__error">⚠ ${this.escapeHtml(task.lastRunError)}</div>`
-			: "";
-
-		this.taskDetailEl.innerHTML = `
-<div class="task-detail">
-	<div class="task-detail__header">
-		<div class="task-detail__title-area">
-			<h3>${this.escapeHtml(task.title)}</h3>
-			<span class="task-detail__badge task-detail__badge--${task.lastRunStatus}">${this.escapeHtml(this.taskStatusText(task))}</span>
-			<span class="task-detail__next-run">下次执行：${this.escapeHtml(nextRunText)}</span>
-		</div>
-		<div class="task-detail__actions">
-			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${task.enabled ? "停用" : "启用"}" data-action="toggle">
-				<svg style="width:16px;height:16px"><use xlink:href="${task.enabled ? "#iconPause" : "#iconPlay"}"></use></svg>
-			</span>
-			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="编辑" data-action="edit">
-				<svg style="width:16px;height:16px"><use xlink:href="#iconEdit"></use></svg>
-			</span>
-			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="删除" data-action="delete">
-				<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
-			</span>
-		</div>
-	</div>
-	${lastErrorHtml}
-	<div class="task-detail__meta-row">
-		<span>调度：${this.escapeHtml(this.formatTaskSchedule(task))}</span>
-		<span>时区：${this.escapeHtml(task.timezone)}</span>
-		<span>累计 ${task.runCount} 次</span>
-		${task.lastRunAt ? `<span>上次：${this.escapeHtml(this.formatDateTime(task.lastRunAt))}</span>` : ""}
-	</div>
-	<details class="task-detail__prompt-section">
-		<summary class="task-detail__section-title">任务指令</summary>
-		<pre class="task-detail__prompt-body">${this.escapeHtml(task.prompt)}</pre>
-	</details>
-	<div class="task-detail__history">
-		<div class="task-detail__section-title">执行历史</div>
-		${historyHtml}
-	</div>
-</div>`;
-
-		this.taskDetailEl.querySelector<HTMLElement>("[data-action='toggle']")?.addEventListener("click", () => {
-			void this.taskManager.setTaskEnabled(task.id, !task.enabled).catch((error) => showMessage(String(error)));
-		});
-		this.taskDetailEl.querySelector<HTMLElement>("[data-action='edit']")?.addEventListener("click", () => {
-			void this.openTaskEditor(task);
-		});
-		this.taskDetailEl.querySelector<HTMLElement>("[data-action='delete']")?.addEventListener("click", () => {
-			void this.taskManager.deleteTask(task.id).catch((error) => showMessage(String(error)));
-		});
-	}
-
-	private renderRunGroupsHtml(groups: TaskRunGroup[]): string {
-		if (!groups.length) {
-			return "<div class=\"chat-session-list__empty\">暂无执行记录</div>";
-		}
-		const reversed = [...groups].reverse();
-		return reversed.map((group, idx) => {
-			const isLatest = idx === 0;
-			const statusClass = group.status === "error" ? "task-run-card--error" : group.status === "success" ? "task-run-card--success" : "";
-			const statusLabel = group.status === "error" ? "失败" : group.status === "success" ? "成功" : "";
-			const timeLabel = group.runAt || "未知时间";
-
-			const host = document.createElement("div");
-			if (group.messagesUi.length > 0) {
-				this.renderConversationMessagesUi(group.messagesUi, host);
-			} else {
-				this.renderConversationMessages(group.messages, group.toolUIEvents, host);
-			}
-			const bodyHtml = host.innerHTML || "<div class=\"chat-session-list__empty\">无内容</div>";
-
-			return `<details class="task-run-card ${statusClass}" ${isLatest ? "open" : ""}>
-				<summary class="task-run-card__header">
-					<span class="task-run-card__time">${this.escapeHtml(timeLabel)}</span>
-					${statusLabel ? `<span class="task-run-card__status">${this.escapeHtml(statusLabel)}</span>` : ""}
-				</summary>
-				<div class="task-run-card__body">${bodyHtml}</div>
-			</details>`;
-		}).join("");
-	}
-
-	private async renderSettingsView(): Promise<void> {
-		const config = await this.getConfig();
-		const notebookOptions = this.settingsDraft?.notebookOptions?.length
-			? this.settingsDraft.notebookOptions
-			: await this.loadNotebookOptions();
-		const draft = this.settingsDraft ?? {
-			customInstructions: config.customInstructions || "",
-			guideDoc: config.guideDoc || null,
-			defaultNotebook: config.defaultNotebook || null,
-			langSmithEnabled: Boolean(config.langSmithEnabled),
-			langSmithApiKey: config.langSmithApiKey || "",
-			langSmithEndpoint: config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
-			langSmithProject: config.langSmithProject || DEFAULT_CONFIG.langSmithProject,
-			modelServices: cloneModelServices(config.modelServices),
-			defaultModelId: config.defaultModelId || "",
-			subAgentModelId: config.subAgentModelId || "",
-			mcpServers: Array.isArray(config.mcpServers) ? config.mcpServers.map((item) => ({ ...item })) : [],
-			notebookOptions,
-		};
-		this.settingsDraft = draft;
-
-		const configuredModels = flattenModelServices(draft.modelServices);
-		const modelOptions = configuredModels.map((item) => `
-			<option value="${this.escapeHtml(item.id)}"${item.id === draft.defaultModelId ? " selected" : ""}>
-				${this.escapeHtml(item.provider)} / ${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
-			</option>
-		`).join("");
-		const subAgentOptions = configuredModels.map((item) => `
-			<option value="${this.escapeHtml(item.id)}"${item.id === draft.subAgentModelId ? " selected" : ""}>
-				${this.escapeHtml(item.provider)} / ${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
-			</option>
-		`).join("");
-		const notebookOptionsHtml = draft.notebookOptions.map((item) => `
-			<option value="${this.escapeHtml(item.id)}"${item.id === draft.defaultNotebook?.id ? " selected" : ""}>
-				${this.escapeHtml(item.name)}
-			</option>
-		`).join("");
-		const guideDocMeta = draft.guideDoc
-			? `<div><span>当前文档</span><strong>${this.escapeHtml(draft.guideDoc.title)}</strong></div>
-				<div><span>文档 ID</span><strong>${this.escapeHtml(draft.guideDoc.id)}</strong></div>`
-			: `<div><span>当前文档</span><strong>未设置</strong></div>
-				<div><span>说明</span><strong>选择后会拼接进系统提示词</strong></div>`;
-		const notebookMeta = draft.defaultNotebook
-			? `<div><span>默认笔记本</span><strong>${this.escapeHtml(draft.defaultNotebook.name)}</strong></div>
-				<div><span>笔记本 ID</span><strong>${this.escapeHtml(draft.defaultNotebook.id)}</strong></div>`
-			: `<div><span>默认笔记本</span><strong>未设置</strong></div>
-				<div><span>说明</span><strong>Agent 将优先在这里工作</strong></div>`;
-		const settingsSections: Array<{ id: SettingsSection; label: string; meta: string }> = [
-			{ id: "general", label: "常规", meta: "自定义指令" },
-			{ id: "knowledge", label: "知识库默认项", meta: "指南文档、默认笔记本" },
-			{ id: "model-services", label: "模型服务", meta: "供应商连接与模型列表" },
-			{ id: "default-models", label: "默认模型", meta: "对话模型、子智能体模型" },
-			{ id: "tools", label: "工具扩展", meta: "MCP 服务连接与状态" },
-			{ id: "tracing", label: "追踪调试", meta: "LangSmith tracing" },
-		];
-
-		this.settingsViewEl.innerHTML = `
-<div class="settings-panel">
-	<div class="settings-panel__header">
-		<div>
-			<h3>设置</h3>
-		</div>
-	</div>
-	<form class="settings-panel__form">
-		<div class="settings-panel__shell">
-			<aside class="settings-panel__nav">
-				${settingsSections.map((section) => `
-					<button
-						class="settings-panel__nav-item${section.id === this.currentSettingsSection ? " settings-panel__nav-item--active" : ""}"
-						type="button"
-						data-settings-section="${section.id}"
-					>
-						<span class="settings-panel__nav-label">${section.label}</span>
-						<span class="settings-panel__nav-meta">${section.meta}</span>
-					</button>
-				`).join("")}
-			</aside>
-			<div class="settings-panel__content">
-					<section class="settings-panel__section${this.currentSettingsSection === "general" ? " settings-panel__section--active" : ""}" data-settings-panel="general">
-						<div class="settings-panel__section-title">常规</div>
-						<label class="settings-panel__field">
-							<span>自定义指令</span>
-							<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(draft.customInstructions)}</textarea>
-						</label>
-					</section>
-
-				<section class="settings-panel__section${this.currentSettingsSection === "knowledge" ? " settings-panel__section--active" : ""}" data-settings-panel="knowledge">
-					<div class="settings-panel__section-title">知识库默认项</div>
-					<div class="settings-panel__picker">
-						<label class="settings-panel__field">
-							<span>用户指南文档</span>
-							<input
-								class="b3-text-field"
-								name="guideDocSearch"
-								data-role="guide-doc-search"
-								value="${this.escapeHtml(draft.guideDoc?.title || "")}"
-								placeholder="输入文档标题搜索..."
-								autocomplete="off"
-							/>
-						</label>
-						<div class="settings-panel__picker-dropdown b3-menu fn__none" data-role="guide-doc-dropdown"></div>
-					</div>
-					<div class="settings-panel__meta-grid">${guideDocMeta}</div>
-					<label class="settings-panel__field">
-						<span>默认工作笔记本</span>
-						<select class="b3-select" name="defaultNotebookId">
-							<option value="">（不指定）</option>
-							${notebookOptionsHtml || "<option value=\"\">（暂无可用笔记本）</option>"}
-						</select>
-					</label>
-					<div class="settings-panel__meta-grid">${notebookMeta}</div>
-				</section>
-
-					<section class="settings-panel__section${this.currentSettingsSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
-						<div class="settings-panel__section-title">模型服务</div>
-						<div class="agent-model-list">
-							${draft.modelServices.length
-								? draft.modelServices.map((service) => `
-									<div class="agent-model-service">
-										<div class="agent-model-list__item">
-											<div class="agent-model-list__info">
-												<span class="agent-model-list__name">${this.escapeHtml(service.name)}</span>
-												<span class="agent-model-list__detail">${this.escapeHtml(service.apiBaseURL)} · ${service.models.length} 个模型</span>
-											</div>
-											<div class="agent-model-list__actions">
-												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="add-service-model" data-service-id="${this.escapeHtml(service.id)}">添加模型</button>
-												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model-service" data-service-id="${this.escapeHtml(service.id)}">编辑服务</button>
-												<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model-service" data-service-id="${this.escapeHtml(service.id)}">删除服务</button>
-											</div>
-										</div>
-										<div class="agent-model-service__models">
-											${service.models.length
-												? service.models.map((item) => `
-													<div class="agent-model-list__item agent-model-list__item--sub">
-														<div class="agent-model-list__info">
-															<span class="agent-model-list__name">${this.escapeHtml(item.name)}</span>
-															<span class="agent-model-list__detail">${this.escapeHtml(item.model)}</span>
-														</div>
-														<div class="agent-model-list__actions">
-															<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-service-id="${this.escapeHtml(service.id)}" data-model-id="${this.escapeHtml(item.id)}">编辑</button>
-															<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-service-id="${this.escapeHtml(service.id)}" data-model-id="${this.escapeHtml(item.id)}">删除</button>
-														</div>
-													</div>
-												`).join("")
-												: "<div class=\"agent-model-list__empty\">尚未添加模型。</div>"}
-										</div>
-									</div>
-								`).join("")
-								: "<div class=\"agent-model-list__empty\">尚未配置模型服务。点击下方按钮添加。</div>"}
-						</div>
-						<div class="settings-panel__actions settings-panel__actions--inline">
-							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">添加模型服务</button>
-						</div>
-					</section>
-
-					<section class="settings-panel__section${this.currentSettingsSection === "default-models" ? " settings-panel__section--active" : ""}" data-settings-panel="default-models">
-						<div class="settings-panel__section-title">默认模型</div>
-						<label class="settings-panel__field">
-							<span>对话模型</span>
-							<select class="b3-select" name="defaultModelId">
-								<option value="">（未设置）</option>
-								${modelOptions}
-							</select>
-						</label>
-						<label class="settings-panel__field">
-							<span>子智能体模型</span>
-							<select class="b3-select" name="subAgentModelId">
-								<option value="">（跟随对话模型）</option>
-								${subAgentOptions}
-							</select>
-						</label>
-					</section>
-
-				<section class="settings-panel__section${this.currentSettingsSection === "tools" ? " settings-panel__section--active" : ""}" data-settings-panel="tools">
-					<div class="settings-panel__section-title">工具扩展</div>
-					<div class="agent-model-list">
-						${draft.mcpServers.length
-							? draft.mcpServers.map((item) => `
-								<div class="agent-model-list__item">
-									<div class="agent-model-list__info">
-										<span class="agent-model-list__name">${item.enabled ? "已启用" : "已禁用"} · ${this.escapeHtml(item.name)}</span>
-										<span class="agent-model-list__detail">${this.escapeHtml(item.url)}</span>
-									</div>
-									<div class="agent-model-list__actions">
-										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="toggle-mcp" data-mcp-id="${this.escapeHtml(item.id)}">${item.enabled ? "禁用" : "启用"}</button>
-										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-mcp" data-mcp-id="${this.escapeHtml(item.id)}">编辑</button>
-										<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-mcp" data-mcp-id="${this.escapeHtml(item.id)}">删除</button>
-									</div>
-								</div>
-							`).join("")
-							: "<div class=\"agent-model-list__empty\">尚未配置 MCP 服务。</div>"}
-					</div>
-					<div class="settings-panel__actions settings-panel__actions--inline">
-						<button class="b3-button b3-button--outline" type="button" data-action="add-mcp">添加 MCP 服务</button>
-					</div>
-				</section>
-
-				<section class="settings-panel__section${this.currentSettingsSection === "tracing" ? " settings-panel__section--active" : ""}" data-settings-panel="tracing">
-					<div class="settings-panel__section-title">追踪调试</div>
-					<label class="settings-panel__checkbox">
-						<input type="checkbox" name="langSmithEnabled"${draft.langSmithEnabled ? " checked" : ""} />
-						<span>启用 LangSmith Tracing</span>
-					</label>
-					<label class="settings-panel__field">
-						<span>LangSmith API Key</span>
-						<input class="b3-text-field" name="langSmithApiKey" type="password" value="${this.escapeHtml(draft.langSmithApiKey)}" placeholder="lsv2_..." />
-					</label>
-					<label class="settings-panel__field">
-						<span>LangSmith Endpoint</span>
-						<input class="b3-text-field" name="langSmithEndpoint" value="${this.escapeHtml(draft.langSmithEndpoint)}" placeholder="https://api.smith.langchain.com" />
-					</label>
-					<label class="settings-panel__field">
-						<span>LangSmith Project</span>
-						<input class="b3-text-field" name="langSmithProject" value="${this.escapeHtml(draft.langSmithProject)}" placeholder="SiYuan-Agent" />
-					</label>
-				</section>
-			</div>
-		</div>
-	</form>
-</div>`;
-
-		const form = this.settingsViewEl.querySelector<HTMLFormElement>(".settings-panel__form");
-		form?.addEventListener("submit", (event) => {
-			event.preventDefault();
-			void this.saveSettingsForm(form);
-		});
-
-		/* Auto-save: immediate on select/checkbox change, debounced on text input */
-		const scheduleAutoSave = (immediate = false): void => {
-			if (!form) return;
-			if (this.settingsAutoSaveTimer) clearTimeout(this.settingsAutoSaveTimer);
-			if (immediate) {
-				void this.saveSettingsForm(form);
-			} else {
-				this.settingsAutoSaveTimer = setTimeout(() => {
-					void this.saveSettingsForm(form);
-				}, 600);
-			}
-		};
-		form?.addEventListener("change", (e) => {
-			const target = e.target as HTMLElement;
-			const isText = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && (target as HTMLInputElement).type === "text");
-			if (!isText) scheduleAutoSave(true);
-		});
-		form?.addEventListener("input", (e) => {
-			const target = e.target as HTMLElement;
-			const isText = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && (target as HTMLInputElement).type !== "checkbox");
-			if (isText) scheduleAutoSave(false);
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((button) => {
-			button.addEventListener("click", () => {
-				const section = button.dataset.settingsSection as SettingsSection | undefined;
-				if (!section) return;
-				this.currentSettingsSection = section;
-				this.setSettingsSection(section);
-			});
-		});
-		this.bindGuideDocPicker();
-		this.bindSettingsModelActions();
-		this.bindSettingsMcpActions();
-		this.settingsViewEl.querySelector<HTMLSelectElement>("select[name='defaultNotebookId']")?.addEventListener("change", (event) => {
-			this.syncSettingsDraftFromForm();
-			const value = (event.currentTarget as HTMLSelectElement).value;
-			const nextNotebook = draft.notebookOptions.find((item) => item.id === value) || null;
-			this.settingsDraft = {
-				...draft,
-				defaultNotebook: nextNotebook ? { ...nextNotebook } : null,
-			};
-			void this.renderSettingsView();
-		});
-	}
-
-	private async saveSettingsForm(form: HTMLFormElement): Promise<void> {
-		const formData = new FormData(form);
-		this.syncSettingsDraftFromForm();
-		const currentConfig = await this.getConfig();
-		const draft = this.settingsDraft;
-		if (!draft) return;
-		const nextConfig: AgentConfig = {
-			...currentConfig,
-			customInstructions: String(formData.get("customInstructions") || ""),
-			guideDoc: draft.guideDoc,
-			defaultNotebook: draft.defaultNotebook,
-			modelServices: cloneModelServices(draft.modelServices),
-			models: [],
-			defaultModelId: String(formData.get("defaultModelId") || "").trim(),
-			subAgentModelId: String(formData.get("subAgentModelId") || "").trim(),
-			mcpServers: draft.mcpServers.map((item) => ({ ...item })),
-			langSmithEnabled: formData.get("langSmithEnabled") === "on",
-			langSmithApiKey: String(formData.get("langSmithApiKey") || "").trim(),
-			langSmithEndpoint: String(formData.get("langSmithEndpoint") || "").trim() || DEFAULT_CONFIG.langSmithEndpoint,
-			langSmithProject: String(formData.get("langSmithProject") || "").trim() || DEFAULT_CONFIG.langSmithProject,
-		};
-		this.plugin.data[CONFIG_STORAGE] = nextConfig;
-		await this.plugin.saveData(CONFIG_STORAGE, nextConfig);
-		const pluginAny = this.plugin as Plugin & {
-			mcpManager?: { connectAll?: (servers: McpServerConfig[]) => Promise<unknown>; getAllTools?: () => StructuredToolInterface[] };
-		};
-		await pluginAny.mcpManager?.connectAll?.((nextConfig.mcpServers || []).filter((item) => item.enabled));
-		this.tools = [
-			...getDefaultTools(() => nextConfig, () => this.taskManager),
-			...(pluginAny.mcpManager?.getAllTools?.() || []),
-		];
-		this.settingsDraft = {
-			...draft,
-			customInstructions: nextConfig.customInstructions,
-			guideDoc: nextConfig.guideDoc || null,
-			defaultNotebook: nextConfig.defaultNotebook || null,
-			langSmithEnabled: Boolean(nextConfig.langSmithEnabled),
-			langSmithApiKey: nextConfig.langSmithApiKey || "",
-			langSmithEndpoint: nextConfig.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
-			langSmithProject: nextConfig.langSmithProject || DEFAULT_CONFIG.langSmithProject,
-			modelServices: cloneModelServices(nextConfig.modelServices),
-			defaultModelId: nextConfig.defaultModelId || "",
-			subAgentModelId: nextConfig.subAgentModelId || "",
-			mcpServers: (nextConfig.mcpServers || []).map((item) => ({ ...item })),
-			notebookOptions: draft.notebookOptions,
-		};
-		await this.refreshModelSelector();
-		void this.renderSettingsView();
-	}
-
-	private setSettingsSection(section: SettingsSection): void {
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((button) => {
-			button.classList.toggle("settings-panel__nav-item--active", button.dataset.settingsSection === section);
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
-			panel.classList.toggle("settings-panel__section--active", panel.dataset.settingsPanel === section);
-		});
-	}
-
-	private syncSettingsDraftFromForm(): void {
-		if (!this.settingsDraft) return;
-		const form = this.settingsViewEl.querySelector<HTMLFormElement>(".settings-panel__form");
-		if (!form) return;
-		const guideDocInput = form.querySelector<HTMLInputElement>("[data-role='guide-doc-search']");
-		const notebookSelect = form.querySelector<HTMLSelectElement>("select[name='defaultNotebookId']");
-		const guideDocTitle = guideDocInput?.value.trim() || "";
-		if (!guideDocTitle) {
-			this.settingsDraft.guideDoc = null;
-		} else if (this.settingsDraft.guideDoc?.title !== guideDocTitle) {
-			this.settingsDraft.guideDoc = null;
-		}
-		const notebookId = notebookSelect?.value || "";
-		const notebook = this.settingsDraft.notebookOptions.find((item) => item.id === notebookId) || null;
-		this.settingsDraft.defaultNotebook = notebook ? { ...notebook } : null;
-	}
-
-	private bindGuideDocPicker(): void {
-		const input = this.settingsViewEl.querySelector<HTMLInputElement>("[data-role='guide-doc-search']");
-		const dropdown = this.settingsViewEl.querySelector<HTMLElement>("[data-role='guide-doc-dropdown']");
-		if (!input || !dropdown) return;
-		let timer: ReturnType<typeof setTimeout> | null = null;
-
-		input.addEventListener("input", () => {
-			if (this.settingsDraft) {
-				this.settingsDraft.guideDoc = null;
-			}
-			if (timer) clearTimeout(timer);
-			const keyword = input.value.trim();
-			timer = setTimeout(async () => {
-				const docs = await this.queryDocs(keyword);
-				if (docs.length === 0) {
-					dropdown.classList.add("fn__none");
-					dropdown.innerHTML = "";
-					return;
-				}
-				dropdown.innerHTML = docs.map((doc) => `
-					<div class="b3-menu__item" data-guide-doc-id="${this.escapeHtml(doc.id)}" data-guide-doc-title="${this.escapeHtml(doc.title)}">
-						<span class="b3-menu__label">${this.escapeHtml(doc.title)}</span>
-					</div>
-				`).join("");
-				dropdown.querySelectorAll<HTMLElement>("[data-guide-doc-id]").forEach((item) => {
-					item.addEventListener("mousedown", (event) => {
-						event.preventDefault();
-						if (!this.settingsDraft) return;
-						this.syncSettingsDraftFromForm();
-						this.settingsDraft.guideDoc = {
-							id: item.dataset.guideDocId || "",
-							title: item.dataset.guideDocTitle || "",
-						};
-						void this.renderSettingsView();
-					});
-				});
-				dropdown.classList.remove("fn__none");
-			}, 180);
-		});
-
-		input.addEventListener("blur", () => {
-			setTimeout(() => dropdown.classList.add("fn__none"), 120);
-		});
-
-		this.settingsViewEl.querySelector<HTMLElement>("[data-action='clear-guide-doc']")?.addEventListener("click", () => {
-			if (!this.settingsDraft) return;
-			this.syncSettingsDraftFromForm();
-			this.settingsDraft.guideDoc = null;
-			void this.renderSettingsView();
-		});
-	}
-
-	private bindSettingsModelActions(): void {
-		this.settingsViewEl.querySelector<HTMLElement>("[data-action='add-model-service']")?.addEventListener("click", () => {
-			this.syncSettingsDraftFromForm();
-			this.openModelServiceEditor();
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model-service']").forEach((button) => {
-			button.addEventListener("click", () => {
-				this.syncSettingsDraftFromForm();
-				this.openModelServiceEditor(button.dataset.serviceId);
-			});
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model-service']").forEach((button) => {
-			button.addEventListener("click", () => {
-				if (!this.settingsDraft) return;
-				this.syncSettingsDraftFromForm();
-				const serviceId = button.dataset.serviceId || "";
-				const service = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
-				if (!service) return;
-				const removedModelIds = new Set(service.models.map((item) => item.id));
-				this.settingsDraft.modelServices = this.settingsDraft.modelServices.filter((item) => item.id !== serviceId);
-				if (removedModelIds.has(this.settingsDraft.defaultModelId)) this.settingsDraft.defaultModelId = "";
-				if (removedModelIds.has(this.settingsDraft.subAgentModelId)) this.settingsDraft.subAgentModelId = "";
-				void this.renderSettingsView();
-			});
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='add-service-model']").forEach((button) => {
-			button.addEventListener("click", () => {
-				this.syncSettingsDraftFromForm();
-				this.openServiceModelEditor(button.dataset.serviceId || "");
-			});
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model']").forEach((button) => {
-			button.addEventListener("click", () => {
-				this.syncSettingsDraftFromForm();
-				this.openServiceModelEditor(button.dataset.serviceId || "", button.dataset.modelId);
-			});
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model']").forEach((button) => {
-			button.addEventListener("click", () => {
-				if (!this.settingsDraft) return;
-				this.syncSettingsDraftFromForm();
-				const serviceId = button.dataset.serviceId || "";
-				const modelId = button.dataset.modelId || "";
-				const service = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
-				if (!service) return;
-				service.models = service.models.filter((item) => item.id !== modelId);
-				if (this.settingsDraft.defaultModelId === modelId) this.settingsDraft.defaultModelId = "";
-				if (this.settingsDraft.subAgentModelId === modelId) this.settingsDraft.subAgentModelId = "";
-				void this.renderSettingsView();
-			});
-		});
-	}
-
-	private openModelServiceEditor(serviceId?: string): void {
-		if (!this.settingsDraft) return;
-		const existing = this.settingsDraft.modelServices.find((item) => item.id === serviceId) || null;
-		const draftService: ModelServiceConfig = existing ? {
-			...existing,
-			models: existing.models.map((item) => ({ ...item })),
-		} : {
-			id: genModelServiceId(),
-			name: "",
-			apiBaseURL: DEFAULT_CONFIG.apiBaseURL,
-			apiKey: "",
-			models: [],
-		};
-		const overlay = document.createElement("div");
-		overlay.className = "agent-model-editor-overlay";
-		overlay.innerHTML = `
-			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${existing ? "编辑模型服务" : "添加模型服务"}</h4>
-				<label class="agent-model-editor__label">服务名称
-					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(draftService.name)}" placeholder="OpenAI / Azure / 自建网关" />
-				</label>
-				<label class="agent-model-editor__label">API Base URL
-					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${this.escapeHtml(draftService.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
-				</label>
-				<label class="agent-model-editor__label">API Key
-					<input class="b3-text-field fn__block" type="password" data-field="apiKey" value="${this.escapeHtml(draftService.apiKey)}" placeholder="sk-..." />
-				</label>
-				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
-				</div>
-			</div>`;
-		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
-		const baseUrlField = overlay.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
-		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
-		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
-			if (!this.settingsDraft) return;
-			const nextService: ModelServiceConfig = {
-				...draftService,
-				name: nameField?.value.trim() || "Unnamed Service",
-				apiBaseURL: baseUrlField?.value.trim() || DEFAULT_CONFIG.apiBaseURL,
-				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
-			};
-			if (!nextService.name.trim()) {
-				showMessage("请填写服务名称");
-				return;
-			}
-			if (!nextService.apiBaseURL.trim()) {
-				showMessage("请填写 API Base URL");
-				return;
-			}
-			const existingIndex = this.settingsDraft.modelServices.findIndex((item) => item.id === nextService.id);
-			if (existingIndex >= 0) {
-				this.settingsDraft.modelServices[existingIndex] = nextService;
-			} else {
-				this.settingsDraft.modelServices.push(nextService);
-			}
-			overlay.remove();
-			void this.renderSettingsView();
-		});
-		overlay.addEventListener("click", (event) => {
-			if (event.target === overlay) overlay.remove();
-		});
-		document.body.appendChild(overlay);
-	}
-
-	private openServiceModelEditor(serviceId: string, modelId?: string): void {
-		if (!this.settingsDraft) return;
-		const service = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
-		if (!service) {
-			showMessage("未找到模型服务");
-			return;
-		}
-		const existing = service.models.find((item) => item.id === modelId) || null;
-		const draftModel: ModelServiceModelConfig = existing ? { ...existing } : {
-			id: genModelId(),
-			name: "",
-			model: "",
-		};
-		const overlay = document.createElement("div");
-		overlay.className = "agent-model-editor-overlay";
-		overlay.innerHTML = `
-			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${existing ? "编辑模型" : "添加模型"}</h4>
-				<label class="agent-model-editor__label">所属服务
-					<input class="b3-text-field fn__block" value="${this.escapeHtml(service.name)}" disabled />
-				</label>
-				<label class="agent-model-editor__label">显示名称
-					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(draftModel.name)}" placeholder="GPT-4o / Claude Sonnet" />
-				</label>
-				<label class="agent-model-editor__label">模型标识
-					<input class="b3-text-field fn__block" data-field="model" value="${this.escapeHtml(draftModel.model)}" placeholder="gpt-4o" />
-				</label>
-				<label class="agent-model-editor__label">Temperature（可选）
-					<input class="b3-text-field fn__block" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${draftModel.temperature ?? ""}" placeholder="0" />
-				</label>
-				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
-				</div>
-			</div>`;
-		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
-		const modelField = overlay.querySelector<HTMLInputElement>("[data-field='model']");
-		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
-		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
-			if (!this.settingsDraft) return;
-			const nextService = this.settingsDraft.modelServices.find((item) => item.id === serviceId);
-			if (!nextService) return;
-			const nextModel: ModelServiceModelConfig = {
-				...draftModel,
-				name: nameField?.value.trim() || modelField?.value.trim() || "Unnamed Model",
-				model: modelField?.value.trim() || "",
-			};
-			const temperature = overlay.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
-			nextModel.temperature = temperature ? Number(temperature) : undefined;
-			if (!nextModel.model) {
-				showMessage("请填写模型标识");
-				return;
-			}
-			const existingIndex = nextService.models.findIndex((item) => item.id === nextModel.id);
-			if (existingIndex >= 0) {
-				nextService.models[existingIndex] = nextModel;
-			} else {
-				nextService.models.push(nextModel);
-			}
-			overlay.remove();
-			void this.renderSettingsView();
-		});
-		overlay.addEventListener("click", (event) => {
-			if (event.target === overlay) overlay.remove();
-		});
-		document.body.appendChild(overlay);
-	}
-
-	private bindSettingsMcpActions(): void {
-		this.settingsViewEl.querySelector<HTMLElement>("[data-action='add-mcp']")?.addEventListener("click", () => {
-			this.syncSettingsDraftFromForm();
-			this.openMcpEditor();
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-mcp']").forEach((button) => {
-			button.addEventListener("click", () => {
-				this.syncSettingsDraftFromForm();
-				this.openMcpEditor(button.dataset.mcpId);
-			});
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='toggle-mcp']").forEach((button) => {
-			button.addEventListener("click", () => {
-				if (!this.settingsDraft) return;
-				this.syncSettingsDraftFromForm();
-				const server = this.settingsDraft.mcpServers.find((item) => item.id === button.dataset.mcpId);
-				if (!server) return;
-				server.enabled = !server.enabled;
-				void this.renderSettingsView();
-			});
-		});
-		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-mcp']").forEach((button) => {
-			button.addEventListener("click", () => {
-				if (!this.settingsDraft) return;
-				this.syncSettingsDraftFromForm();
-				this.settingsDraft.mcpServers = this.settingsDraft.mcpServers.filter((item) => item.id !== button.dataset.mcpId);
-				void this.renderSettingsView();
-			});
-		});
-	}
-
-	private openMcpEditor(serverId?: string): void {
-		if (!this.settingsDraft) return;
-		const existing = this.settingsDraft.mcpServers.find((item) => item.id === serverId);
-		const overlay = document.createElement("div");
-		overlay.className = "agent-model-editor-overlay";
-		overlay.innerHTML = `
-			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${existing ? "编辑 MCP 服务" : "添加 MCP 服务"}</h4>
-				<label class="agent-model-editor__label">名称
-					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(existing?.name || "")}" placeholder="My MCP Server" />
-				</label>
-				<label class="agent-model-editor__label">URL (SSE / Streamable HTTP)
-					<input class="b3-text-field fn__block" data-field="url" value="${this.escapeHtml(existing?.url || "")}" placeholder="http://localhost:3000/sse" />
-				</label>
-				<label class="agent-model-editor__label">API Key (可选)
-					<input class="b3-text-field fn__block" data-field="apiKey" type="password" value="${this.escapeHtml(existing?.apiKey || "")}" placeholder="可选的认证密钥" />
-				</label>
-				<label class="agent-model-editor__label">描述 (可选)
-					<input class="b3-text-field fn__block" data-field="description" value="${this.escapeHtml(existing?.description || "")}" placeholder="这个服务提供什么工具？" />
-				</label>
-				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
-				</div>
-			</div>`;
-		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
-		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
-			if (!this.settingsDraft) return;
-			const name = overlay.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || "";
-			const url = overlay.querySelector<HTMLInputElement>("[data-field='url']")?.value.trim() || "";
-			if (!name || !url) {
-				showMessage("名称和 URL 不能为空");
-				return;
-			}
-			const nextServer: McpServerConfig = {
-				id: existing?.id || genModelId(),
-				name,
-				url,
-				enabled: existing?.enabled ?? true,
-				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || undefined,
-				description: overlay.querySelector<HTMLInputElement>("[data-field='description']")?.value.trim() || undefined,
-			};
-			const existingIndex = this.settingsDraft.mcpServers.findIndex((item) => item.id === nextServer.id);
-			if (existingIndex >= 0) {
-				this.settingsDraft.mcpServers[existingIndex] = nextServer;
-			} else {
-				this.settingsDraft.mcpServers.push(nextServer);
-			}
-			overlay.remove();
-			void this.renderSettingsView();
-		});
-		overlay.addEventListener("click", (event) => {
-			if (event.target === overlay) overlay.remove();
-		});
-		document.body.appendChild(overlay);
-	}
-
-	private async loadNotebookOptions(): Promise<Array<{ id: string; name: string }>> {
-		try {
-			const resp = await fetch("/api/notebook/lsNotebooks", { method: "POST" });
-			const json = await resp.json();
-			const notebooks = Array.isArray(json.data?.notebooks) ? json.data.notebooks : [];
-			return notebooks
-				.filter((item: any) => !item?.closed && typeof item?.id === "string" && typeof item?.name === "string")
-				.map((item: any) => ({ id: item.id, name: item.name }));
-		} catch {
-			return [];
-		}
-	}
-
-	private async openTaskEditor(task?: ScheduledTaskMeta): Promise<void> {
-		const isEditing = Boolean(task);
-		const scheduleType = task?.scheduleType || "recurring";
-		this.taskDetailEl.innerHTML = `
-<form class="task-editor">
-	<label class="task-editor__field">
-		<span>标题</span>
-		<input class="b3-text-field" name="title" value="${this.escapeHtml(task?.title || "")}" required />
-	</label>
-	<label class="task-editor__field">
-		<span>Prompt</span>
-		<textarea class="b3-text-field" name="prompt" rows="6" required>${this.escapeHtml(task?.prompt || "")}</textarea>
-	</label>
-	<label class="task-editor__field">
-		<span>类型</span>
-		<select class="b3-select" name="scheduleType">
-			<option value="recurring"${scheduleType === "recurring" ? " selected" : ""}>循环</option>
-			<option value="once"${scheduleType === "once" ? " selected" : ""}>一次性</option>
-		</select>
-	</label>
-	<label class="task-editor__field">
-		<span>Cron</span>
-		<input class="b3-text-field" name="cron" value="${this.escapeHtml(task?.cron || "")}" placeholder="0 18 * * *" />
-	</label>
-	<label class="task-editor__field">
-		<span>触发时间</span>
-		<input class="b3-text-field" name="triggerAt" value="${task?.triggerAt ? new Date(task.triggerAt).toISOString().slice(0, 16) : ""}" type="datetime-local" />
-	</label>
-	<label class="task-editor__field">
-		<span>时区</span>
-		<input class="b3-text-field" name="timezone" value="${this.escapeHtml(task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}" />
-	</label>
-	<label class="task-editor__checkbox">
-		<input type="checkbox" name="enabled"${task?.enabled !== false ? " checked" : ""} />
-		<span>启用</span>
-	</label>
-	<div class="task-editor__actions">
-		<button class="b3-button" type="submit">${isEditing ? "保存" : "创建"}</button>
-		<button class="b3-button b3-button--text" type="button" data-action="cancel">取消</button>
-	</div>
-</form>`;
-		const form = this.taskDetailEl.querySelector<HTMLFormElement>(".task-editor");
-		form?.addEventListener("submit", (event) => {
-			event.preventDefault();
-			const formData = new FormData(form);
-			const nextScheduleType = formData.get("scheduleType") === "once" ? "once" : "recurring";
-			const triggerAtValue = formData.get("triggerAt");
-			const triggerAt = typeof triggerAtValue === "string" && triggerAtValue
-				? new Date(triggerAtValue).getTime()
-				: undefined;
-			const payload = {
-				title: String(formData.get("title") || "").trim(),
-				prompt: String(formData.get("prompt") || "").trim(),
-				scheduleType: nextScheduleType as "once" | "recurring",
-				cron: String(formData.get("cron") || "").trim() || undefined,
-				triggerAt,
-				timezone: String(formData.get("timezone") || "").trim() || undefined,
-				enabled: formData.get("enabled") === "on",
-			};
-			if (isEditing && task) {
-				void this.taskManager.updateTask(task.id, payload).then(() => {
-					this.selectedTaskId = task.id;
-					return this.renderTasksView();
-				}).catch((error) => showMessage(String(error)));
-				return;
-			}
-			void this.taskManager.createTask(payload).then((session) => {
-				this.selectedTaskId = session.id;
-				return this.renderTasksView();
-			}).catch((error) => showMessage(String(error)));
-		});
-		this.taskDetailEl.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => {
-			void this.renderTasksView();
-		});
-	}
-
 	private async refreshModelSelector(): Promise<void> {
 		const config = await this.getConfig();
 		const models: ModelConfig[] = flattenModelServices(config.modelServices);
@@ -2874,69 +1710,6 @@ export class ChatPanel {
 
 	/* --- Autocomplete --- */
 
-	private async handleInput(e: Event): Promise<void> {
-		const target = e.target as HTMLTextAreaElement;
-		const cursor = target.selectionStart;
-		const text = target.value;
-
-		/* Slash commands: only when at start of input */
-		const slashMatch = text.slice(0, cursor).match(/^(\/\S*)$/);
-		if (slashMatch) {
-			const prefix = slashMatch[1].toLowerCase();
-			const matched = SLASH_COMMANDS.filter(c => c.name.startsWith(prefix));
-			if (matched.length > 0) {
-				this.completionRange = { start: 0, end: cursor };
-				this.completionList = matched.map(c => ({ id: c.name, title: `${c.name}  —  ${c.description}` }));
-				this.completionIdx = 0;
-				this.showCompletion();
-				return;
-			}
-		}
-
-		const match = text.slice(0, cursor).match(/@([^\s@]*)$/);
-
-		if (match) {
-			const keyword = match[1];
-			const start = match.index!;
-			this.completionRange = { start, end: cursor };
-
-			const docs = await this.queryDocs(keyword);
-			if (docs.length > 0) {
-				this.completionList = docs;
-				this.completionIdx = 0;
-				this.showCompletion();
-			} else {
-				this.hideCompletion();
-			}
-		} else {
-			this.hideCompletion();
-		}
-	}
-
-	private handleCompletionKey(e: KeyboardEvent): void {
-		switch (e.key) {
-			case "ArrowUp":
-				e.preventDefault();
-				this.completionIdx = (this.completionIdx - 1 + this.completionList.length) % this.completionList.length;
-				this.renderCompletion();
-				break;
-			case "ArrowDown":
-				e.preventDefault();
-				this.completionIdx = (this.completionIdx + 1) % this.completionList.length;
-				this.renderCompletion();
-				break;
-			case "Enter":
-			case "Tab":
-				e.preventDefault();
-				this.insertCompletion();
-				break;
-			case "Escape":
-				e.preventDefault();
-				this.hideCompletion();
-				break;
-		}
-	}
-
 	private async queryDocs(keyword: string): Promise<{ id: string, title: string }[]> {
 		const escaped = keyword.replace(/'/g, "''");
 		const stmt = keyword
@@ -2959,69 +1732,15 @@ export class ChatPanel {
 		return [];
 	}
 
-	private showCompletion(): void {
-		if (!this.completionEl) {
-			this.completionEl = document.createElement("div");
-			this.completionEl.className = "chat-panel__completion b3-menu fn__none";
-			this.completionEl.style.position = "fixed";
-			this.completionEl.style.zIndex = "200";
-			this.completionEl.style.maxHeight = "200px";
-			this.completionEl.style.overflowY = "auto";
-			document.body.appendChild(this.completionEl);
-		}
-
-		const rect = this.textareaEl.getBoundingClientRect();
-		this.completionEl.style.bottom = (window.innerHeight - rect.top + 5) + "px";
-		this.completionEl.style.left = rect.left + "px";
-		this.completionEl.style.width = rect.width + "px";
-
-		this.completionEl.classList.remove("fn__none");
-		this.renderCompletion();
-	}
-
-	private hideCompletion(): void {
-		if (this.completionEl) {
-			this.completionEl.classList.add("fn__none");
-			this.completionEl.remove();
-			this.completionEl = null;
-		}
-		this.completionList = [];
-		this.completionRange = null;
-	}
-
-	private renderCompletion(): void {
-		if (!this.completionEl) return;
-
-		this.completionEl.innerHTML = this.completionList.map((item, idx) => `
-			<div class="b3-menu__item${idx === this.completionIdx ? " b3-menu__item--current" : ""}" data-idx="${idx}">
-				<span class="b3-menu__label">${this.escapeHtml(item.title)}</span>
-			</div>
-		`).join("");
-
-		this.completionEl.querySelectorAll(".b3-menu__item").forEach(el => {
-			el.addEventListener("click", () => {
-				this.completionIdx = parseInt((el as HTMLElement).dataset.idx || "0");
-				this.insertCompletion();
-			});
-		});
-	}
-
-	private insertCompletion(): void {
-		if (!this.completionRange || !this.completionList[this.completionIdx]) return;
-
-		const item = this.completionList[this.completionIdx];
-		const text = this.textareaEl.value;
-		const before = text.slice(0, this.completionRange.start);
-		const after = text.slice(this.completionRange.end);
-
-		/* Slash command: insert just the command name (no doc-ref syntax) */
-		const isSlashCmd = SLASH_COMMANDS.some(c => c.name === item.id);
-		const insertion = isSlashCmd ? item.id + " " : `((${item.id} "${item.title}")) `;
-
-		this.textareaEl.value = before + insertion + after;
-		this.textareaEl.selectionStart = this.textareaEl.selectionEnd = before.length + insertion.length;
-		this.textareaEl.focus();
-
-		this.hideCompletion();
+	private async handleConfigSaved(nextConfig: AgentConfig): Promise<void> {
+		const pluginAny = this.plugin as Plugin & {
+			mcpManager?: { connectAll?: (servers: McpServerConfig[]) => Promise<unknown>; getAllTools?: () => StructuredToolInterface[] };
+		};
+		await pluginAny.mcpManager?.connectAll?.((nextConfig.mcpServers || []).filter((item) => item.enabled));
+		this.tools = [
+			...getDefaultTools(() => nextConfig, () => this.taskManager),
+			...(pluginAny.mcpManager?.getAllTools?.() || []),
+		];
+		await this.refreshModelSelector();
 	}
 }

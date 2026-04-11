@@ -1,0 +1,132 @@
+/* ── Help message ──────────────────────────────────────────── */
+.chat-msg__help {
+padding: 12px 16px;
+font-size: 13px;
+line-height: 1.6;
+color: var(--b3-theme-on-surface);
+
+h4 {
+margin: 12px 0 6px;
+font-size: 13px;
+font-weight: 600;
+
+&:first-child {
+margin-top: 0;
+}
+}
+
+table {
+width: 100%;
+border-collapse: collapse;
+margin: 4px 0;
+
+td {
+padding: 3px 8px;
+border-bottom: 1px solid var(--b3-border-color);
+}
+
+td:first-child {
+white-space: nowrap;
+width: 90px;
+}
+}
+
+code {
+background: var(--b3-theme-surface-lighter, var(--b3-theme-surface));
+padding: 1px 4px;
+border-radius: 3px;
+font-size: 12px;
+}
+
+kbd {
+background: var(--b3-theme-surface);
+border: 1px solid var(--b3-border-color);
+border-radius: 3px;
+padding: 1px 5px;
+font-size: 11px;
+font-family: inherit;
+}
+
+details {
+margin: 4px 0;
+
+summary {
+cursor: pointer;
+color: var(--agent-accent, var(--b3-theme-primary));
+font-size: 12px;
+}
+}
+
+ul {
+margin: 4px 0;
+padding-left: 18px;
+
+li {
+font-size: 12px;
+margin: 2px 0;
+}
+}
+}
+
+.chat-msg--system {
+opacity: 0.9;
+}
+
+/* ── Welcome screen ──────────────────────────────────────────── */
+.chat-panel__welcome {
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+padding: 40px 20px;
+text-align: center;
+height: 100%;
+min-height: 300px;
+color: var(--b3-theme-on-surface);
+
+&-icon {
+font-size: 48px;
+margin-bottom: 12px;
+}
+
+&-title {
+font-size: 18px;
+font-weight: 600;
+margin: 0 0 8px;
+color: var(--b3-theme-on-background);
+}
+
+&-desc {
+font-size: 13px;
+color: var(--b3-theme-on-surface-light);
+margin: 0 0 24px;
+opacity: 0.7;
+}
+
+&-actions {
+display: flex;
+flex-wrap: wrap;
+gap: 8px;
+justify-content: center;
+max-width: 360px;
+}
+
+&-btn {
+display: inline-flex;
+align-items: center;
+gap: 4px;
+padding: 8px 14px;
+border: 1px solid var(--b3-border-color);
+border-radius: 8px;
+background: var(--b3-theme-surface);
+color: var(--b3-theme-on-surface);
+font-size: 13px;
+cursor: pointer;
+transition: all 0.15s;
+
+&:hover {
+border-color: var(--agent-accent, var(--b3-theme-primary));
+background: color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 8%, var(--b3-theme-surface));
+}
+}
+}

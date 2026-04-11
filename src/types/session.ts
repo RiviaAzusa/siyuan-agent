@@ -1,0 +1,77 @@
+import type { ToolUIEvent, UiMessage } from "./tool-events";
+
+/* ── Compaction metadata ────────────────────────────────────────────── */
+
+export interface CompactionState {
+	summary: string;
+	summarizedTurnCount: number;
+	lastCompactedAt: number;
+	lastSource: "auto" | "manual";
+	lastRequirement?: string;
+	version: 1;
+}
+
+/* ── Agent state ────────────────────────────────────────────────────── */
+
+export type AgentState = Record<string, any> & {
+	messages?: any[];
+	messagesUi?: UiMessage[];
+	compaction?: CompactionState;
+	/** @deprecated kept for lazy migration only */
+	toolUIEvents?: ToolUIEvent[];
+};
+
+/* ── Session types ──────────────────────────────────────────────────── */
+
+export type SessionKind = "chat" | "scheduled_task";
+export type SessionGroup = "chat_history" | "scheduled_tasks";
+export type ScheduledTaskScheduleType = "once" | "recurring";
+export type ScheduledTaskRunStatus = "idle" | "running" | "success" | "error";
+
+export interface ScheduledTaskMeta {
+	id: string;
+	title: string;
+	prompt: string;
+	scheduleType: ScheduledTaskScheduleType;
+	cron?: string;
+	triggerAt?: number;
+	timezone: string;
+	enabled: boolean;
+	nextRunAt?: number;
+	lastRunAt?: number;
+	lastRunStatus: ScheduledTaskRunStatus;
+	lastRunError?: string;
+	runCount: number;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SessionIndexEntry {
+	id: string;
+	title: string;
+	created: number;
+	updated: number;
+	kind: SessionKind;
+	group: SessionGroup;
+	task?: ScheduledTaskMeta;
+}
+
+/** 单个会话的持久化格式 */
+export interface SessionData {
+	id: string;
+	title: string;
+	created: number;
+	updated: number;
+	kind: SessionKind;
+	group: SessionGroup;
+	task?: ScheduledTaskMeta;
+	state: AgentState;
+	/** Per-conversation model override (model config ID) */
+	modelId?: string;
+}
+
+/** 会话列表索引（轻量，不含 messages） */
+export interface SessionIndex {
+	activeId: string;
+	sessions: SessionIndexEntry[];
+}

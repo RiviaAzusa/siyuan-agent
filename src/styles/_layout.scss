@@ -1,0 +1,34 @@
+/* Chat panel layout */
+.chat-panel {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	background: var(--agent-bg, var(--b3-theme-background));
+	color: var(--agent-text, #2f2a24);
+	font-family: var(--agent-editor-font-family, var(--b3-font-family));
+	--agent-bg: var(--b3-theme-background);
+	--agent-surface: var(--b3-theme-surface);
+	--agent-surface-soft: color-mix(in srgb, var(--b3-theme-surface) 84%, transparent);
+	--agent-surface-code: rgba(127, 127, 127, 0.08);
+	--agent-border: color-mix(in srgb, var(--b3-border-color) 88%, white 12%);
+	--agent-text: var(--b3-theme-on-surface);
+	--agent-text-muted: color-mix(in srgb, var(--b3-theme-on-surface) 72%, transparent);
+	--agent-accent: #d96c4a;
+	--agent-accent-soft: rgba(217, 108, 74, 0.14);
+	--agent-highlight: #f4b942;
+}
+
+.chat-panel__messages {
+	flex: 1;
+	overflow-y: auto;
+	padding: 14px 14px 20px;
+}
+
+.chat-panel__chat-view,
+.chat-panel__tasks-view,
+.chat-panel__settings-view {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	flex-direction: column;
+}
