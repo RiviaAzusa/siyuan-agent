@@ -2,7 +2,20 @@ import { HumanMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { AgentState, CompactionState } from "../types";
 
-const COMPACT_SUMMARY_PROMPT = `You are a conversation summariser.  Below is the existing summary (if any) followed by new conversation turns.  Produce a concise, information-dense summary that preserves all facts, decisions, and open questions.  Write in the same language the user predominantly uses (Chinese / English / mixed).
+const COMPACT_SUMMARY_PROMPT = `You are a conversation summariser for a note-taking AI assistant.
+Below is the existing summary (if any) followed by new conversation turns.
+Produce a concise, information-dense summary that preserves:
+
+1. User goals, requirements, and preferences
+2. Important facts and decisions made
+3. What was created, modified, searched, or found (document titles, block IDs, paths)
+4. Open questions and pending tasks
+5. Errors encountered and how they were resolved
+
+Rules:
+- Max 2000 characters
+- Use the SAME language as the user's messages (Chinese / English / mixed)
+- Output ONLY the updated summary, no preamble or explanation
 
 ## Existing summary
 {existing_summary}
@@ -10,7 +23,7 @@ const COMPACT_SUMMARY_PROMPT = `You are a conversation summariser.  Below is the
 ## New turns
 {new_turns}
 
-Produce only the updated summary, no preamble.`;
+Updated summary:`;
 
 function msgType(m: any): string {
 	if (typeof m?._getType === "function") return m._getType();

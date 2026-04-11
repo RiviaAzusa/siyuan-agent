@@ -3,7 +3,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { LangChainTracer } from "@langchain/core/tracers/tracer_langchain";
 import { Client } from "langsmith";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { BUILTIN_SYSTEM_PROMPT, type AgentConfig } from "../types";
+import { buildSystemPrompt, resolveModelConfig, type AgentConfig, type ModelConfig } from "../types";
 
 async function fetchGuideDoc(docId: string): Promise<string> {
 	try {
@@ -20,19 +20,20 @@ async function fetchGuideDoc(docId: string): Promise<string> {
 	}
 }
 
-export async function makeAgent(config: AgentConfig, tools: StructuredToolInterface[], extraSystemPrompt?: string | null) {
+export async function makeAgent(config: AgentConfig, tools: StructuredToolInterface[], extraSystemPrompt?: string | null, modelOverride?: ModelConfig | null) {
+	const mc = modelOverride || resolveModelConfig(config);
 	const model = new ChatOpenAI({
-		model: config.model,
-		temperature: 0,
+		model: mc.model,
+		temperature: mc.temperature ?? 0,
 		streaming: true,
-		apiKey: config.apiKey,
+		apiKey: mc.apiKey,
 		configuration: {
 			dangerouslyAllowBrowser: true,
-			baseURL: config.apiBaseURL,
+			baseURL: mc.apiBaseURL,
 		},
 	});
 
-	let systemPrompt = BUILTIN_SYSTEM_PROMPT;
+	let systemPrompt = buildSystemPrompt();
 	if (config.guideDoc?.id) {
 		const guideContent = await fetchGuideDoc(config.guideDoc.id);
 		if (guideContent) {

@@ -14,7 +14,12 @@ import {
 	DEFAULT_CONFIG,
 	INIT_PROMPT,
 	SLASH_COMMANDS,
+	MODEL_PROVIDER_PRESETS,
+	genModelId,
 	isToolMessageUi,
+	resolveModelConfig,
+	type ModelConfig,
+	type McpServerConfig,
 } from "../types";
 import { makeAgent, makeTracer } from "../core/agent";
 import { mergeState, runAgentStream } from "../core/stream-runtime";
@@ -23,7 +28,8 @@ import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
 import { groupTaskRuns, type TaskRunGroup } from "./task-run-group";
 import { UiMessageBuilder, ensureMessagesUi } from "../core/ui-message-builder";
-import { compactMessages } from "../core/compaction";
+import { compactMessages, shouldCompact } from "../core/compaction";
+import { getDefaultTools } from "../core/tools";
 const CONFIG_STORAGE = "agent-config";
 
 /** Extract the role string from either a live BaseMessage or a serialised dict. */
@@ -135,6 +141,26 @@ interface ActivityBlockRefs {
 	archiveListEl: HTMLElement;
 }
 
+type SettingsSection = "general" | "knowledge" | "models" | "tools" | "tracing";
+
+interface SettingsDraft {
+	apiBaseURL: string;
+	apiKey: string;
+	model: string;
+	customInstructions: string;
+	guideDoc: { id: string; title: string } | null;
+	defaultNotebook: { id: string; name: string } | null;
+	langSmithEnabled: boolean;
+	langSmithApiKey: string;
+	langSmithEndpoint: string;
+	langSmithProject: string;
+	models: ModelConfig[];
+	defaultModelId: string;
+	subAgentModelId: string;
+	mcpServers: McpServerConfig[];
+	notebookOptions: Array<{ id: string; name: string }>;
+}
+
 export class ChatPanel {
 	private container: HTMLElement;
 	private plugin: Plugin;
@@ -153,6 +179,7 @@ export class ChatPanel {
 	private messagesEl: HTMLElement;
 	private textareaEl: HTMLTextAreaElement;
 	private sendBtn: HTMLElement;
+	private modelSelectEl: HTMLSelectElement;
 	private contextBar: HTMLElement;
 	private tasksSummaryEl: HTMLElement;
 	private taskListEl: HTMLElement;
@@ -168,6 +195,8 @@ export class ChatPanel {
 	private sessionListExpanded = false;
 	private renderingTasks = false;
 	private unsubs: Array<() => void> = [];
+	private currentSettingsSection: SettingsSection = "general";
+	private settingsDraft: SettingsDraft | null = null;
 
 	/* Autocomplete */
 	private completionEl: HTMLElement | null = null;
@@ -230,7 +259,7 @@ export class ChatPanel {
 	<div class="chat-panel__bottom-bar">
 		<div class="chat-panel__composer-body">
 			<div class="chat-panel__input">
-				<textarea class="chat-panel__textarea b3-text-field" rows="3" placeholder="Ask anything..."></textarea>
+				<textarea class="chat-panel__textarea b3-text-field" rows="2" placeholder="问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)"></textarea>
 			</div>
 		</div>
 		<div class="chat-panel__bottom-footer">
@@ -240,6 +269,9 @@ export class ChatPanel {
 				<button class="chat-panel__switch-btn" type="button" data-view="settings">设置</button>
 			</div>
 			<div class="chat-panel__actions">
+				<div class="chat-model-selector">
+					<select class="chat-model-selector__select" title="选择模型"></select>
+				</div>
 				<button class="chat-panel__send b3-button b3-button--text" type="button">
 					<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>
 					Send
@@ -260,6 +292,7 @@ export class ChatPanel {
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
+		this.modelSelectEl = this.container.querySelector(".chat-model-selector__select");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
 		this.tasksSummaryEl = this.container.querySelector(".chat-panel__tasks-header");
 		this.taskListEl = this.container.querySelector(".chat-panel__tasks-list");
@@ -283,17 +316,41 @@ export class ChatPanel {
 		/* Send on click */
 		this.sendBtn.onclick = () => this.send();
 
-		/* Send on Ctrl+Enter / Cmd+Enter */
+		/* Model selector change */
+		this.modelSelectEl.addEventListener("change", () => {
+			if (this.activeSession) {
+				this.activeSession.modelId = this.modelSelectEl.value || undefined;
+				this.store.saveSession(this.activeSession);
+			}
+		});
+		this.refreshModelSelector();
+
+		/* Send on Enter (Shift+Enter for new line) */
 		this.textareaEl.addEventListener("keydown", (e) => {
 			if (this.completionEl) {
 				this.handleCompletionKey(e);
 				return;
 			}
-			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				this.send();
 			}
+			/* Escape to stop generation */
+			if (e.key === "Escape" && this.abortCtrl) {
+				e.preventDefault();
+				this.stop();
+			}
 		});
+
+		/* Auto-resize textarea */
+		const autoResize = () => {
+			this.textareaEl.style.height = "auto";
+			const maxH = 200;
+			this.textareaEl.style.height = Math.min(this.textareaEl.scrollHeight, maxH) + "px";
+			this.textareaEl.style.overflowY = this.textareaEl.scrollHeight > maxH ? "auto" : "hidden";
+		};
+		this.textareaEl.addEventListener("input", autoResize);
+		this.textareaEl.style.overflowY = "hidden";
 
 		/* Autocomplete trigger */
 		this.textareaEl.addEventListener("input", (e) => {
@@ -497,6 +554,7 @@ export class ChatPanel {
 		if (nameEl)
 			nameEl.textContent = entry?.title || "New Chat";
 		this.updateSessionToggleState();
+		this.refreshModelSelector();
 
 	/* Lazy-migrate old sessions that lack messagesUi */
 		if (!s.state) s.state = {};
@@ -505,7 +563,39 @@ export class ChatPanel {
 	/* Re-render messages from messagesUi */
 		this.messagesEl.innerHTML = "";
 		const messagesUi: UiMessage[] = Array.isArray(s.state?.messagesUi) ? s.state.messagesUi : [];
-		this.renderConversationMessagesUi(messagesUi);
+		if (messagesUi.length === 0) {
+			this.renderWelcomeScreen();
+		} else {
+			this.renderConversationMessagesUi(messagesUi);
+		}
+	}
+
+	private renderWelcomeScreen(): void {
+		const el = document.createElement("div");
+		el.className = "chat-panel__welcome";
+		el.innerHTML = `
+			<div class="chat-panel__welcome-icon">📚</div>
+			<h3 class="chat-panel__welcome-title">思源笔记 AI 助手</h3>
+			<p class="chat-panel__welcome-desc">试试问我关于你笔记库的任何问题</p>
+			<div class="chat-panel__welcome-actions">
+				<button class="chat-panel__welcome-btn" data-prompt="帮我总结一下最近编辑的笔记内容">📋 总结最近笔记</button>
+				<button class="chat-panel__welcome-btn" data-prompt="查看我的笔记库结构">🗂️ 浏览笔记结构</button>
+				<button class="chat-panel__welcome-btn" data-prompt="搜索我笔记中关于「」的内容">🔍 搜索笔记</button>
+				<button class="chat-panel__welcome-btn" data-prompt="查看我的待办任务清单">✅ 查看待办</button>
+			</div>`;
+		el.querySelectorAll(".chat-panel__welcome-btn").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const prompt = (btn as HTMLElement).dataset.prompt || "";
+				this.textareaEl.value = prompt;
+				this.textareaEl.focus();
+				// For search prompt, position cursor between quotes
+				if (prompt.includes("「」")) {
+					const idx = prompt.indexOf("「") + 1;
+					this.textareaEl.setSelectionRange(idx, idx);
+				}
+			});
+		});
+		this.messagesEl.appendChild(el);
 	}
 
 	/* --- Send --- */
@@ -532,6 +622,20 @@ export class ChatPanel {
 		if (compactMatch) {
 			this.textareaEl.value = "";
 			await this.handleCompact(config, (compactMatch[1] || "").trim());
+			return;
+		}
+
+		/* Handle /help command */
+		if (/^\/help$/i.test(text)) {
+			this.textareaEl.value = "";
+			this.showHelpMessage();
+			return;
+		}
+
+		/* Handle /clear command */
+		if (/^\/clear$/i.test(text)) {
+			this.textareaEl.value = "";
+			this.newSession();
 			return;
 		}
 
@@ -582,6 +686,8 @@ export class ChatPanel {
 
 		let curTextEl: HTMLElement | null = null;
 		let curBuffer = "";
+		let reasoningEl: HTMLElement | null = null;
+		let reasoningBuffer = "";
 		const pendingToolEls: HTMLElement[] = [];
 		const existingToolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
 
@@ -632,13 +738,46 @@ export class ChatPanel {
 			removePending();
 			const errorEl = document.createElement("p");
 			errorEl.className = "chat-msg__error";
-			errorEl.textContent = `Error: ${String(error)}`;
+
+			const errStr = String(error);
+			let msg = errStr;
+			// Detect common model API errors and provide helpful messages
+			if (errStr.includes("function.arguments") && errStr.includes("JSON")) {
+				msg = `模型返回了无效的工具调用参数格式。该模型可能不完全支持 Function Calling。建议切换到支持 Function Calling 的模型（如 GPT-4o、DeepSeek-Chat）。\n\n原始错误: ${errStr}`;
+			} else if (errStr.includes("401") || errStr.includes("Unauthorized")) {
+				msg = `API 认证失败，请检查 API Key 是否正确。`;
+			} else if (errStr.includes("429") || errStr.includes("rate limit")) {
+				msg = `请求频率超限，请稍后重试。`;
+			} else if (errStr.includes("insufficient_quota") || errStr.includes("quota")) {
+				msg = `API 额度不足，请检查账户余额。`;
+			} else if (errStr.includes("Stream idle timeout")) {
+				msg = `模型响应超时（120秒无数据），可能是网络问题或模型服务繁忙。请重试。`;
+			} else if (errStr.includes("子智能体执行失败")) {
+				msg = errStr;
+			}
+
+			errorEl.textContent = `Error: ${msg}`;
+			// Add a retry button for recoverable errors
+			const retryBtn = document.createElement("button");
+			retryBtn.className = "chat-msg__retry-btn b3-button b3-button--outline";
+			retryBtn.textContent = "重试";
+			retryBtn.addEventListener("click", () => {
+				errorEl.remove();
+				// Re-send the last user message
+				if (this.textareaEl && !this.textareaEl.value.trim()) {
+					this.textareaEl.value = text;
+				}
+				this.send();
+			});
 			assistantShell.stackEl.appendChild(errorEl);
+			assistantShell.stackEl.appendChild(retryBtn);
 			this.scrollToBottom();
 		};
 
 		try {
-			const agent = await makeAgent(config, this.tools, extraSystemPrompt);
+			const sessionModelId = this.activeSession?.modelId;
+			const modelOverride = sessionModelId ? resolveModelConfig(config, sessionModelId) : null;
+			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride);
 			const tracer = makeTracer(config);
 			const result = await runAgentStream({
 				agent,
@@ -647,7 +786,30 @@ export class ChatPanel {
 				signal: this.abortCtrl?.signal,
 				existingToolUIEvents,
 				onUiEvent: (event) => {
+					if (event.type === "reasoning_delta") {
+						if (!reasoningEl) {
+							removePending();
+							reasoningEl = document.createElement("details");
+							reasoningEl.className = "chat-msg__reasoning";
+							reasoningEl.open = true;
+							reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary">💭 思考中…</summary><div class="chat-msg__reasoning-content"></div>`;
+							assistantShell.stackEl.appendChild(reasoningEl);
+						}
+						reasoningBuffer += event.text;
+						const contentEl = reasoningEl.querySelector(".chat-msg__reasoning-content")!;
+						contentEl.innerHTML = renderMarkdown(reasoningBuffer);
+						this.scrollToBottom();
+						return;
+					}
+
 					if (event.type === "text_delta") {
+						// When text starts, close the reasoning section
+						if (reasoningEl) {
+							reasoningEl.open = false;
+							const summary = reasoningEl.querySelector(".chat-msg__reasoning-summary");
+							if (summary) summary.textContent = "💭 思考过程";
+							reasoningEl = null;
+						}
 						const el = getTextEl();
 						curBuffer += event.text;
 						el.innerHTML = renderMarkdown(curBuffer);
@@ -705,6 +867,20 @@ export class ChatPanel {
 			this.compactCompletedActivityBlocks(assistantShell, "lookup");
 
 			s.state = latestState;
+
+			/* Auto-compact if context grew too large */
+			if (!this.abortCtrl?.signal.aborted && shouldCompact(latestState)) {
+				try {
+					const compactModel = new ChatOpenAI({
+						model: config.model,
+						temperature: 0,
+						apiKey: config.apiKey,
+						configuration: { dangerouslyAllowBrowser: true, baseURL: config.apiBaseURL },
+					});
+					await compactMessages(s.state, { model: compactModel, source: "auto" });
+				} catch (_) { /* best-effort, don't block save */ }
+			}
+
 			s.updated = Date.now();
 			s.title = sessionTitle(latestState);
 			const indexEntry = this.store.getSessionSummary(s.id);
@@ -775,6 +951,38 @@ export class ChatPanel {
 		} finally {
 			this.setLoading(false);
 		}
+	}
+
+	/* --- /help --- */
+
+	private showHelpMessage(): void {
+		const helpHtml = `
+<div class="chat-msg__help">
+<h4>📖 可用命令</h4>
+<table>
+<tr><td><code>/init</code></td><td>探索笔记库，生成用户指南</td></tr>
+<tr><td><code>/compact</code></td><td>手动压缩对话上下文</td></tr>
+<tr><td><code>/help</code></td><td>显示此帮助信息</td></tr>
+<tr><td><code>/clear</code></td><td>清空当前对话，开始新会话</td></tr>
+</table>
+<h4>🔧 可用工具 (${this.tools.length})</h4>
+<p>AI 会自动选择合适的工具。你也可以在提问时提示使用特定工具。</p>
+<details>
+<summary>查看全部工具</summary>
+<ul>${this.tools.map(t => `<li><strong>${t.name}</strong>: ${t.description?.slice(0, 80) || ""}</li>`).join("")}</ul>
+</details>
+<h4>💡 使用技巧</h4>
+<ul>
+<li>选中文本后按 <kbd>⌥⌘L</kbd> 可将文本作为上下文发送</li>
+<li>编辑器中右键菜单可快速发送选中内容</li>
+<li>底部可切换不同 AI 模型</li>
+</ul>
+</div>`;
+		const el = document.createElement("div");
+		el.className = "chat-msg chat-msg--system";
+		el.innerHTML = helpHtml;
+		this.messagesEl.appendChild(el);
+		this.scrollToBottom();
 	}
 
 	addContext(text: string): void {
@@ -1043,10 +1251,15 @@ export class ChatPanel {
 		let toolCallIndex = startToolCallIndex;
 
 		if (role === "tool") {
-			html = `<div class="chat-msg__tool-result">
+			const trimmed = content?.trim?.();
+			if (!trimmed) {
+				// skip empty tool results entirely
+			} else {
+				html = `<div class="chat-msg__tool-result">
 				<div class="chat-msg__tool-header">🔧 Result${toolName ? `: ${this.escapeHtml(toolName)}` : ""}</div>
-				<pre style="max-height: 200px; overflow-y: auto;">${this.escapeHtml(content)}</pre>
+				<pre style="max-height: 200px; overflow-y: auto;">${this.escapeHtml(trimmed)}</pre>
 			</div>`;
+			}
 		} else {
 			if (content)
 				html += renderMarkdown(content);
@@ -1185,6 +1398,7 @@ export class ChatPanel {
 			"create_scheduled_task",
 			"update_scheduled_task",
 			"delete_scheduled_task",
+			"toggle_todo",
 		].includes(name))
 			return "change";
 		return "lookup";
@@ -1206,9 +1420,13 @@ export class ChatPanel {
 				return "list";
 			case "get_document":
 			case "get_document_blocks":
+			case "get_document_outline":
+			case "read_block":
 				return "read";
 			case "search_fulltext":
 			case "search_documents":
+			case "search_todos":
+			case "get_todo_stats":
 				return "search";
 			case "create_document":
 			case "create_scheduled_task":
@@ -1217,6 +1435,7 @@ export class ChatPanel {
 				return "append";
 			case "edit_blocks":
 			case "update_scheduled_task":
+			case "toggle_todo":
 				return "edit";
 			case "move_document":
 				return "move";
@@ -1225,6 +1444,8 @@ export class ChatPanel {
 			case "delete_document":
 			case "delete_scheduled_task":
 				return "delete";
+			case "explore_notes":
+				return "search";
 			default:
 				return "other";
 		}
@@ -1237,6 +1458,8 @@ export class ChatPanel {
 			case "recent_documents": return "浏览最近文档";
 			case "get_document": return "读取文档";
 			case "get_document_blocks": return "读取文档块";
+			case "get_document_outline": return "文档大纲";
+			case "read_block": return "读取块";
 			case "search_fulltext": return "全文搜索";
 			case "search_documents": return "搜索文档";
 			case "append_block": return "追加内容";
@@ -1249,7 +1472,18 @@ export class ChatPanel {
 			case "list_scheduled_tasks": return "列出定时任务";
 			case "update_scheduled_task": return "更新定时任务";
 			case "delete_scheduled_task": return "删除定时任务";
-			default: return toolName;
+			case "explore_notes": return "探索笔记";
+			case "search_todos": return "搜索待办";
+			case "toggle_todo": return "切换任务状态";
+			case "get_todo_stats": return "任务统计";
+			default:
+				// MCP tools are named mcp_{serverId}_{toolName}
+				if (toolName.startsWith("mcp_")) {
+					const parts = toolName.split("_");
+					// Remove "mcp" prefix and server ID, join the rest as tool name
+					return `🔌 ${parts.slice(2).join("_")}`;
+				}
+				return toolName;
 		}
 	}
 
@@ -1501,9 +1735,13 @@ export class ChatPanel {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
 
+		// Skip empty or whitespace-only results
+		const trimmed = result?.trim();
+		if (!trimmed) return;
+
 		const pre = document.createElement("pre");
 		pre.className = "chat-msg__tool-result";
-		pre.textContent = result.length > 500 ? result.slice(0, 500) + "..." : result;
+		pre.textContent = trimmed.length > 500 ? trimmed.slice(0, 500) + "..." : trimmed;
 		details.appendChild(pre);
 	}
 
@@ -1569,13 +1807,16 @@ export class ChatPanel {
 	}
 
 	private setLoading(loading: boolean): void {
-		this.textareaEl.disabled = loading;
 		if (loading) {
-			this.sendBtn.innerHTML = `<svg class="chat-panel__send-icon"><use xlink:href="#iconClose"></use></svg>Stop`;
+			this.sendBtn.innerHTML = `<svg class="chat-panel__send-icon"><use xlink:href="#iconClose"></use></svg>`;
+			this.sendBtn.title = "停止生成 (Esc)";
 			this.sendBtn.onclick = () => this.stop();
+			this.textareaEl.placeholder = "AI 正在生成… (Shift+Enter 换行, Esc 停止)";
 		} else {
-			this.sendBtn.innerHTML = `<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>Send`;
+			this.sendBtn.innerHTML = `<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>`;
+			this.sendBtn.title = "发送 (Enter)";
 			this.sendBtn.onclick = () => this.send();
+			this.textareaEl.placeholder = "问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)";
 		}
 	}
 
@@ -1808,65 +2049,223 @@ export class ChatPanel {
 
 	private async renderSettingsView(): Promise<void> {
 		const config = await this.getConfig();
-		const guideDocLabel = config.guideDoc?.title || "未设置";
-		const notebookLabel = config.defaultNotebook?.name || "未设置";
+		const notebookOptions = this.settingsDraft?.notebookOptions?.length
+			? this.settingsDraft.notebookOptions
+			: await this.loadNotebookOptions();
+		const draft = this.settingsDraft ?? {
+			apiBaseURL: config.apiBaseURL || DEFAULT_CONFIG.apiBaseURL,
+			apiKey: config.apiKey || "",
+			model: config.model || DEFAULT_CONFIG.model,
+			customInstructions: config.customInstructions || "",
+			guideDoc: config.guideDoc || null,
+			defaultNotebook: config.defaultNotebook || null,
+			langSmithEnabled: Boolean(config.langSmithEnabled),
+			langSmithApiKey: config.langSmithApiKey || "",
+			langSmithEndpoint: config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
+			langSmithProject: config.langSmithProject || DEFAULT_CONFIG.langSmithProject,
+			models: Array.isArray(config.models) ? config.models.map((item) => ({ ...item })) : [],
+			defaultModelId: config.defaultModelId || "",
+			subAgentModelId: config.subAgentModelId || "",
+			mcpServers: Array.isArray(config.mcpServers) ? config.mcpServers.map((item) => ({ ...item })) : [],
+			notebookOptions,
+		};
+		this.settingsDraft = draft;
+
+		const modelOptions = draft.models.map((item) => `
+			<option value="${this.escapeHtml(item.id)}"${item.id === draft.defaultModelId ? " selected" : ""}>
+				${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
+			</option>
+		`).join("");
+		const subAgentOptions = draft.models.map((item) => `
+			<option value="${this.escapeHtml(item.id)}"${item.id === draft.subAgentModelId ? " selected" : ""}>
+				${this.escapeHtml(item.name)} (${this.escapeHtml(item.model)})
+			</option>
+		`).join("");
+		const notebookOptionsHtml = draft.notebookOptions.map((item) => `
+			<option value="${this.escapeHtml(item.id)}"${item.id === draft.defaultNotebook?.id ? " selected" : ""}>
+				${this.escapeHtml(item.name)}
+			</option>
+		`).join("");
+		const guideDocMeta = draft.guideDoc
+			? `<div><span>当前文档</span><strong>${this.escapeHtml(draft.guideDoc.title)}</strong></div>
+				<div><span>文档 ID</span><strong>${this.escapeHtml(draft.guideDoc.id)}</strong></div>`
+			: `<div><span>当前文档</span><strong>未设置</strong></div>
+				<div><span>说明</span><strong>选择后会拼接进系统提示词</strong></div>`;
+		const notebookMeta = draft.defaultNotebook
+			? `<div><span>默认笔记本</span><strong>${this.escapeHtml(draft.defaultNotebook.name)}</strong></div>
+				<div><span>笔记本 ID</span><strong>${this.escapeHtml(draft.defaultNotebook.id)}</strong></div>`
+			: `<div><span>默认笔记本</span><strong>未设置</strong></div>
+				<div><span>说明</span><strong>Agent 将优先在这里工作</strong></div>`;
+		const settingsSections: Array<{ id: SettingsSection; label: string; meta: string }> = [
+			{ id: "general", label: "基础配置", meta: "模型、Key、自定义指令" },
+			{ id: "knowledge", label: "知识库默认项", meta: "指南文档、默认笔记本" },
+			{ id: "models", label: "模型管理", meta: "多模型、默认模型、子智能体" },
+			{ id: "tools", label: "工具扩展", meta: "MCP 服务连接与状态" },
+			{ id: "tracing", label: "追踪调试", meta: "LangSmith tracing" },
+		];
+
 		this.settingsViewEl.innerHTML = `
 <div class="settings-panel">
 	<div class="settings-panel__header">
 		<div>
 			<h3>设置</h3>
-			<p>常用模型与连接配置放在这里，复杂项仍可打开完整设置。</p>
+			<p>所有常用配置都集中在这里，左侧分类切换，右侧直接编辑。</p>
 		</div>
 	</div>
 	<form class="settings-panel__form">
-		<div class="settings-panel__section">
-			<div class="settings-panel__section-title">模型与连接</div>
-			<label class="settings-panel__field">
-				<span>API Base URL</span>
-				<input class="b3-text-field" name="apiBaseURL" value="${this.escapeHtml(config.apiBaseURL || DEFAULT_CONFIG.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
-			</label>
-			<label class="settings-panel__field">
-				<span>API Key</span>
-				<input class="b3-text-field" name="apiKey" type="password" value="${this.escapeHtml(config.apiKey || "")}" placeholder="sk-..." />
-			</label>
-			<label class="settings-panel__field">
-				<span>Model</span>
-				<input class="b3-text-field" name="model" value="${this.escapeHtml(config.model || DEFAULT_CONFIG.model)}" placeholder="gpt-4o" />
-			</label>
-			<label class="settings-panel__field">
-				<span>自定义指令</span>
-				<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(config.customInstructions || "")}</textarea>
-			</label>
-		</div>
-		<div class="settings-panel__section">
-			<div class="settings-panel__section-title">追踪</div>
-			<label class="settings-panel__checkbox">
-				<input type="checkbox" name="langSmithEnabled"${config.langSmithEnabled ? " checked" : ""} />
-				<span>启用 LangSmith Tracing</span>
-			</label>
-			<label class="settings-panel__field">
-				<span>LangSmith API Key</span>
-				<input class="b3-text-field" name="langSmithApiKey" type="password" value="${this.escapeHtml(config.langSmithApiKey || "")}" placeholder="lsv2_..." />
-			</label>
-			<label class="settings-panel__field">
-				<span>LangSmith Endpoint</span>
-				<input class="b3-text-field" name="langSmithEndpoint" value="${this.escapeHtml(config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint)}" placeholder="https://api.smith.langchain.com" />
-			</label>
-			<label class="settings-panel__field">
-				<span>LangSmith Project</span>
-				<input class="b3-text-field" name="langSmithProject" value="${this.escapeHtml(config.langSmithProject || DEFAULT_CONFIG.langSmithProject)}" placeholder="SiYuan-Agent" />
-			</label>
-		</div>
-		<div class="settings-panel__section settings-panel__section--compact">
-			<div class="settings-panel__section-title">知识库默认项</div>
-			<div class="settings-panel__meta-grid">
-				<div><span>用户指南文档</span><strong>${this.escapeHtml(guideDocLabel)}</strong></div>
-				<div><span>默认工作笔记本</span><strong>${this.escapeHtml(notebookLabel)}</strong></div>
+		<div class="settings-panel__shell">
+			<aside class="settings-panel__nav">
+				${settingsSections.map((section) => `
+					<button
+						class="settings-panel__nav-item${section.id === this.currentSettingsSection ? " settings-panel__nav-item--active" : ""}"
+						type="button"
+						data-settings-section="${section.id}"
+					>
+						<span class="settings-panel__nav-label">${section.label}</span>
+						<span class="settings-panel__nav-meta">${section.meta}</span>
+					</button>
+				`).join("")}
+			</aside>
+			<div class="settings-panel__content">
+				<section class="settings-panel__section${this.currentSettingsSection === "general" ? " settings-panel__section--active" : ""}" data-settings-panel="general">
+					<div class="settings-panel__section-title">基础配置</div>
+					<p class="settings-panel__section-copy">保留基础兼容配置。未选择默认模型时，会直接使用这里的连接信息。</p>
+					<label class="settings-panel__field">
+						<span>API Base URL</span>
+						<input class="b3-text-field" name="apiBaseURL" value="${this.escapeHtml(draft.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
+					</label>
+					<label class="settings-panel__field">
+						<span>API Key</span>
+						<input class="b3-text-field" name="apiKey" type="password" value="${this.escapeHtml(draft.apiKey)}" placeholder="sk-..." />
+					</label>
+					<label class="settings-panel__field">
+						<span>Model</span>
+						<input class="b3-text-field" name="model" value="${this.escapeHtml(draft.model)}" placeholder="gpt-4o" />
+					</label>
+					<label class="settings-panel__field">
+						<span>自定义指令</span>
+						<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${this.escapeHtml(draft.customInstructions)}</textarea>
+					</label>
+				</section>
+
+				<section class="settings-panel__section${this.currentSettingsSection === "knowledge" ? " settings-panel__section--active" : ""}" data-settings-panel="knowledge">
+					<div class="settings-panel__section-title">知识库默认项</div>
+					<p class="settings-panel__section-copy">这里直接决定 Agent 默认参考哪篇指南文档，以及优先在哪个笔记本里执行操作。</p>
+					<div class="settings-panel__picker">
+						<label class="settings-panel__field">
+							<span>用户指南文档</span>
+							<input
+								class="b3-text-field"
+								name="guideDocSearch"
+								data-role="guide-doc-search"
+								value="${this.escapeHtml(draft.guideDoc?.title || "")}"
+								placeholder="输入文档标题搜索..."
+								autocomplete="off"
+							/>
+						</label>
+						<div class="settings-panel__picker-dropdown b3-menu fn__none" data-role="guide-doc-dropdown"></div>
+						<div class="settings-panel__picker-actions">
+							<button class="b3-button b3-button--outline" type="button" data-action="clear-guide-doc">清除文档</button>
+						</div>
+					</div>
+					<div class="settings-panel__meta-grid">${guideDocMeta}</div>
+					<label class="settings-panel__field">
+						<span>默认工作笔记本</span>
+						<select class="b3-select" name="defaultNotebookId">
+							<option value="">（不指定）</option>
+							${notebookOptionsHtml || `<option value="">（暂无可用笔记本）</option>`}
+						</select>
+					</label>
+					<div class="settings-panel__meta-grid">${notebookMeta}</div>
+				</section>
+
+				<section class="settings-panel__section${this.currentSettingsSection === "models" ? " settings-panel__section--active" : ""}" data-settings-panel="models">
+					<div class="settings-panel__section-title">模型管理</div>
+					<p class="settings-panel__section-copy">在这里维护多模型列表，并指定默认模型与子智能体模型。</p>
+					<div class="agent-model-list">
+						${draft.models.length
+							? draft.models.map((item) => `
+								<div class="agent-model-list__item">
+									<div class="agent-model-list__info">
+										<span class="agent-model-list__name">${this.escapeHtml(item.name)}</span>
+										<span class="agent-model-list__detail">${this.escapeHtml(item.provider)} · ${this.escapeHtml(item.model)}</span>
+									</div>
+									<div class="agent-model-list__actions">
+										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-model-id="${this.escapeHtml(item.id)}">编辑</button>
+										<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-model-id="${this.escapeHtml(item.id)}">删除</button>
+									</div>
+								</div>
+							`).join("")
+							: `<div class="agent-model-list__empty">尚未配置模型。点击下方按钮添加。</div>`}
+					</div>
+					<div class="settings-panel__actions settings-panel__actions--inline">
+						<button class="b3-button b3-button--outline" type="button" data-action="add-model">添加模型</button>
+					</div>
+					<label class="settings-panel__field">
+						<span>默认模型</span>
+						<select class="b3-select" name="defaultModelId">
+							<option value="">（使用基础配置）</option>
+							${modelOptions}
+						</select>
+					</label>
+					<label class="settings-panel__field">
+						<span>子智能体模型</span>
+						<select class="b3-select" name="subAgentModelId">
+							<option value="">（跟随默认模型）</option>
+							${subAgentOptions}
+						</select>
+					</label>
+				</section>
+
+				<section class="settings-panel__section${this.currentSettingsSection === "tools" ? " settings-panel__section--active" : ""}" data-settings-panel="tools">
+					<div class="settings-panel__section-title">工具扩展</div>
+					<p class="settings-panel__section-copy">管理 MCP 外部工具服务。保存后会立即重连并刷新对话可用工具。</p>
+					<div class="agent-model-list">
+						${draft.mcpServers.length
+							? draft.mcpServers.map((item) => `
+								<div class="agent-model-list__item">
+									<div class="agent-model-list__info">
+										<span class="agent-model-list__name">${item.enabled ? "已启用" : "已禁用"} · ${this.escapeHtml(item.name)}</span>
+										<span class="agent-model-list__detail">${this.escapeHtml(item.url)}</span>
+									</div>
+									<div class="agent-model-list__actions">
+										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="toggle-mcp" data-mcp-id="${this.escapeHtml(item.id)}">${item.enabled ? "禁用" : "启用"}</button>
+										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-mcp" data-mcp-id="${this.escapeHtml(item.id)}">编辑</button>
+										<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-mcp" data-mcp-id="${this.escapeHtml(item.id)}">删除</button>
+									</div>
+								</div>
+							`).join("")
+							: `<div class="agent-model-list__empty">尚未配置 MCP 服务。</div>`}
+					</div>
+					<div class="settings-panel__actions settings-panel__actions--inline">
+						<button class="b3-button b3-button--outline" type="button" data-action="add-mcp">添加 MCP 服务</button>
+					</div>
+				</section>
+
+				<section class="settings-panel__section${this.currentSettingsSection === "tracing" ? " settings-panel__section--active" : ""}" data-settings-panel="tracing">
+					<div class="settings-panel__section-title">追踪调试</div>
+					<p class="settings-panel__section-copy">LangSmith 仅用于 tracing 与调试。不开启时不会发送相关链路数据。</p>
+					<label class="settings-panel__checkbox">
+						<input type="checkbox" name="langSmithEnabled"${draft.langSmithEnabled ? " checked" : ""} />
+						<span>启用 LangSmith Tracing</span>
+					</label>
+					<label class="settings-panel__field">
+						<span>LangSmith API Key</span>
+						<input class="b3-text-field" name="langSmithApiKey" type="password" value="${this.escapeHtml(draft.langSmithApiKey)}" placeholder="lsv2_..." />
+					</label>
+					<label class="settings-panel__field">
+						<span>LangSmith Endpoint</span>
+						<input class="b3-text-field" name="langSmithEndpoint" value="${this.escapeHtml(draft.langSmithEndpoint)}" placeholder="https://api.smith.langchain.com" />
+					</label>
+					<label class="settings-panel__field">
+						<span>LangSmith Project</span>
+						<input class="b3-text-field" name="langSmithProject" value="${this.escapeHtml(draft.langSmithProject)}" placeholder="SiYuan-Agent" />
+					</label>
+				</section>
 			</div>
 		</div>
 		<div class="settings-panel__actions">
 			<button class="b3-button" type="submit">保存设置</button>
-			<button class="b3-button b3-button--text" type="button" data-action="open-native-settings">更多设置</button>
 		</div>
 	</form>
 </div>`;
@@ -1876,21 +2275,47 @@ export class ChatPanel {
 			event.preventDefault();
 			void this.saveSettingsForm(form);
 		});
-		this.settingsViewEl.querySelector<HTMLElement>("[data-action='open-native-settings']")?.addEventListener("click", () => {
-			const pluginAny = this.plugin as Plugin & { openSetting?: () => void };
-			pluginAny.openSetting?.();
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((button) => {
+			button.addEventListener("click", () => {
+				const section = button.dataset.settingsSection as SettingsSection | undefined;
+				if (!section) return;
+				this.currentSettingsSection = section;
+				this.setSettingsSection(section);
+			});
+		});
+		this.bindGuideDocPicker();
+		this.bindSettingsModelActions();
+		this.bindSettingsMcpActions();
+		this.settingsViewEl.querySelector<HTMLSelectElement>("select[name='defaultNotebookId']")?.addEventListener("change", (event) => {
+			this.syncSettingsDraftFromForm();
+			const value = (event.currentTarget as HTMLSelectElement).value;
+			const nextNotebook = draft.notebookOptions.find((item) => item.id === value) || null;
+			this.settingsDraft = {
+				...draft,
+				defaultNotebook: nextNotebook ? { ...nextNotebook } : null,
+			};
+			void this.renderSettingsView();
 		});
 	}
 
 	private async saveSettingsForm(form: HTMLFormElement): Promise<void> {
 		const formData = new FormData(form);
+		this.syncSettingsDraftFromForm();
 		const currentConfig = await this.getConfig();
+		const draft = this.settingsDraft;
+		if (!draft) return;
 		const nextConfig: AgentConfig = {
 			...currentConfig,
 			apiBaseURL: String(formData.get("apiBaseURL") || "").trim() || DEFAULT_CONFIG.apiBaseURL,
 			apiKey: String(formData.get("apiKey") || "").trim(),
 			model: String(formData.get("model") || "").trim() || DEFAULT_CONFIG.model,
 			customInstructions: String(formData.get("customInstructions") || ""),
+			guideDoc: draft.guideDoc,
+			defaultNotebook: draft.defaultNotebook,
+			models: draft.models.map((item) => ({ ...item })),
+			defaultModelId: String(formData.get("defaultModelId") || "").trim(),
+			subAgentModelId: String(formData.get("subAgentModelId") || "").trim(),
+			mcpServers: draft.mcpServers.map((item) => ({ ...item })),
 			langSmithEnabled: formData.get("langSmithEnabled") === "on",
 			langSmithApiKey: String(formData.get("langSmithApiKey") || "").trim(),
 			langSmithEndpoint: String(formData.get("langSmithEndpoint") || "").trim() || DEFAULT_CONFIG.langSmithEndpoint,
@@ -1898,7 +2323,332 @@ export class ChatPanel {
 		};
 		this.plugin.data[CONFIG_STORAGE] = nextConfig;
 		await this.plugin.saveData(CONFIG_STORAGE, nextConfig);
+		const pluginAny = this.plugin as Plugin & {
+			mcpManager?: { connectAll?: (servers: McpServerConfig[]) => Promise<unknown>; getAllTools?: () => StructuredToolInterface[] };
+		};
+		await pluginAny.mcpManager?.connectAll?.((nextConfig.mcpServers || []).filter((item) => item.enabled));
+		this.tools = [
+			...getDefaultTools(() => nextConfig, () => this.taskManager),
+			...(pluginAny.mcpManager?.getAllTools?.() || []),
+		];
+		this.settingsDraft = {
+			...draft,
+			apiBaseURL: nextConfig.apiBaseURL,
+			apiKey: nextConfig.apiKey,
+			model: nextConfig.model,
+			customInstructions: nextConfig.customInstructions,
+			guideDoc: nextConfig.guideDoc || null,
+			defaultNotebook: nextConfig.defaultNotebook || null,
+			langSmithEnabled: Boolean(nextConfig.langSmithEnabled),
+			langSmithApiKey: nextConfig.langSmithApiKey || "",
+			langSmithEndpoint: nextConfig.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
+			langSmithProject: nextConfig.langSmithProject || DEFAULT_CONFIG.langSmithProject,
+			models: (nextConfig.models || []).map((item) => ({ ...item })),
+			defaultModelId: nextConfig.defaultModelId || "",
+			subAgentModelId: nextConfig.subAgentModelId || "",
+			mcpServers: (nextConfig.mcpServers || []).map((item) => ({ ...item })),
+			notebookOptions: draft.notebookOptions,
+		};
 		showMessage("设置已保存");
+		await this.refreshModelSelector();
+		void this.renderSettingsView();
+	}
+
+	private setSettingsSection(section: SettingsSection): void {
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((button) => {
+			button.classList.toggle("settings-panel__nav-item--active", button.dataset.settingsSection === section);
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
+			panel.classList.toggle("settings-panel__section--active", panel.dataset.settingsPanel === section);
+		});
+	}
+
+	private syncSettingsDraftFromForm(): void {
+		if (!this.settingsDraft) return;
+		const form = this.settingsViewEl.querySelector<HTMLFormElement>(".settings-panel__form");
+		if (!form) return;
+		const guideDocInput = form.querySelector<HTMLInputElement>("[data-role='guide-doc-search']");
+		const notebookSelect = form.querySelector<HTMLSelectElement>("select[name='defaultNotebookId']");
+		const guideDocTitle = guideDocInput?.value.trim() || "";
+		if (!guideDocTitle) {
+			this.settingsDraft.guideDoc = null;
+		} else if (this.settingsDraft.guideDoc?.title !== guideDocTitle) {
+			this.settingsDraft.guideDoc = null;
+		}
+		const notebookId = notebookSelect?.value || "";
+		const notebook = this.settingsDraft.notebookOptions.find((item) => item.id === notebookId) || null;
+		this.settingsDraft.defaultNotebook = notebook ? { ...notebook } : null;
+	}
+
+	private bindGuideDocPicker(): void {
+		const input = this.settingsViewEl.querySelector<HTMLInputElement>("[data-role='guide-doc-search']");
+		const dropdown = this.settingsViewEl.querySelector<HTMLElement>("[data-role='guide-doc-dropdown']");
+		if (!input || !dropdown) return;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+
+		input.addEventListener("input", () => {
+			if (this.settingsDraft) {
+				this.settingsDraft.guideDoc = null;
+			}
+			if (timer) clearTimeout(timer);
+			const keyword = input.value.trim();
+			timer = setTimeout(async () => {
+				const docs = await this.queryDocs(keyword);
+				if (docs.length === 0) {
+					dropdown.classList.add("fn__none");
+					dropdown.innerHTML = "";
+					return;
+				}
+				dropdown.innerHTML = docs.map((doc) => `
+					<div class="b3-menu__item" data-guide-doc-id="${this.escapeHtml(doc.id)}" data-guide-doc-title="${this.escapeHtml(doc.title)}">
+						<span class="b3-menu__label">${this.escapeHtml(doc.title)}</span>
+					</div>
+				`).join("");
+				dropdown.querySelectorAll<HTMLElement>("[data-guide-doc-id]").forEach((item) => {
+					item.addEventListener("mousedown", (event) => {
+						event.preventDefault();
+						if (!this.settingsDraft) return;
+						this.syncSettingsDraftFromForm();
+						this.settingsDraft.guideDoc = {
+							id: item.dataset.guideDocId || "",
+							title: item.dataset.guideDocTitle || "",
+						};
+						void this.renderSettingsView();
+					});
+				});
+				dropdown.classList.remove("fn__none");
+			}, 180);
+		});
+
+		input.addEventListener("blur", () => {
+			setTimeout(() => dropdown.classList.add("fn__none"), 120);
+		});
+
+		this.settingsViewEl.querySelector<HTMLElement>("[data-action='clear-guide-doc']")?.addEventListener("click", () => {
+			if (!this.settingsDraft) return;
+			this.syncSettingsDraftFromForm();
+			this.settingsDraft.guideDoc = null;
+			void this.renderSettingsView();
+		});
+	}
+
+	private bindSettingsModelActions(): void {
+		this.settingsViewEl.querySelector<HTMLElement>("[data-action='add-model']")?.addEventListener("click", () => {
+			this.syncSettingsDraftFromForm();
+			this.openModelEditor();
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.syncSettingsDraftFromForm();
+				this.openModelEditor(button.dataset.modelId);
+			});
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model']").forEach((button) => {
+			button.addEventListener("click", () => {
+				if (!this.settingsDraft) return;
+				this.syncSettingsDraftFromForm();
+				const modelId = button.dataset.modelId || "";
+				this.settingsDraft.models = this.settingsDraft.models.filter((item) => item.id !== modelId);
+				if (this.settingsDraft.defaultModelId === modelId) this.settingsDraft.defaultModelId = "";
+				if (this.settingsDraft.subAgentModelId === modelId) this.settingsDraft.subAgentModelId = "";
+				void this.renderSettingsView();
+			});
+		});
+	}
+
+	private openModelEditor(modelId?: string): void {
+		if (!this.settingsDraft) return;
+		const existing = this.settingsDraft.models.find((item) => item.id === modelId) || null;
+		const draftModel: ModelConfig = existing ? { ...existing } : {
+			id: genModelId(),
+			name: "",
+			provider: "openai",
+			model: "",
+			apiBaseURL: DEFAULT_CONFIG.apiBaseURL,
+			apiKey: "",
+		};
+		const overlay = document.createElement("div");
+		overlay.className = "agent-model-editor-overlay";
+		const preset = MODEL_PROVIDER_PRESETS.find((item) => item.provider === draftModel.provider);
+		overlay.innerHTML = `
+			<div class="agent-model-editor">
+				<h4 class="agent-model-editor__title">${existing ? "编辑模型" : "添加模型"}</h4>
+				<label class="agent-model-editor__label">供应商
+					<select class="b3-select fn__block" data-field="provider">
+						${MODEL_PROVIDER_PRESETS.map((item) => `<option value="${item.provider}"${item.provider === draftModel.provider ? " selected" : ""}>${item.label}</option>`).join("")}
+					</select>
+				</label>
+				<label class="agent-model-editor__label">显示名称
+					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(draftModel.name)}" placeholder="My GPT-4o" />
+				</label>
+				<label class="agent-model-editor__label">模型
+					<div style="display:flex;gap:4px">
+						<input class="b3-text-field" style="flex:1" data-field="model" value="${this.escapeHtml(draftModel.model)}" placeholder="gpt-4o" list="agent-model-suggestions" />
+						<datalist id="agent-model-suggestions">
+							${(preset?.models || []).map((name) => `<option value="${name}">`).join("")}
+						</datalist>
+					</div>
+				</label>
+				<label class="agent-model-editor__label">API Base URL
+					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${this.escapeHtml(draftModel.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
+				</label>
+				<label class="agent-model-editor__label">API Key
+					<input class="b3-text-field fn__block" type="password" data-field="apiKey" value="${this.escapeHtml(draftModel.apiKey)}" placeholder="sk-..." />
+				</label>
+				<label class="agent-model-editor__label">Temperature（可选）
+					<input class="b3-text-field fn__block" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${draftModel.temperature ?? ""}" placeholder="0" />
+				</label>
+				<div class="agent-model-editor__buttons">
+					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
+					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
+				</div>
+			</div>`;
+		const providerSelect = overlay.querySelector<HTMLSelectElement>("[data-field='provider']");
+		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
+		const modelField = overlay.querySelector<HTMLInputElement>("[data-field='model']");
+		const baseUrlField = overlay.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
+		const dataList = overlay.querySelector<HTMLDataListElement>("#agent-model-suggestions");
+		providerSelect?.addEventListener("change", () => {
+			const nextPreset = MODEL_PROVIDER_PRESETS.find((item) => item.provider === providerSelect.value);
+			if (!nextPreset || !baseUrlField || !dataList || !nameField || !modelField) return;
+			baseUrlField.value = nextPreset.apiBaseURL;
+			dataList.innerHTML = nextPreset.models.map((name) => `<option value="${name}">`).join("");
+			if (!nameField.value.trim() && nextPreset.models[0]) {
+				modelField.value = nextPreset.models[0];
+				nameField.value = `${nextPreset.label} ${nextPreset.models[0]}`;
+			}
+		});
+		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
+		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
+			if (!this.settingsDraft) return;
+			const nextModel: ModelConfig = {
+				...draftModel,
+				provider: providerSelect?.value || draftModel.provider,
+				name: nameField?.value.trim() || modelField?.value.trim() || "Unnamed Model",
+				model: modelField?.value.trim() || "",
+				apiBaseURL: baseUrlField?.value.trim() || DEFAULT_CONFIG.apiBaseURL,
+				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
+			};
+			const temperature = overlay.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
+			nextModel.temperature = temperature ? Number(temperature) : undefined;
+			if (!nextModel.model) {
+				showMessage("请填写模型名称");
+				return;
+			}
+			const existingIndex = this.settingsDraft.models.findIndex((item) => item.id === nextModel.id);
+			if (existingIndex >= 0) {
+				this.settingsDraft.models[existingIndex] = nextModel;
+			} else {
+				this.settingsDraft.models.push(nextModel);
+			}
+			overlay.remove();
+			void this.renderSettingsView();
+		});
+		overlay.addEventListener("click", (event) => {
+			if (event.target === overlay) overlay.remove();
+		});
+		document.body.appendChild(overlay);
+	}
+
+	private bindSettingsMcpActions(): void {
+		this.settingsViewEl.querySelector<HTMLElement>("[data-action='add-mcp']")?.addEventListener("click", () => {
+			this.syncSettingsDraftFromForm();
+			this.openMcpEditor();
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-mcp']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.syncSettingsDraftFromForm();
+				this.openMcpEditor(button.dataset.mcpId);
+			});
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='toggle-mcp']").forEach((button) => {
+			button.addEventListener("click", () => {
+				if (!this.settingsDraft) return;
+				this.syncSettingsDraftFromForm();
+				const server = this.settingsDraft.mcpServers.find((item) => item.id === button.dataset.mcpId);
+				if (!server) return;
+				server.enabled = !server.enabled;
+				void this.renderSettingsView();
+			});
+		});
+		this.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-mcp']").forEach((button) => {
+			button.addEventListener("click", () => {
+				if (!this.settingsDraft) return;
+				this.syncSettingsDraftFromForm();
+				this.settingsDraft.mcpServers = this.settingsDraft.mcpServers.filter((item) => item.id !== button.dataset.mcpId);
+				void this.renderSettingsView();
+			});
+		});
+	}
+
+	private openMcpEditor(serverId?: string): void {
+		if (!this.settingsDraft) return;
+		const existing = this.settingsDraft.mcpServers.find((item) => item.id === serverId);
+		const overlay = document.createElement("div");
+		overlay.className = "agent-model-editor-overlay";
+		overlay.innerHTML = `
+			<div class="agent-model-editor">
+				<h4 class="agent-model-editor__title">${existing ? "编辑 MCP 服务" : "添加 MCP 服务"}</h4>
+				<label class="agent-model-editor__label">名称
+					<input class="b3-text-field fn__block" data-field="name" value="${this.escapeHtml(existing?.name || "")}" placeholder="My MCP Server" />
+				</label>
+				<label class="agent-model-editor__label">URL (SSE / Streamable HTTP)
+					<input class="b3-text-field fn__block" data-field="url" value="${this.escapeHtml(existing?.url || "")}" placeholder="http://localhost:3000/sse" />
+				</label>
+				<label class="agent-model-editor__label">API Key (可选)
+					<input class="b3-text-field fn__block" data-field="apiKey" type="password" value="${this.escapeHtml(existing?.apiKey || "")}" placeholder="可选的认证密钥" />
+				</label>
+				<label class="agent-model-editor__label">描述 (可选)
+					<input class="b3-text-field fn__block" data-field="description" value="${this.escapeHtml(existing?.description || "")}" placeholder="这个服务提供什么工具？" />
+				</label>
+				<div class="agent-model-editor__buttons">
+					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
+					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
+				</div>
+			</div>`;
+		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
+		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
+			if (!this.settingsDraft) return;
+			const name = overlay.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || "";
+			const url = overlay.querySelector<HTMLInputElement>("[data-field='url']")?.value.trim() || "";
+			if (!name || !url) {
+				showMessage("名称和 URL 不能为空");
+				return;
+			}
+			const nextServer: McpServerConfig = {
+				id: existing?.id || genModelId(),
+				name,
+				url,
+				enabled: existing?.enabled ?? true,
+				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || undefined,
+				description: overlay.querySelector<HTMLInputElement>("[data-field='description']")?.value.trim() || undefined,
+			};
+			const existingIndex = this.settingsDraft.mcpServers.findIndex((item) => item.id === nextServer.id);
+			if (existingIndex >= 0) {
+				this.settingsDraft.mcpServers[existingIndex] = nextServer;
+			} else {
+				this.settingsDraft.mcpServers.push(nextServer);
+			}
+			overlay.remove();
+			void this.renderSettingsView();
+		});
+		overlay.addEventListener("click", (event) => {
+			if (event.target === overlay) overlay.remove();
+		});
+		document.body.appendChild(overlay);
+	}
+
+	private async loadNotebookOptions(): Promise<Array<{ id: string; name: string }>> {
+		try {
+			const resp = await fetch("/api/notebook/lsNotebooks", { method: "POST" });
+			const json = await resp.json();
+			const notebooks = Array.isArray(json.data?.notebooks) ? json.data.notebooks : [];
+			return notebooks
+				.filter((item: any) => !item?.closed && typeof item?.id === "string" && typeof item?.name === "string")
+				.map((item: any) => ({ id: item.id, name: item.name }));
+		} catch {
+			return [];
+		}
 	}
 
 	private async openTaskEditor(task?: ScheduledTaskMeta): Promise<void> {
@@ -1975,6 +2725,25 @@ export class ChatPanel {
 		this.taskDetailEl.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => {
 			void this.renderTasksView();
 		});
+	}
+
+	private async refreshModelSelector(): Promise<void> {
+		const config = await this.getConfig();
+		const models: ModelConfig[] = Array.isArray(config.models) ? config.models : [];
+		const currentModelId = this.activeSession?.modelId || "";
+
+		let html = `<option value="">默认模型</option>`;
+		for (const m of models) {
+			const sel = m.id === currentModelId ? " selected" : "";
+			html += `<option value="${m.id}"${sel}>${m.name}</option>`;
+		}
+		this.modelSelectEl.innerHTML = html;
+
+		// Hide selector if no models configured
+		const selectorContainer = this.modelSelectEl.closest(".chat-model-selector") as HTMLElement;
+		if (selectorContainer) {
+			selectorContainer.style.display = models.length > 0 ? "" : "none";
+		}
 	}
 
 	private async getConfig(): Promise<AgentConfig> {

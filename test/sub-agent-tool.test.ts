@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { z } from "zod";
-import { createSubAgentTool, invokeSubAgent } from "../src/core/sub-agent";
+import { createSubAgentTool, invokeSubAgent, invokeSubAgentSafe } from "../src/core/sub-agent";
 import type { AgentConfig } from "../src/types";
 
 vi.mock("siyuan", () => ({
@@ -65,6 +65,7 @@ describe("createSubAgentTool", () => {
 			createConfig(),
 			[expect.objectContaining({ name: "search_fulltext" }), expect.objectContaining({ name: "edit_blocks" })],
 			"prompt",
+			expect.objectContaining({ id: "__legacy__", model: "test-model" }),
 		);
 		expect(invoke).toHaveBeenCalledTimes(1);
 		expect(invoke).toHaveBeenCalledWith(
@@ -121,6 +122,100 @@ describe("createSubAgentTool", () => {
 
 		expect(result).toBe("Explore 子智能体未返回最终文本结果。");
 	});
+
+	it("invokeSubAgentSafe catches errors and returns friendly message", async () => {
+		const invoke = vi.fn().mockRejectedValue(new Error("API rate limit exceeded"));
+		const createAgent = vi.fn().mockResolvedValue({ invoke });
+
+		const options = {
+			name: "explore_notes",
+			description: "x",
+			schema: z.object({ query: z.string() }),
+			toolset: [],
+			systemPrompt: "prompt",
+			getAgentConfig: createConfig,
+			createAgent,
+		};
+
+		const result = await invokeSubAgentSafe(
+			options,
+			{ query: "test" },
+			{
+				state: {},
+				toolCallId: "parent-call-3",
+				config: {},
+				context: undefined,
+				signal: undefined,
+				writer: vi.fn(),
+			} as any,
+		);
+
+		expect(result).toBe("[子智能体执行失败] API rate limit exceeded");
+	});
+
+	it("invokeSubAgentSafe re-throws abort errors", async () => {
+		const abortError = new Error("aborted");
+		abortError.name = "AbortError";
+		const invoke = vi.fn().mockRejectedValue(abortError);
+		const createAgent = vi.fn().mockResolvedValue({ invoke });
+
+		const options = {
+			name: "explore_notes",
+			description: "x",
+			schema: z.object({ query: z.string() }),
+			toolset: [],
+			systemPrompt: "prompt",
+			getAgentConfig: createConfig,
+			createAgent,
+		};
+
+		await expect(invokeSubAgentSafe(
+			options,
+			{ query: "test" },
+			{
+				state: {},
+				toolCallId: "parent-call-4",
+				config: {},
+				context: undefined,
+				signal: undefined,
+				writer: vi.fn(),
+			} as any,
+		)).rejects.toThrow("aborted");
+	});
+
+	it("truncates excessively long sub-agent output", async () => {
+		const longText = "a".repeat(10000);
+		const invoke = vi.fn().mockResolvedValue({
+			messages: [new AIMessage({ content: longText })],
+		});
+		const createAgent = vi.fn().mockResolvedValue({ invoke });
+
+		const options = {
+			name: "explore_notes",
+			description: "x",
+			schema: z.object({ query: z.string() }),
+			toolset: [],
+			systemPrompt: "prompt",
+			getAgentConfig: createConfig,
+			createAgent,
+		};
+
+		const result = await invokeSubAgent(
+			options,
+			{ query: "test" },
+			{
+				state: {},
+				toolCallId: "parent-call-5",
+				config: {},
+				context: undefined,
+				signal: undefined,
+				writer: vi.fn(),
+			} as any,
+		);
+
+		expect(result.length).toBeLessThan(8100);
+		expect(result).toContain("...(已截断)");
+	});
 });
 
 describe("tool registry", () => {
@@ -132,8 +227,12 @@ describe("tool registry", () => {
 			"recent_documents",
 			"get_document",
 			"get_document_blocks",
+			"get_document_outline",
+			"read_block",
 			"search_fulltext",
 			"search_documents",
+			"search_todos",
+			"get_todo_stats",
 		]);
 	});
 
@@ -144,6 +243,9 @@ describe("tool registry", () => {
 		expect(names).toContain("explore_notes");
 		expect(names).toContain("append_block");
 		expect(names).toContain("edit_blocks");
+		expect(names).toContain("search_todos");
+		expect(names).toContain("toggle_todo");
+		expect(names).toContain("get_todo_stats");
 	});
 
 	it("creates a langchain tool shell around the sub-agent helper", () => {

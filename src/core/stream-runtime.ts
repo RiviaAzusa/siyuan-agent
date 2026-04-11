@@ -251,9 +251,13 @@ function shouldAppendRecoveredMessage(messages: any[], message: any): boolean {
 	if (lastType !== nextType) return true;
 
 	if (nextType === "ai") {
-		return getMessageContent(lastMessage) !== getMessageContent(message)
-			|| getMessageReasoning(lastMessage) !== getMessageReasoning(message)
-			|| JSON.stringify(getMessageToolCalls(lastMessage)) !== JSON.stringify(getMessageToolCalls(message));
+		if (getMessageContent(lastMessage) !== getMessageContent(message)) return true;
+		if (getMessageReasoning(lastMessage) !== getMessageReasoning(message)) return true;
+		// Compare tool calls by IDs rather than full JSON serialization
+		const lastCalls = getMessageToolCalls(lastMessage);
+		const nextCalls = getMessageToolCalls(message);
+		if (lastCalls.length !== nextCalls.length) return true;
+		return lastCalls.some((lc: any, i: number) => lc?.id !== nextCalls[i]?.id || lc?.name !== nextCalls[i]?.name);
 	}
 
 	if (nextType === "tool") {
@@ -382,6 +386,9 @@ export async function runAgentStream({
 	let aborted = false;
 	let error: unknown;
 
+	// Per-chunk idle timeout: if no data arrives for 120s, consider it hung
+	const IDLE_TIMEOUT_MS = 120_000;
+
 	try {
 		const stream = await agent.stream(input, {
 			streamMode: ["messages", "values", "custom"],
@@ -390,7 +397,29 @@ export async function runAgentStream({
 			signal,
 		});
 
-		for await (const [streamType, data] of stream) {
+		let idleTimer: ReturnType<typeof setTimeout> | null = null;
+		const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
+
+		const streamWithTimeout = async function* () {
+			const iter = stream[Symbol.asyncIterator]();
+			while (true) {
+				const chunkPromise = iter.next();
+				const timeoutPromise = new Promise<never>((_, reject) => {
+					idleTimer = setTimeout(() => reject(new Error("Stream idle timeout: no data received for 120s")), IDLE_TIMEOUT_MS);
+				});
+				try {
+					const result = await Promise.race([chunkPromise, timeoutPromise]);
+					clearIdle();
+					if (result.done) break;
+					yield result.value;
+				} catch (e) {
+					clearIdle();
+					throw e;
+				}
+			}
+		};
+
+		for await (const [streamType, data] of streamWithTimeout()) {
 			if (streamType === "messages") {
 				const [message] = data as [any, any];
 				const messageType = getMessageType(message);
@@ -399,6 +428,10 @@ export async function runAgentStream({
 					const reasoning = getMessageReasoning(message);
 					if (reasoning) {
 						parserState.reasoningBuffer += reasoning;
+						onUiEvent?.({
+							type: "reasoning_delta",
+							text: reasoning,
+						});
 					}
 
 					const textContent = getMessageContent(message);
@@ -469,7 +502,7 @@ export async function runAgentStream({
 					}));
 					const tcId = getMessageToolCallId(message);
 					const isError = typeof message.content === "string"
-						&& message.content.startsWith("Error:");
+						&& (/^Error:|^\[子智能体执行失败\]|^ToolError:|"error":/i.test(message.content));
 					uiBuilder.onToolResult(tcId, isError);
 					onUiEvent?.({
 						type: "tool_result",
