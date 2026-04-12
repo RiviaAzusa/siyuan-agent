@@ -10,7 +10,7 @@
   "frontends": [
     "all"
   ],
-  "disabledInPublish": false,
+  "disabledInPublish": true,
   "displayName": {
     "default": "SiYuan Agent",
     "zh_CN": "思源 AI 助手"
@@ -29,7 +29,6 @@
     "agent",
     "chat",
     "automation",
-    "siyuan",
     "智能助手",
     "对话",
     "定时任务"
