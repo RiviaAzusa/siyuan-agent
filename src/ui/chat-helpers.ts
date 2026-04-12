@@ -23,7 +23,7 @@ export interface ActivityBlockRefs {
 	archiveListEl: HTMLElement;
 }
 
-export type SettingsSection = "general" | "knowledge" | "model-services" | "default-models" | "tools" | "tracing";
+export type SettingsSection = "general" | "model-services" | "default-models" | "tools" | "tracing";
 
 export interface SettingsDraft {
 	customInstructions: string;

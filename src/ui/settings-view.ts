@@ -91,13 +91,12 @@ export class SettingsView {
 				<div><span>笔记本 ID</span><strong>${escapeHtml(draft.defaultNotebook.id)}</strong></div>`
 			: `<div><span>默认笔记本</span><strong>未设置</strong></div>
 				<div><span>说明</span><strong>Agent 将优先在这里工作</strong></div>`;
-		const settingsSections: Array<{ id: SettingsSection; label: string; meta: string }> = [
-			{ id: "general", label: "常规", meta: "自定义指令" },
-			{ id: "knowledge", label: "知识库默认项", meta: "指南文档、默认笔记本" },
-			{ id: "model-services", label: "模型服务", meta: "供应商连接与模型列表" },
-			{ id: "default-models", label: "默认模型", meta: "对话模型、子智能体模型" },
-			{ id: "tools", label: "工具扩展", meta: "MCP 服务连接与状态" },
-			{ id: "tracing", label: "追踪调试", meta: "LangSmith tracing" },
+		const settingsSections: Array<{ id: SettingsSection; label: string }> = [
+			{ id: "general", label: "常规" },
+			{ id: "model-services", label: "模型服务" },
+			{ id: "default-models", label: "默认模型" },
+			{ id: "tools", label: "工具扩展" },
+			{ id: "tracing", label: "追踪调试" },
 		];
 
 		this.ctx.settingsViewEl.innerHTML = `
@@ -117,7 +116,6 @@ export class SettingsView {
 						data-settings-section="${section.id}"
 					>
 						<span class="settings-panel__nav-label">${section.label}</span>
-						<span class="settings-panel__nav-meta">${section.meta}</span>
 					</button>
 				`).join("")}
 			</aside>
@@ -128,34 +126,31 @@ export class SettingsView {
 							<span>自定义指令</span>
 							<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${escapeHtml(draft.customInstructions)}</textarea>
 						</label>
-					</section>
-
-				<section class="settings-panel__section${this.currentSection === "knowledge" ? " settings-panel__section--active" : ""}" data-settings-panel="knowledge">
-					<div class="settings-panel__section-title">知识库默认项</div>
-					<div class="settings-panel__picker">
+						<div class="settings-panel__section-title">知识库默认项</div>
+						<div class="settings-panel__picker">
+							<label class="settings-panel__field">
+								<span>用户指南文档</span>
+								<input
+									class="b3-text-field"
+									name="guideDocSearch"
+									data-role="guide-doc-search"
+									value="${escapeHtml(draft.guideDoc?.title || "")}"
+									placeholder="输入文档标题搜索..."
+									autocomplete="off"
+								/>
+							</label>
+							<div class="settings-panel__picker-dropdown b3-menu fn__none" data-role="guide-doc-dropdown"></div>
+						</div>
+						<div class="settings-panel__meta-grid">${guideDocMeta}</div>
 						<label class="settings-panel__field">
-							<span>用户指南文档</span>
-							<input
-								class="b3-text-field"
-								name="guideDocSearch"
-								data-role="guide-doc-search"
-								value="${escapeHtml(draft.guideDoc?.title || "")}"
-								placeholder="输入文档标题搜索..."
-								autocomplete="off"
-							/>
+							<span>默认工作笔记本</span>
+							<select class="b3-select" name="defaultNotebookId">
+								<option value="">（不指定）</option>
+								${notebookOptionsHtml || "<option value=\"\">（暂无可用笔记本）</option>"}
+							</select>
 						</label>
-						<div class="settings-panel__picker-dropdown b3-menu fn__none" data-role="guide-doc-dropdown"></div>
-					</div>
-					<div class="settings-panel__meta-grid">${guideDocMeta}</div>
-					<label class="settings-panel__field">
-						<span>默认工作笔记本</span>
-						<select class="b3-select" name="defaultNotebookId">
-							<option value="">（不指定）</option>
-							${notebookOptionsHtml || "<option value=\"\">（暂无可用笔记本）</option>"}
-						</select>
-					</label>
-					<div class="settings-panel__meta-grid">${notebookMeta}</div>
-				</section>
+						<div class="settings-panel__meta-grid">${notebookMeta}</div>
+					</section>
 
 					<section class="settings-panel__section${this.currentSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
 						<div class="settings-panel__section-title">模型服务</div>
