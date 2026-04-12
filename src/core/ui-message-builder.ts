@@ -55,6 +55,7 @@ function getToolCallId(tc: any): string {
 export class UiMessageBuilder {
 	private messages: UiMessage[] = [];
 	private pendingToolMessages = new Map<string, ToolMessageUi>();
+	private currentAiIndex: number | null = null;
 
 	/** Seed from an existing persisted `messagesUi`. */
 	static fromExisting(existing: UiMessage[]): UiMessageBuilder {
@@ -66,6 +67,7 @@ export class UiMessageBuilder {
 	/* ── Human ─────────────────────────────────────────────────────── */
 
 	pushHuman(msg: Record<string, any>): void {
+		this.currentAiIndex = null;
 		this.messages.push(msg);
 	}
 
@@ -76,12 +78,25 @@ export class UiMessageBuilder {
 	 * called repeatedly with the incrementally-built serialised dict.
 	 */
 	pushOrUpdateAi(msg: Record<string, any>): void {
-		const last = this.messages[this.messages.length - 1];
-		if (last && !isToolMessageUi(last) && msgType(last) === "ai") {
-			this.messages[this.messages.length - 1] = msg;
-		} else {
-			this.messages.push(msg);
+		if (this.currentAiIndex !== null) {
+			const current = this.messages[this.currentAiIndex];
+			if (current && !isToolMessageUi(current) && msgType(current) === "ai") {
+				this.messages[this.currentAiIndex] = msg;
+				return;
+			}
+			this.currentAiIndex = null;
 		}
+
+		const lastIndex = this.messages.length - 1;
+		const last = this.messages[lastIndex];
+		if (last && !isToolMessageUi(last) && msgType(last) === "ai") {
+			this.messages[lastIndex] = msg;
+			this.currentAiIndex = lastIndex;
+			return;
+		}
+
+		this.messages.push(msg);
+		this.currentAiIndex = this.messages.length - 1;
 	}
 
 	/* ── Tool lifecycle ────────────────────────────────────────────── */
@@ -115,6 +130,7 @@ export class UiMessageBuilder {
 			tmu.finishedAt = Date.now();
 			this.pendingToolMessages.delete(toolCallId);
 		}
+		this.currentAiIndex = null;
 	}
 
 	/* ── Finalise ──────────────────────────────────────────────────── */
@@ -131,6 +147,7 @@ export class UiMessageBuilder {
 			tmu.finishedAt = tmu.finishedAt || Date.now();
 		}
 		this.pendingToolMessages.clear();
+		this.currentAiIndex = null;
 
 		/* Ensure every AIMessage tool_call has a ToolMessageUi */
 		const existing = new Set<string>();

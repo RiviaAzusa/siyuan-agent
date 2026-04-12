@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
 import { mergeState, runAgentStream } from "../src/core/stream-runtime";
+import { isToolMessageUi } from "../src/types";
 import type { AgentStreamUiEvent } from "../src/types";
 
 type StreamChunk = [string, any];
@@ -30,6 +31,13 @@ function getContents(messages: any[]): string[] {
 
 function getTypes(messages: any[]): string[] {
 	return messages.map((message) => String(message?._getType?.() ?? message?.type ?? ""));
+}
+
+function getUiAiContents(messagesUi: any[]): string[] {
+	return messagesUi
+		.filter((message) => !isToolMessageUi(message))
+		.filter((message) => (message?.id?.[message.id.length - 1] ?? "") === "AIMessage")
+		.map((message) => String(message?.kwargs?.content ?? message?.content ?? ""));
 }
 
 describe("runAgentStream", () => {
@@ -214,5 +222,64 @@ describe("runAgentStream", () => {
 		expect(result.aborted).toBe(true);
 		expect(result.lastState.messages).toHaveLength(1);
 		expect(getContents(result.lastState.messages || [])).toEqual(["search foo"]);
+	});
+
+	it("keeps one ui AI message when the same turn continues streaming after tool start", async () => {
+		const input = mergeState(null, "search foo");
+
+		const result = await runAgentStream({
+			agent: createAgent([
+				["messages", [{
+					_getType: () => "ai",
+					content: "我来看看",
+					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
+				}, {}]],
+				["custom", JSON.stringify({
+					__tool_type: "activity",
+					toolCallId: "call-1",
+					category: "lookup",
+					action: "search",
+					label: "foo",
+				})],
+				["messages", [{
+					_getType: () => "ai",
+					content: "，先整理结果",
+				}, {}]],
+				createAbortError(),
+			]),
+			input,
+		});
+
+		expect(result.aborted).toBe(true);
+		expect(getUiAiContents(result.lastState.messagesUi || [])).toEqual(["我来看看，先整理结果"]);
+		expect((result.lastState.messagesUi || []).filter((message) => isToolMessageUi(message))).toHaveLength(1);
+	});
+
+	it("starts a new ui AI message after a tool result closes the prior turn", async () => {
+		const input = mergeState(null, "search foo");
+
+		const result = await runAgentStream({
+			agent: createAgent([
+				["messages", [{
+					_getType: () => "ai",
+					content: "我来看看",
+					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
+				}, {}]],
+				["messages", [{
+					_getType: () => "tool",
+					content: "42",
+					tool_call_id: "call-1",
+				}, {}]],
+				["messages", [{
+					_getType: () => "ai",
+					content: "结果是 42",
+				}, {}]],
+				createAbortError(),
+			]),
+			input,
+		});
+
+		expect(result.aborted).toBe(true);
+		expect(getUiAiContents(result.lastState.messagesUi || [])).toEqual(["我来看看", "结果是 42"]);
 	});
 });
