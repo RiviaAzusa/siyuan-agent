@@ -210,8 +210,16 @@ export default class SiYuanAgent extends Plugin {
 	}
 
 	uninstall() {
-		this.removeData(CONFIG_STORAGE).catch((e) => {
-			console.warn(`SiYuan Agent: failed to remove data [${CONFIG_STORAGE}]:`, e);
+		const sessionStore = this.sessionStore ?? new SessionStore(createPluginStorage(this));
+		void Promise.allSettled([
+			this.removeData(CONFIG_STORAGE),
+			sessionStore.clearPersistedData(),
+		]).then((results) => {
+			results.forEach((result, index) => {
+				if (result.status !== "rejected") return;
+				const target = index === 0 ? CONFIG_STORAGE : "session-storage";
+				console.warn(`SiYuan Agent: failed to remove data [${target}]:`, result.reason);
+			});
 		});
 	}
 

@@ -10,6 +10,7 @@ import type {
 
 export const INDEX_STORAGE = "chat-sessions-index";
 export const SESSION_PREFIX = "chat-session-";
+export const LEGACY_CHAT_HISTORY_STORAGE = "chat-history";
 
 /* ── persistence abstraction ────────────────────────────────────────────
  *  SiYuan's Plugin.saveData / loadData internally use `fetchPost`, which
@@ -362,6 +363,25 @@ export class SessionStore {
 		this.notify();
 	}
 
+	async clearPersistedData(): Promise<void> {
+		const rawIndex = await this.storage.load(INDEX_STORAGE);
+		const sessionIds = rawIndex && Array.isArray(rawIndex.sessions)
+			? rawIndex.sessions
+				.map((entry: any) => (typeof entry?.id === "string" ? entry.id.trim() : ""))
+				.filter((id: string) => Boolean(id))
+			: [];
+
+		for (const id of sessionIds) {
+			await this.removeIfPresent(SESSION_PREFIX + id);
+		}
+		await this.removeIfPresent(INDEX_STORAGE);
+		await this.removeIfPresent(LEGACY_CHAT_HISTORY_STORAGE);
+
+		this.sessionIndex = { activeId: "", sessions: [] };
+		this.loaded = false;
+		this.loadPromise = null;
+	}
+
 	private async loadInternal(): Promise<void> {
 		const rawIndex = await this.storage.load(INDEX_STORAGE);
 		if (rawIndex && Array.isArray(rawIndex.sessions)) {
@@ -391,7 +411,7 @@ export class SessionStore {
 	}
 
 	private async migrateLegacyStore(): Promise<void> {
-		const legacy = await this.storage.load("chat-history");
+		const legacy = await this.storage.load(LEGACY_CHAT_HISTORY_STORAGE);
 		if (legacy && Array.isArray(legacy.sessions) && legacy.sessions.length > 0) {
 			const entries: SessionIndexEntry[] = [];
 			for (const rawSession of legacy.sessions) {
@@ -444,5 +464,11 @@ export class SessionStore {
 
 	private async persistIndex(): Promise<void> {
 		await this.storage.save(INDEX_STORAGE, this.sessionIndex);
+	}
+
+	private async removeIfPresent(name: string): Promise<void> {
+		const existing = await this.storage.load(name);
+		if (existing === undefined) return;
+		await this.storage.remove(name);
 	}
 }

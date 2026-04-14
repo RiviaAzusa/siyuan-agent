@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ScheduledTaskMeta } from "../src/types";
-import { SessionStore, type PluginStorage } from "../src/core/session-store";
+import {
+	INDEX_STORAGE,
+	LEGACY_CHAT_HISTORY_STORAGE,
+	SESSION_PREFIX,
+	SessionStore,
+	type PluginStorage,
+} from "../src/core/session-store";
 
 function createFakeStorage(): PluginStorage {
 	const data: Record<string, any> = {};
@@ -64,5 +70,25 @@ describe("SessionStore", () => {
 		expect(store.getIndex().activeId).toBe(activeChatId);
 		expect(store.listSessions("scheduled_task")).toHaveLength(0);
 		expect(store.listSessions("chat")).toHaveLength(1);
+	});
+
+	it("clears persisted session files, index, and legacy chat history on uninstall cleanup", async () => {
+		const storage = createFakeStorage();
+		const store = new SessionStore(storage);
+
+		await store.ensureLoaded();
+		const chatSessionId = store.getIndex().activeId;
+		await store.createScheduledTaskSession(createTask());
+		await storage.save(LEGACY_CHAT_HISTORY_STORAGE, {
+			activeId: "legacy-chat",
+			sessions: [{ id: "legacy-chat", title: "Legacy", messages: [] }],
+		});
+
+		await store.clearPersistedData();
+
+		expect(await storage.load(INDEX_STORAGE)).toBeUndefined();
+		expect(await storage.load(SESSION_PREFIX + chatSessionId)).toBeUndefined();
+		expect(await storage.load(SESSION_PREFIX + "task-1")).toBeUndefined();
+		expect(await storage.load(LEGACY_CHAT_HISTORY_STORAGE)).toBeUndefined();
 	});
 });

@@ -32,11 +32,14 @@ describe("SiYuanAgent.uninstall()", () => {
 
 		const removeData = vi.fn().mockResolvedValue(undefined);
 		(instance as any).removeData = removeData;
+		const clearPersistedData = vi.fn().mockResolvedValue(undefined);
+		(instance as any).sessionStore = { clearPersistedData };
 
 		instance.uninstall();
 
 		expect(removeData).toHaveBeenCalledOnce();
 		expect(removeData).toHaveBeenCalledWith("agent-config");
+		expect(clearPersistedData).toHaveBeenCalledOnce();
 	});
 
 	it("does not throw when removeData rejects", async () => {
@@ -45,6 +48,8 @@ describe("SiYuanAgent.uninstall()", () => {
 
 		const removeData = vi.fn().mockRejectedValue(new Error("disk error"));
 		(instance as any).removeData = removeData;
+		const clearPersistedData = vi.fn().mockRejectedValue(new Error("session error"));
+		(instance as any).sessionStore = { clearPersistedData };
 
 		// Should not throw — error is caught internally
 		expect(() => instance.uninstall()).not.toThrow();
