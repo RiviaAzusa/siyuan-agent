@@ -209,6 +209,12 @@ export default class SiYuanAgent extends Plugin {
 		void this.mcpManager.disconnectAll();
 	}
 
+	uninstall() {
+		this.removeData(CONFIG_STORAGE).catch((e) => {
+			console.warn(`SiYuan Agent: failed to remove data [${CONFIG_STORAGE}]:`, e);
+		});
+	}
+
 	openSetting(): void {
 		void this.openCustomSettings();
 	}

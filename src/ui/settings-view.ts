@@ -95,7 +95,6 @@ export class SettingsView {
 			{ id: "general", label: "常规" },
 			{ id: "model-services", label: "模型服务" },
 			{ id: "default-models", label: "默认模型" },
-			{ id: "tools", label: "工具扩展" },
 			{ id: "tracing", label: "追踪调试" },
 		];
 
@@ -212,30 +211,6 @@ export class SettingsView {
 						</label>
 					</section>
 
-				<section class="settings-panel__section${this.currentSection === "tools" ? " settings-panel__section--active" : ""}" data-settings-panel="tools">
-					<div class="settings-panel__section-title">工具扩展</div>
-					<div class="agent-model-list">
-						${draft.mcpServers.length
-							? draft.mcpServers.map((item) => `
-								<div class="agent-model-list__item">
-									<div class="agent-model-list__info">
-										<span class="agent-model-list__name">${item.enabled ? "已启用" : "已禁用"} · ${escapeHtml(item.name)}</span>
-										<span class="agent-model-list__detail">${escapeHtml(item.url)}</span>
-									</div>
-									<div class="agent-model-list__actions">
-										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="toggle-mcp" data-mcp-id="${escapeHtml(item.id)}">${item.enabled ? "禁用" : "启用"}</button>
-										<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-mcp" data-mcp-id="${escapeHtml(item.id)}">编辑</button>
-										<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-mcp" data-mcp-id="${escapeHtml(item.id)}">删除</button>
-									</div>
-								</div>
-							`).join("")
-							: "<div class=\"agent-model-list__empty\">尚未配置 MCP 服务。</div>"}
-					</div>
-					<div class="settings-panel__actions settings-panel__actions--inline">
-						<button class="b3-button b3-button--outline" type="button" data-action="add-mcp">添加 MCP 服务</button>
-					</div>
-				</section>
-
 				<section class="settings-panel__section${this.currentSection === "tracing" ? " settings-panel__section--active" : ""}" data-settings-panel="tracing">
 					<div class="settings-panel__section-title">追踪调试</div>
 					<label class="settings-panel__checkbox">
@@ -298,7 +273,6 @@ export class SettingsView {
 		});
 		this.bindGuideDocPicker();
 		this.bindModelActions();
-		this.bindMcpActions();
 		this.ctx.settingsViewEl.querySelector<HTMLSelectElement>("select[name='defaultNotebookId']")?.addEventListener("change", (event) => {
 			this.syncDraftFromForm();
 			const value = (event.currentTarget as HTMLSelectElement).value;
