@@ -25,7 +25,7 @@ src/
       notebook-tools.ts     #   list_notebooks, list_documents, recent_documents
       document-tools.ts     #   get_document, get_document_blocks, outline, search
       edit-tools.ts         #   append_block, edit_blocks, create/move/rename/delete doc
-      todo-tools.ts         #   search_todos, toggle_todo, get_todo_stats
+      plan-tools.ts         #   write_todos (agent task plan management)
       scheduled-tools.ts    #   Scheduled task CRUD tools
   ui/
     chat-panel.ts           # ChatPanel orchestrator

@@ -10,6 +10,7 @@ import type {
 	AgentStreamUiEvent,
 	ChunkParserState,
 	RunAgentStreamResult,
+	TodoList,
 	ToolUIEvent,
 	ToolUIEventPayload,
 	UiMessage,
@@ -51,6 +52,7 @@ function cloneState(source: AgentState | null | undefined): AgentState {
 		messages: Array.isArray(source.messages) ? [...source.messages] : source.messages,
 		messagesUi: Array.isArray(source.messagesUi) ? [...source.messagesUi] : source.messagesUi,
 		compaction: source.compaction ? { ...source.compaction } : source.compaction,
+		todos: source.todos ? { ...source.todos, items: [...source.todos.items] } : source.todos,
 		toolUIEvents: Array.isArray(source.toolUIEvents) ? [...source.toolUIEvents] : source.toolUIEvents,
 	};
 }
@@ -296,7 +298,7 @@ function resetPendingRecovery(parserState: ChunkParserState): void {
 export function mergeState(
 	savedState: Record<string, any> | null,
 	inputMsgStr?: string,
-): { messages: BaseMessage[]; messagesUi?: UiMessage[]; compaction?: any } {
+): { messages: BaseMessage[]; messagesUi?: UiMessage[]; compaction?: any; todos?: TodoList } {
 	let messages: BaseMessage[] = [];
 
 	/* Inject compaction summary as a leading system message so the LLM
@@ -305,6 +307,16 @@ export function mergeState(
 	if (compaction?.summary) {
 		messages.push(new SystemMessage({
 			content: `[Conversation summary from earlier turns]\n${compaction.summary}`,
+		}));
+	}
+
+	/* Inject todos as pinned context so the LLM never loses track of its plan */
+	const todos: TodoList | undefined = savedState?.todos;
+	if (todos && todos.items.length > 0) {
+		const statusIcon = (s: string) => s === "completed" ? "✅" : s === "in_progress" ? "🔄" : "⬜";
+		const lines = todos.items.map((item) => `- ${statusIcon(item.status)} [${item.status}] ${item.content}`);
+		messages.push(new SystemMessage({
+			content: `[Current task plan]\nGoal: ${todos.goal}\n${lines.join("\n")}`,
 		}));
 	}
 
@@ -317,7 +329,7 @@ export function mergeState(
 	}
 
 	const messagesUi = Array.isArray(savedState?.messagesUi) ? [...savedState!.messagesUi] : undefined;
-	return { messages, messagesUi, compaction };
+	return { messages, messagesUi, compaction, todos };
 }
 
 export function buildRecoverableState(parserState: ChunkParserState): AgentState {
@@ -356,7 +368,7 @@ interface RunAgentStreamParams {
 	agent: {
 		stream: (input: unknown, options: Record<string, any>) => Promise<AsyncIterable<[string, any]>>;
 	};
-	input: { messages: BaseMessage[]; messagesUi?: UiMessage[]; compaction?: any };
+	input: { messages: BaseMessage[]; messagesUi?: UiMessage[]; compaction?: any; todos?: TodoList };
 	signal?: AbortSignal;
 	callbacks?: unknown[];
 	recursionLimit?: number;
@@ -517,6 +529,17 @@ export async function runAgentStream({
 				currentAiDict = null;
 			} else if (streamType === "custom") {
 				const raw = typeof data === "string" ? data : JSON.stringify(data);
+
+				/* Intercept write_todos events to persist plan into state */
+				let parsed: any = null;
+				try { parsed = JSON.parse(raw); } catch { /* not JSON */ }
+				if (parsed?.__tool_type === "write_todos" && parsed.todos) {
+					const todos = parsed.todos as TodoList;
+					parserState.inputState.todos = todos;
+					if (parserState.currentState) parserState.currentState.todos = todos;
+					onUiEvent?.({ type: "todos_update", todos });
+				}
+
 				const event = normalizeToolUIEvent(raw, parserState.lastToolCallIndex);
 				if (event.toolCallId && parserState.toolCallMap[event.toolCallId]) {
 					const mapped = parserState.toolCallMap[event.toolCallId];
@@ -542,6 +565,7 @@ export async function runAgentStream({
 	lastState.toolUIEvents = [...parserState.toolUIEvents];
 	lastState.messagesUi = uiBuilder.finalise();
 	lastState.compaction = (input as AgentState).compaction;
+	lastState.todos = parserState.currentState?.todos ?? parserState.inputState.todos ?? (input as AgentState).todos;
 
 	return {
 		lastState,

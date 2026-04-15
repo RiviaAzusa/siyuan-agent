@@ -1,4 +1,4 @@
-import type { AgentState } from "./session";
+import type { AgentState, TodoList } from "./session";
 
 /* ── Tool UI event types ─────────────────────────────────────────────── */
 
@@ -133,6 +133,10 @@ export type AgentStreamUiEvent =
 	| {
 		type: "tool_ui";
 		event: ToolUIEvent;
+	}
+	| {
+		type: "todos_update";
+		todos: TodoList;
 	};
 
 export interface RunAgentStreamResult {

@@ -7,7 +7,7 @@ import type { ScheduledTaskManager } from "../scheduled-task-manager";
 import { listNotebooksTool, listDocumentsTool, recentDocumentsTool } from "./notebook-tools";
 import { getDocumentTool, getDocumentBlocksTool, getDocumentOutlineTool, readBlockTool, searchFulltextTool, searchDocumentsTool } from "./document-tools";
 import { editBlocksTool, appendBlockTool, createDocumentTool, moveDocumentTool, renameDocumentTool, deleteDocumentTool } from "./edit-tools";
-import { searchTodosTool, toggleTodoTool, getTodoStatsTool } from "./todo-tools";
+import { writeTodosTool } from "./plan-tools";
 import { createScheduledTaskTools } from "./scheduled-tools";
 
 export { deleteDocumentTool } from "./edit-tools";
@@ -24,8 +24,6 @@ export function getLookupTools(): StructuredToolInterface[] {
 		readBlockTool,
 		searchFulltextTool,
 		searchDocumentsTool,
-		searchTodosTool,
-		getTodoStatsTool,
 	];
 }
 
@@ -71,9 +69,7 @@ export function getDefaultTools(
 	moveDocumentTool,
 	renameDocumentTool,
 	searchDocumentsTool,
-	searchTodosTool,
-	toggleTodoTool,
-	getTodoStatsTool,
+	writeTodosTool,
 	scheduledTaskTools.createScheduledTaskTool,
 	scheduledTaskTools.listScheduledTasksTool,
 	scheduledTaskTools.updateScheduledTaskTool,

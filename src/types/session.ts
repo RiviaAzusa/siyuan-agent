@@ -1,5 +1,20 @@
 import type { ToolUIEvent, UiMessage } from "./tool-events";
 
+/* ── TodoList (agent plan management) ────────────────────────────────── */
+
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+export interface TodoItem {
+	content: string;
+	status: TodoStatus;
+}
+
+export interface TodoList {
+	goal: string;
+	items: TodoItem[];
+	updatedAt: number;
+}
+
 /* ── Compaction metadata ────────────────────────────────────────────── */
 
 export interface CompactionState {
@@ -17,6 +32,7 @@ export type AgentState = Record<string, any> & {
 	messages?: any[];
 	messagesUi?: UiMessage[];
 	compaction?: CompactionState;
+	todos?: TodoList;
 	/** @deprecated kept for lazy migration only */
 	toolUIEvents?: ToolUIEvent[];
 };

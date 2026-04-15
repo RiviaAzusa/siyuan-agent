@@ -37,6 +37,9 @@ export {
 } from "./tool-events";
 
 export {
+	type TodoStatus,
+	type TodoItem,
+	type TodoList,
 	type CompactionState,
 	type AgentState,
 	type SessionKind,

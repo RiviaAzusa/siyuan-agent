@@ -7,6 +7,7 @@ import {
 	ScheduledTaskMeta,
 	SessionData,
 	SessionIndexEntry,
+	TodoList,
 	ToolUIEvent,
 	ToolMessageUi,
 	UiMessage,
@@ -453,6 +454,10 @@ export class ChatPanel {
 			this.renderWelcomeScreen();
 		} else {
 			this.renderConversationMessagesUi(messagesUi);
+			/* Render persisted todos bar at the end if present */
+			if (s.state?.todos && s.state.todos.items.length > 0) {
+				this.renderPersistedTodosBar(s.state.todos);
+			}
 		}
 	}
 
@@ -728,6 +733,12 @@ export class ChatPanel {
 							this.finalizeToolElement(toolEl);
 						}
 						curTextEl = null;
+						this.scrollToBottom();
+						return;
+					}
+
+					if (event.type === "todos_update") {
+						this.renderTodosBar(assistantShell, event.todos);
 						this.scrollToBottom();
 						return;
 					}
@@ -1617,6 +1628,51 @@ export class ChatPanel {
 			this.sendBtn.onclick = () => this.send();
 			this.textareaEl.placeholder = "问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)";
 		}
+	}
+
+	/* --- Todos progress bar rendering --- */
+
+	private renderTodosBar(shell: AssistantMessageShell, todos: TodoList): void {
+		/* Remove any existing todos bar in the same assistant message */
+		const existing = shell.stackEl.querySelector(".chat-todos-bar");
+		if (existing) existing.remove();
+
+		const bar = this.buildTodosBarElement(todos);
+		shell.stackEl.appendChild(bar);
+	}
+
+	private renderPersistedTodosBar(todos: TodoList): void {
+		/* Render at end of messagesEl for persisted sessions */
+		const bar = this.buildTodosBarElement(todos);
+		this.messagesEl.appendChild(bar);
+	}
+
+	private buildTodosBarElement(todos: TodoList): HTMLElement {
+		const bar = document.createElement("details");
+		bar.className = "chat-todos-bar";
+		bar.open = true;
+
+		const completed = todos.items.filter((i) => i.status === "completed").length;
+		const total = todos.items.length;
+		const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+		const summary = document.createElement("summary");
+		summary.className = "chat-todos-bar__summary";
+		summary.innerHTML = `📋 ${escapeHtml(todos.goal)} <span class="chat-todos-bar__progress">${completed}/${total} (${pct}%)</span>`;
+		bar.appendChild(summary);
+
+		const list = document.createElement("ul");
+		list.className = "chat-todos-bar__list";
+		for (const item of todos.items) {
+			const li = document.createElement("li");
+			li.className = `chat-todos-bar__item chat-todos-bar__item--${item.status}`;
+			const icon = item.status === "completed" ? "✅" : item.status === "in_progress" ? "🔄" : "⬜";
+			li.textContent = `${icon} ${item.content}`;
+			list.appendChild(li);
+		}
+		bar.appendChild(list);
+
+		return bar;
 	}
 
 	/* --- Edit blocks diff rendering (commented out for future reimplementation) --- */

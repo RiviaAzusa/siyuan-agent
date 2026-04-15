@@ -57,16 +57,14 @@ describe("tool definitions", () => {
 		}
 	});
 
-	it("default tools include todo tools", () => {
+	it("default tools include write_todos", () => {
 		const names = getDefaultTools(() => ({
 			apiBaseURL: "https://example.com/v1",
 			apiKey: "key",
 			model: "model",
 			customInstructions: "",
 		})).map(t => t.name);
-		expect(names).toContain("search_todos");
-		expect(names).toContain("toggle_todo");
-		expect(names).toContain("get_todo_stats");
+		expect(names).toContain("write_todos");
 	});
 
 	it("delete_document is not in default tools", () => {
@@ -107,28 +105,28 @@ describe("SQL escape in tool definitions", () => {
 		expect(searchDoc!.schema).toBeDefined();
 	});
 
-	it("search_todos tool has correct schema", () => {
+	it("write_todos tool has correct schema", () => {
 		const tools = getDefaultTools(() => ({
 			apiBaseURL: "https://example.com/v1",
 			apiKey: "key",
 			model: "model",
 			customInstructions: "",
 		}));
-		const searchTodos = tools.find(t => t.name === "search_todos");
-		expect(searchTodos).toBeDefined();
-		expect(searchTodos!.description).toContain("task");
+		const writeTodos = tools.find(t => t.name === "write_todos");
+		expect(writeTodos).toBeDefined();
+		expect(writeTodos!.description).toContain("plan");
 	});
 
-	it("toggle_todo tool requires block IDs array", () => {
+	it("old todo tools are removed", () => {
 		const tools = getDefaultTools(() => ({
 			apiBaseURL: "https://example.com/v1",
 			apiKey: "key",
 			model: "model",
 			customInstructions: "",
 		}));
-		const toggle = tools.find(t => t.name === "toggle_todo");
-		expect(toggle).toBeDefined();
-		expect(toggle!.description).toContain("toggle");
+		expect(tools.find(t => t.name === "search_todos")).toBeUndefined();
+		expect(tools.find(t => t.name === "toggle_todo")).toBeUndefined();
+		expect(tools.find(t => t.name === "get_todo_stats")).toBeUndefined();
 	});
 });
 

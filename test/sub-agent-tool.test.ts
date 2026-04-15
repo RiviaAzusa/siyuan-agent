@@ -231,8 +231,6 @@ describe("tool registry", () => {
 			"read_block",
 			"search_fulltext",
 			"search_documents",
-			"search_todos",
-			"get_todo_stats",
 		]);
 	});
 
@@ -243,9 +241,7 @@ describe("tool registry", () => {
 		expect(names).toContain("explore_notes");
 		expect(names).toContain("append_block");
 		expect(names).toContain("edit_blocks");
-		expect(names).toContain("search_todos");
-		expect(names).toContain("toggle_todo");
-		expect(names).toContain("get_todo_stats");
+		expect(names).toContain("write_todos");
 	});
 
 	it("creates a langchain tool shell around the sub-agent helper", () => {

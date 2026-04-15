@@ -16,6 +16,9 @@ Rules:
 - Max 2000 characters
 - Use the SAME language as the user's messages (Chinese / English / mixed)
 - Output ONLY the updated summary, no preamble or explanation
+- If a task plan is provided below, reference it in your summary to preserve plan context
+
+{plan_context}
 
 ## Existing summary
 {existing_summary}
@@ -129,7 +132,16 @@ export async function compactMessages(
 	const existingSummary = state.compaction?.summary || "(none)";
 	const newTurnsText = turnsToText(oldTurns);
 
+	/* Build plan context for pinned retention during compaction */
+	let planContext = "";
+	if (state.todos && state.todos.items.length > 0) {
+		const statusIcon = (s: string) => s === "completed" ? "✅" : s === "in_progress" ? "🔄" : "⬜";
+		const lines = state.todos.items.map((item) => `- ${statusIcon(item.status)} [${item.status}] ${item.content}`);
+		planContext = `## Current task plan (MUST preserve)\nGoal: ${state.todos.goal}\n${lines.join("\n")}`;
+	}
+
 	let prompt = COMPACT_SUMMARY_PROMPT
+		.replace("{plan_context}", planContext)
 		.replace("{existing_summary}", existingSummary)
 		.replace("{new_turns}", newTurnsText);
 
