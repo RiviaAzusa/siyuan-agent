@@ -8,14 +8,18 @@
 	font-family: var(--agent-editor-font-family, var(--b3-font-family));
 	--agent-bg: var(--b3-theme-background);
 	--agent-surface: var(--b3-theme-surface);
-	--agent-surface-soft: color-mix(in srgb, var(--b3-theme-surface) 84%, transparent);
+	--agent-surface-soft: color-mix(in srgb, var(--b3-theme-surface) 92%, var(--b3-theme-background) 8%);
+	--agent-surface-elevated: color-mix(in srgb, var(--b3-theme-surface) 96%, var(--b3-theme-background) 4%);
 	--agent-surface-code: rgba(127, 127, 127, 0.08);
-	--agent-border: color-mix(in srgb, var(--b3-border-color) 88%, white 12%);
+	--agent-border: color-mix(in srgb, var(--b3-border-color) 88%, var(--b3-theme-surface) 12%);
+	--agent-border-strong: color-mix(in srgb, var(--b3-theme-primary) 26%, var(--b3-border-color) 74%);
 	--agent-text: var(--b3-theme-on-surface);
 	--agent-text-muted: color-mix(in srgb, var(--b3-theme-on-surface) 72%, transparent);
-	--agent-accent: #d96c4a;
-	--agent-accent-soft: rgba(217, 108, 74, 0.14);
-	--agent-highlight: #f4b942;
+	--agent-accent: var(--b3-theme-primary);
+	--agent-accent-soft: color-mix(in srgb, var(--b3-theme-primary) 14%, var(--b3-theme-surface) 86%);
+	--agent-accent-strong: color-mix(in srgb, var(--b3-theme-primary) 76%, var(--b3-theme-on-surface) 24%);
+	--agent-highlight: color-mix(in srgb, var(--b3-theme-primary) 24%, var(--b3-theme-surface) 76%);
+	--agent-shadow-soft: color-mix(in srgb, var(--b3-theme-on-background) 10%, transparent);
 }
 
 .chat-panel__messages {

@@ -13,13 +13,11 @@ import {
 	DEFAULT_CONFIG,
 	INIT_PROMPT,
 	cloneModelServices,
-	flattenModelServices,
 	genModelServiceId,
 	genModelId,
 	isToolMessageUi,
 	normalizeAgentConfig,
 	resolveModelConfig,
-	type ModelConfig,
 	type ModelServiceConfig,
 	type ModelServiceModelConfig,
 	type McpServerConfig,
@@ -61,8 +59,7 @@ export class ChatPanel {
 	private sessionListEl: HTMLElement;
 	private messagesEl: HTMLElement;
 	private textareaEl: HTMLTextAreaElement;
-	private sendBtn: HTMLElement;
-	private modelSelectEl: HTMLSelectElement;
+	private sendBtn: HTMLButtonElement;
 	private contextBar: HTMLElement;
 
 	private activeSession: SessionData;
@@ -147,12 +144,8 @@ export class ChatPanel {
 				<button class="chat-panel__switch-btn" type="button" data-view="settings">设置</button>
 			</div>
 			<div class="chat-panel__actions">
-				<div class="chat-model-selector">
-					<select class="chat-model-selector__select" title="选择模型"></select>
-				</div>
-				<button class="chat-panel__send b3-button b3-button--text" type="button">
-					<svg class="chat-panel__send-icon"><use xlink:href="#iconPlay"></use></svg>
-					Send
+				<button class="chat-panel__send" type="button" title="发送 (Enter)" aria-label="发送">
+					${this.getSendIconMarkup()}
 				</button>
 			</div>
 		</div>
@@ -170,7 +163,6 @@ export class ChatPanel {
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
-		this.modelSelectEl = this.container.querySelector(".chat-model-selector__select");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
 		this.applyEditorFontFamily();
 
@@ -217,13 +209,6 @@ export class ChatPanel {
 		/* Send on click */
 		this.sendBtn.onclick = () => this.send();
 
-		/* Model selector change */
-		this.modelSelectEl.addEventListener("change", () => {
-			if (this.activeSession) {
-				this.activeSession.modelId = this.modelSelectEl.value || undefined;
-				this.store.saveSession(this.activeSession);
-			}
-		});
 		this.refreshModelSelector();
 
 		/* Send on Enter (Shift+Enter for new line) */
@@ -455,7 +440,7 @@ export class ChatPanel {
 		if (nameEl)
 			nameEl.textContent = entry?.title || "New Chat";
 		this.updateSessionToggleState();
-		this.refreshModelSelector();
+		void this.refreshModelSelector();
 
 	/* Lazy-migrate old sessions that lack messagesUi */
 		if (!s.state) s.state = {};
@@ -919,6 +904,14 @@ export class ChatPanel {
 	destroy(): void {
 		this.stop();
 		this.unsubs.splice(0).forEach((unsubscribe) => unsubscribe());
+	}
+
+	private getSendIconMarkup(): string {
+		return "<svg class=\"chat-panel__send-icon\" viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M12 22.2V2.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.15\" stroke-linecap=\"round\"></path><polyline points=\"3.9 10.3 12 2.2 20.1 10.3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.15\" stroke-linecap=\"round\" stroke-linejoin=\"round\"></polyline></svg>";
+	}
+
+	private getStopIconMarkup(): string {
+		return "<svg class=\"chat-panel__send-icon\" aria-hidden=\"true\"><use xlink:href=\"#iconClose\"></use></svg>";
 	}
 
 	/* --- DOM helpers --- */
@@ -1612,13 +1605,15 @@ export class ChatPanel {
 
 	private setLoading(loading: boolean): void {
 		if (loading) {
-			this.sendBtn.innerHTML = "<svg class=\"chat-panel__send-icon\"><use xlink:href=\"#iconClose\"></use></svg>";
+			this.sendBtn.innerHTML = this.getStopIconMarkup();
 			this.sendBtn.title = "停止生成 (Esc)";
+			this.sendBtn.setAttribute("aria-label", "停止生成");
 			this.sendBtn.onclick = () => this.stop();
 			this.textareaEl.placeholder = "AI 正在生成… (Shift+Enter 换行, Esc 停止)";
 		} else {
-			this.sendBtn.innerHTML = "<svg class=\"chat-panel__send-icon\"><use xlink:href=\"#iconPlay\"></use></svg>";
+			this.sendBtn.innerHTML = this.getSendIconMarkup();
 			this.sendBtn.title = "发送 (Enter)";
+			this.sendBtn.setAttribute("aria-label", "发送");
 			this.sendBtn.onclick = () => this.send();
 			this.textareaEl.placeholder = "问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)";
 		}
@@ -1677,23 +1672,9 @@ export class ChatPanel {
 			void this.settingsView.render();
 		}
 	}
+
 	private async refreshModelSelector(): Promise<void> {
-		const config = await this.getConfig();
-		const models: ModelConfig[] = flattenModelServices(config.modelServices);
-		const currentModelId = this.activeSession?.modelId || "";
-
-		let html = "<option value=\"\">默认模型</option>";
-		for (const m of models) {
-			const sel = m.id === currentModelId ? " selected" : "";
-			html += `<option value="${m.id}"${sel}>${m.provider} / ${m.name}</option>`;
-		}
-		this.modelSelectEl.innerHTML = html;
-
-		// Hide selector if no models configured
-		const selectorContainer = this.modelSelectEl.closest(".chat-model-selector") as HTMLElement;
-		if (selectorContainer) {
-			selectorContainer.style.display = models.length > 0 ? "" : "none";
-		}
+		return Promise.resolve();
 	}
 
 	private async getConfig(): Promise<AgentConfig> {

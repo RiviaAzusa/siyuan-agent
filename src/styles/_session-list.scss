@@ -48,7 +48,7 @@
 	}
 
 	&--active {
-		background: rgba(217, 108, 74, 0.07);
+		background: color-mix(in srgb, var(--agent-accent-soft, var(--b3-theme-primary-lightest)) 78%, transparent);
 	}
 }
 

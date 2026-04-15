@@ -23,7 +23,7 @@
 	text-align: left;
 	background: var(--agent-accent-soft, var(--b3-theme-primary-lightest));
 	color: var(--agent-text, var(--b3-theme-on-surface));
-	border: 1px solid rgba(217, 108, 74, 0.16);
+	border: 1px solid color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 18%, var(--agent-border, var(--b3-border-color)) 82%);
 	border-radius: 16px 16px 4px 16px;
 	padding: 10px 14px;
 	max-width: 85%;
