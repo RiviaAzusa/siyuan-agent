@@ -295,15 +295,21 @@ export class ScheduledTaskManager {
 	private async reconcileTaskSessions(): Promise<void> {
 		const taskEntries = this.options.store.listSessions("scheduled_task");
 		for (const entry of taskEntries) {
+			if (entry.task) {
+				const normalizedTask = this.reconcileTaskMeta(entry.task);
+				if (JSON.stringify(normalizedTask) !== JSON.stringify(entry.task)) {
+					await this.options.store.saveSessionIndexEntry({
+						...entry,
+						title: normalizedTask.title,
+						updated: normalizedTask.updatedAt,
+						task: normalizedTask,
+					}, { notify: false });
+				}
+				continue;
+			}
 			const session = await this.options.store.loadSession(entry.id);
 			if (!session.task) continue;
-			const normalizedTask = {
-				...session.task,
-				timezone: session.task.timezone || nowTimeZone(),
-			};
-			if (normalizedTask.enabled && !normalizedTask.nextRunAt) {
-				normalizedTask.nextRunAt = calculateNextRunAt(normalizedTask, Date.now());
-			}
+			const normalizedTask = this.reconcileTaskMeta(session.task);
 			const nextSession: SessionData = {
 				...session,
 				title: normalizedTask.title,
@@ -312,6 +318,17 @@ export class ScheduledTaskManager {
 			};
 			await this.options.store.saveSession(nextSession, { notify: false });
 		}
+	}
+
+	private reconcileTaskMeta(task: ScheduledTaskMeta): ScheduledTaskMeta {
+		const normalizedTask = {
+			...task,
+			timezone: task.timezone || nowTimeZone(),
+		};
+		if (normalizedTask.enabled && !normalizedTask.nextRunAt) {
+			normalizedTask.nextRunAt = calculateNextRunAt(normalizedTask, Date.now());
+		}
+		return normalizedTask;
 	}
 
 	private async processDueTasks(): Promise<void> {

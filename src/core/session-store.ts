@@ -101,6 +101,10 @@ function cloneSessionIndexEntry(entry: SessionIndexEntry): SessionIndexEntry {
 	};
 }
 
+function cloneSessionData(session: SessionData): SessionData {
+	return normalizeSessionData(JSON.parse(JSON.stringify(session)), session.id, makeSessionIndexEntry(session));
+}
+
 function makeSessionIndexEntry(session: SessionData): SessionIndexEntry {
 	return {
 		id: session.id,
@@ -124,7 +128,9 @@ function inferSessionGroup(kind: SessionKind, raw: any): SessionGroup {
 }
 
 function normalizeTaskMeta(raw: any, fallback?: ScheduledTaskMeta): ScheduledTaskMeta | undefined {
-	const source = raw && typeof raw === "object" ? raw : fallback;
+	const source = raw && typeof raw === "object"
+		? { ...(fallback || {}), ...raw }
+		: fallback;
 	if (!source || typeof source !== "object") return undefined;
 	const now = Date.now();
 	const createdAt = Number(source.createdAt) || now;
@@ -217,6 +223,8 @@ export function isScheduledTaskSession(session: SessionData | SessionIndexEntry)
 
 export class SessionStore {
 	private readonly listeners = new Set<() => void>();
+	private readonly sessionCache = new Map<string, SessionData>();
+	private readonly sessionLoadPromises = new Map<string, Promise<SessionData>>();
 	private sessionIndex: SessionIndex = { activeId: "", sessions: [] };
 	private loadPromise: Promise<void> | null = null;
 	private loaded = false;
@@ -265,6 +273,22 @@ export class SessionStore {
 
 	async loadSession(id: string): Promise<SessionData> {
 		await this.ensureLoaded();
+		const cached = this.sessionCache.get(id);
+		if (cached) {
+			return cloneSessionData(cached);
+		}
+		const pending = this.sessionLoadPromises.get(id);
+		if (pending) {
+			return cloneSessionData(await pending);
+		}
+		const loadPromise = this.loadSessionFromStorage(id).finally(() => {
+			this.sessionLoadPromises.delete(id);
+		});
+		this.sessionLoadPromises.set(id, loadPromise);
+		return cloneSessionData(await loadPromise);
+	}
+
+	private async loadSessionFromStorage(id: string): Promise<SessionData> {
 		const key = SESSION_PREFIX + id;
 		const raw = await this.storage.load(key);
 		const fallbackEntry = this.sessionIndex.sessions.find((entry) => entry.id === id);
@@ -281,13 +305,15 @@ export class SessionStore {
 					state: {},
 				}, id, fallbackEntry);
 				await this.saveSession(fallbackSession, { notify: false, persistActiveId: false });
-				return fallbackSession;
+				return this.sessionCache.get(fallbackSession.id) || fallbackSession;
 			}
 			const chatSession = makeChatSessionData();
 			await this.saveSession(chatSession, { notify: false, persistActiveId: this.sessionIndex.activeId === "" });
-			return chatSession;
+			return this.sessionCache.get(chatSession.id) || chatSession;
 		}
-		return normalizeSessionData(raw, id, fallbackEntry);
+		const session = normalizeSessionData(raw, id, fallbackEntry);
+		this.cacheSession(session);
+		return session;
 	}
 
 	async createChatSession(): Promise<SessionData> {
@@ -325,8 +351,49 @@ export class SessionStore {
 		if (options.persistActiveId && normalized.kind === "chat") {
 			this.sessionIndex.activeId = normalized.id;
 		}
+		this.cacheSession(normalized);
 		await this.persistIndex();
 		await this.storage.save(SESSION_PREFIX + normalized.id, normalized);
+		if (options.notify !== false) {
+			this.notify();
+		}
+	}
+
+	async saveSessionIndexEntry(
+		entry: SessionIndexEntry,
+		options: { notify?: boolean } = {},
+	): Promise<void> {
+		await this.ensureLoaded();
+		const kind = inferSessionKind(entry);
+		const normalized: SessionIndexEntry = {
+			id: typeof entry.id === "string" && entry.id.trim() ? entry.id : genId(),
+			title: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : "New Chat",
+			created: Number(entry.created) || Date.now(),
+			updated: Number(entry.updated) || Number(entry.created) || Date.now(),
+			kind,
+			group: inferSessionGroup(kind, entry),
+			task: kind === "scheduled_task" ? normalizeTaskMeta(entry.task) : undefined,
+		};
+		const existingIndex = this.sessionIndex.sessions.findIndex((session) => session.id === normalized.id);
+		if (existingIndex >= 0) {
+			this.sessionIndex.sessions[existingIndex] = normalized;
+		} else {
+			this.sessionIndex.sessions.push(normalized);
+		}
+		const cached = this.sessionCache.get(normalized.id);
+		if (cached) {
+			const nextCached = normalizeSessionData({
+				...cached,
+				title: normalized.title,
+				created: normalized.created,
+				updated: normalized.updated,
+				kind: normalized.kind,
+				group: normalized.group,
+				task: normalized.task,
+			}, normalized.id, normalized);
+			this.cacheSession(nextCached);
+		}
+		await this.persistIndex();
 		if (options.notify !== false) {
 			this.notify();
 		}
@@ -346,6 +413,8 @@ export class SessionStore {
 		const index = this.sessionIndex.sessions.findIndex((session) => session.id === id);
 		if (index < 0) return;
 		const [removed] = this.sessionIndex.sessions.splice(index, 1);
+		this.sessionCache.delete(id);
+		this.sessionLoadPromises.delete(id);
 		await this.storage.remove(SESSION_PREFIX + id);
 		if (removed.kind === "chat" && this.sessionIndex.activeId === id) {
 			const chatSessions = this.sessionIndex.sessions.filter((session) => session.kind === "chat");
@@ -353,6 +422,7 @@ export class SessionStore {
 				const created = makeChatSessionData();
 				this.sessionIndex.sessions.push(makeSessionIndexEntry(created));
 				this.sessionIndex.activeId = created.id;
+				this.cacheSession(created);
 				await this.storage.save(SESSION_PREFIX + created.id, created);
 			} else {
 				const next = [...chatSessions].sort((a, b) => b.updated - a.updated)[0];
@@ -378,6 +448,8 @@ export class SessionStore {
 		await this.removeIfPresent(LEGACY_CHAT_HISTORY_STORAGE);
 
 		this.sessionIndex = { activeId: "", sessions: [] };
+		this.sessionCache.clear();
+		this.sessionLoadPromises.clear();
 		this.loaded = false;
 		this.loadPromise = null;
 	}
@@ -430,6 +502,7 @@ export class SessionStore {
 					},
 				});
 				entries.push(makeSessionIndexEntry(session));
+				this.cacheSession(session);
 				await this.storage.save(SESSION_PREFIX + session.id, session);
 			}
 			this.sessionIndex = {
@@ -443,6 +516,7 @@ export class SessionStore {
 			activeId: session.id,
 			sessions: [makeSessionIndexEntry(session)],
 		};
+		this.cacheSession(session);
 		await this.storage.save(SESSION_PREFIX + session.id, session);
 	}
 
@@ -452,6 +526,7 @@ export class SessionStore {
 			const session = makeChatSessionData();
 			this.sessionIndex.sessions.push(makeSessionIndexEntry(session));
 			this.sessionIndex.activeId = session.id;
+			this.cacheSession(session);
 			await this.storage.save(SESSION_PREFIX + session.id, session);
 			return;
 		}
@@ -464,6 +539,10 @@ export class SessionStore {
 
 	private async persistIndex(): Promise<void> {
 		await this.storage.save(INDEX_STORAGE, this.sessionIndex);
+	}
+
+	private cacheSession(session: SessionData): void {
+		this.sessionCache.set(session.id, cloneSessionData(session));
 	}
 
 	private async removeIfPresent(name: string): Promise<void> {

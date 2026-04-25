@@ -1734,11 +1734,16 @@ export class ChatPanel {
 	}
 
 	private async getConfig(): Promise<AgentConfig> {
+		if (Object.prototype.hasOwnProperty.call(this.plugin.data, CONFIG_STORAGE)) {
+			const cached = this.plugin.data[CONFIG_STORAGE];
+			return normalizeAgentConfig(cached);
+		}
 		try {
 			await this.plugin.loadData(CONFIG_STORAGE);
 			const saved = this.plugin.data[CONFIG_STORAGE];
-			if (saved)
+			if (Object.prototype.hasOwnProperty.call(this.plugin.data, CONFIG_STORAGE)) {
 				return normalizeAgentConfig(saved);
+			}
 		} catch {
 			/* Use defaults */
 		}
