@@ -13,7 +13,7 @@ import type {
 import { makeAgent, makeTracer } from "./agent";
 import { mergeState, runAgentStream } from "./stream-runtime";
 import { SessionStore } from "./session-store";
-import { defaultTranslator, type Translator } from "../i18n";
+import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 
 const TASK_TICK_INTERVAL = 30_000;
 
@@ -56,23 +56,25 @@ function normalizeTimestamp(value?: number): number | undefined {
 	return Number.isFinite(value) ? Number(value) : undefined;
 }
 
-function normalizeError(error: unknown): string {
-	if (error instanceof Error) return error.message;
-	return String(error);
+function normalizeError(error: unknown, i18n: Translator): string {
+	return localizeErrorMessage(error, i18n);
 }
 
-function assertTaskFields(task: Pick<ScheduledTaskMeta, "title" | "prompt" | "scheduleType" | "cron" | "triggerAt">): void {
+function assertTaskFields(
+	task: Pick<ScheduledTaskMeta, "title" | "prompt" | "scheduleType" | "cron" | "triggerAt">,
+	i18n: Translator = defaultTranslator,
+): void {
 	if (!task.title.trim()) {
-		throw new Error("Task title is required.");
+		throw new Error(i18n.t("scheduled.error.titleRequired"));
 	}
 	if (!task.prompt.trim()) {
-		throw new Error("Task prompt is required.");
+		throw new Error(i18n.t("scheduled.error.promptRequired"));
 	}
 	if (task.scheduleType === "once" && !normalizeTimestamp(task.triggerAt)) {
-		throw new Error("One-time task requires triggerAt.");
+		throw new Error(i18n.t("scheduled.error.onceRequiresTriggerAt"));
 	}
 	if (task.scheduleType === "recurring" && !(task.cron || "").trim()) {
-		throw new Error("Recurring task requires cron expression.");
+		throw new Error(i18n.t("scheduled.error.recurringRequiresCron"));
 	}
 }
 
@@ -107,13 +109,17 @@ export function appendTaskRunState(existingState: AgentState | undefined, latest
 	};
 }
 
-export function calculateNextRunAt(task: Pick<ScheduledTaskMeta, "scheduleType" | "cron" | "triggerAt" | "timezone">, fromTime = Date.now()): number | undefined {
+export function calculateNextRunAt(
+	task: Pick<ScheduledTaskMeta, "scheduleType" | "cron" | "triggerAt" | "timezone">,
+	fromTime = Date.now(),
+	i18n: Translator = defaultTranslator,
+): number | undefined {
 	if (task.scheduleType === "once") {
 		const triggerAt = normalizeTimestamp(task.triggerAt);
 		return triggerAt && triggerAt > fromTime ? triggerAt : undefined;
 	}
 	if (!task.cron) {
-		throw new Error("Recurring task requires cron expression");
+		throw new Error(i18n.t("scheduled.error.recurringRequiresCron"));
 	}
 	const tz = task.timezone || nowTimeZone();
 	const interval = CronExpressionParser.parse(task.cron, {
@@ -223,8 +229,9 @@ export class ScheduledTaskManager {
 			createdAt: now,
 			updatedAt: now,
 		};
-		assertTaskFields(task);
-		task.nextRunAt = task.enabled ? calculateNextRunAt(task, now) : undefined;
+		const i18n = this.options.i18n || defaultTranslator;
+		assertTaskFields(task, i18n);
+		task.nextRunAt = task.enabled ? calculateNextRunAt(task, now, i18n) : undefined;
 		const session = await this.options.store.createScheduledTaskSession(task);
 		this.notify();
 		return session;
@@ -253,8 +260,9 @@ export class ScheduledTaskManager {
 			enabled: patch.enabled ?? currentTask.enabled,
 			updatedAt,
 		};
-		assertTaskFields(nextTask);
-		nextTask.nextRunAt = nextTask.enabled ? calculateNextRunAt(nextTask, updatedAt) : undefined;
+		const i18n = this.options.i18n || defaultTranslator;
+		assertTaskFields(nextTask, i18n);
+		nextTask.nextRunAt = nextTask.enabled ? calculateNextRunAt(nextTask, updatedAt, i18n) : undefined;
 		const nextSession: SessionData = {
 			...session,
 			title: nextTask.title,
@@ -293,7 +301,7 @@ export class ScheduledTaskManager {
 	private async requireTaskSession(taskId: string): Promise<SessionData> {
 		const session = await this.getTaskSession(taskId);
 		if (!session || !session.task) {
-			throw new Error(`Scheduled task ${taskId} not found`);
+			throw new Error((this.options.i18n || defaultTranslator).t("scheduled.error.taskNotFound", { id: taskId }));
 		}
 		return session;
 	}
@@ -332,7 +340,7 @@ export class ScheduledTaskManager {
 			timezone: task.timezone || nowTimeZone(),
 		};
 		if (normalizedTask.enabled && !normalizedTask.nextRunAt) {
-			normalizedTask.nextRunAt = calculateNextRunAt(normalizedTask, Date.now());
+			normalizedTask.nextRunAt = calculateNextRunAt(normalizedTask, Date.now(), this.options.i18n || defaultTranslator);
 		}
 		return normalizedTask;
 	}
@@ -406,7 +414,7 @@ export class ScheduledTaskManager {
 		try {
 			const config = await this.options.getConfig();
 			if (!config.apiKey) {
-				throw new Error("Please configure API Key in plugin settings first.");
+				throw new Error(i18n.t("chat.error.apiKeyMissing"));
 			}
 			const agent = await makeAgent(config, this.options.getTools(), null, null, i18n);
 			const tracer = makeTracer(config);
@@ -430,7 +438,7 @@ export class ScheduledTaskManager {
 			}
 		} catch (error) {
 			finalStatus = "error";
-			lastError = normalizeError(error);
+			lastError = normalizeError(error, i18n);
 			const errorContent = `${i18n.t("scheduled.error.marker")}\n\n${lastError}`;
 			const errorState = mergeState(null, errorContent) as AgentState;
 			/* Ensure the error human message also appears in messagesUi */
@@ -456,7 +464,7 @@ export class ScheduledTaskManager {
 				finishedTask.enabled = false;
 			}
 		} else if (finishedTask.enabled) {
-			finishedTask.nextRunAt = calculateNextRunAt(finishedTask, finishedAt);
+			finishedTask.nextRunAt = calculateNextRunAt(finishedTask, finishedAt, i18n);
 		}
 
 		const finishedSession: SessionData = {

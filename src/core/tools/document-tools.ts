@@ -96,13 +96,13 @@ return tool(
 );
 }
 
-export function createReadBlockTool() {
+export function createReadBlockTool(i18n: Translator = defaultTranslator) {
 return tool(
 	async ({ id }, runtime: ToolRuntime) => {
 		const kramdowns: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids: [id] });
 		const content = kramdowns?.[id];
 		if (!content) {
-			return JSON.stringify({ error: `Block ${id} not found` });
+			return JSON.stringify({ error: i18n.t("tool.error.blockNotFound", { id }) });
 		}
 		const blockInfo = await siyuanFetch("/api/query/sql", {
 			stmt: `SELECT id, type, subtype, root_id, parent_id, content, hpath FROM blocks WHERE id='${sqlEscape(id)}' LIMIT 1`,

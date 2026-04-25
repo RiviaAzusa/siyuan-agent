@@ -19,7 +19,7 @@ return tool(
 				results.push({
 					id: block.id,
 					status: "error",
-					error: `Block ${block.id} not found`,
+					error: i18n.t("tool.error.blockNotFound", { id: block.id }),
 				});
 				continue;
 			}

@@ -26,7 +26,7 @@ function createLookupTools(i18n: Translator): StructuredToolInterface[] {
 		createGetDocumentTool(i18n),
 		createGetDocumentBlocksTool(i18n),
 		createGetDocumentOutlineTool(i18n),
-		createReadBlockTool(),
+		createReadBlockTool(i18n),
 		createSearchFulltextTool(i18n),
 		createSearchDocumentsTool(i18n),
 	];
@@ -63,7 +63,7 @@ export function getDefaultTools(
 		createGetDocumentTool(i18n),
 		createGetDocumentBlocksTool(i18n),
 		createGetDocumentOutlineTool(i18n),
-		createReadBlockTool(),
+		createReadBlockTool(i18n),
 		createSearchFulltextTool(i18n),
 		createExploreNotesTool(getAgentConfig, i18n),
 		createAppendBlockTool(i18n),

@@ -11,7 +11,7 @@ export function createScheduledTaskTools(
 	const requireTaskManager = (): ScheduledTaskManager => {
 		const manager = getTaskManager();
 		if (!manager) {
-			throw new Error("Scheduled task manager is not ready.");
+			throw new Error(i18n.t("scheduled.error.managerNotReady"));
 		}
 		return manager;
 	};

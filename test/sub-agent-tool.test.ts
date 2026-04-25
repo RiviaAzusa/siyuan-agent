@@ -150,7 +150,7 @@ describe("createSubAgentTool", () => {
 			} as any,
 		);
 
-		expect(result).toBe("[Sub-agent failed] API rate limit exceeded");
+		expect(result).toBe("[Sub-agent failed] Rate limit exceeded. Try again later.");
 	});
 
 	it("invokeSubAgentSafe re-throws abort errors", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSystemPrompt, getSlashCommands } from "../src/types";
-import { createTranslator } from "../src/i18n";
+import { createTranslator, localizeErrorMessage } from "../src/i18n";
 import zhCN from "../src/i18n/zh_CN.json";
 
 describe("i18n", () => {
@@ -26,5 +26,16 @@ describe("i18n", () => {
 		expect(chinesePrompt).toContain("你是思源笔记的 AI 助手");
 		expect(englishPrompt).not.toContain("{{CURRENT_DATETIME}}");
 		expect(chinesePrompt).not.toContain("{{CURRENT_DATETIME}}");
+	});
+
+	it("localizes common runtime errors", () => {
+		const i18n = createTranslator(zhCN);
+
+		expect(localizeErrorMessage(new Error("Please configure API Key in plugin settings first."), i18n))
+			.toBe("请先在插件设置中配置 API Key。");
+		expect(localizeErrorMessage("Block 20260426000000-abcdefg not found", i18n))
+			.toBe("未找到块 20260426000000-abcdefg。");
+		expect(localizeErrorMessage("MCP error [-32603]: boom", i18n))
+			.toBe("MCP 调用失败 [-32603]：boom");
 	});
 });

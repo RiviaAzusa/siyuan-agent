@@ -3,7 +3,7 @@ import { tool, type StructuredToolInterface, type ToolRuntime } from "@langchain
 import type { ZodTypeAny } from "zod";
 import { makeAgent } from "./agent";
 import { resolveSubAgentModelConfig, type AgentConfig, type ModelConfig } from "../types";
-import { defaultTranslator, type Translator } from "../i18n";
+import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 
 type AgentLike = {
 	invoke: (input: { messages: HumanMessage[] }, options?: Record<string, unknown>) => Promise<any>;
@@ -116,10 +116,11 @@ export async function invokeSubAgentSafe<TSchema extends ZodTypeAny>(
 	try {
 		return await invokeSubAgent(options, input, runtime);
 	} catch (err: any) {
-		const msg = err instanceof Error ? err.message : String(err);
+		const i18n = options.i18n || defaultTranslator;
+		const msg = localizeErrorMessage(err, i18n);
 		// Don't propagate abort errors as tool results
 		if (err?.name === "AbortError" || msg.includes("abort")) throw err;
-		return (options.i18n || defaultTranslator).t("subAgent.failed", { error: msg });
+		return i18n.t("subAgent.failed", { error: msg });
 	}
 }
 

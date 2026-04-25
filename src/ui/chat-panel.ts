@@ -23,7 +23,7 @@ import {
 	type ModelServiceModelConfig,
 	type McpServerConfig,
 } from "../types";
-import { defaultTranslator, type Translator } from "../i18n";
+import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 import { makeAgent, makeTracer } from "../core/agent";
 import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
@@ -105,6 +105,26 @@ export class ChatPanel {
 
 	private t(key: string, params?: Record<string, string | number | boolean | null | undefined>, fallback?: string): string {
 		return this.i18n.t(key, params, fallback);
+	}
+
+	private localizeToolResult(result: string): string {
+		const trimmed = result?.trim?.() || "";
+		if (!trimmed) return trimmed;
+		try {
+			const parsed = JSON.parse(trimmed);
+			if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+				return JSON.stringify({
+					...parsed,
+					error: localizeErrorMessage(parsed.error, this.i18n),
+				}, null, 2);
+			}
+		} catch {
+			/* Plain text tool result. */
+		}
+		if (/^(Error|ToolError):/i.test(trimmed) || /^\[(MCP Error|MCP tool error:)/i.test(trimmed)) {
+			return this.t("chat.error.prefix", { message: localizeErrorMessage(trimmed, this.i18n) });
+		}
+		return trimmed;
 	}
 
 	private render(): void {
@@ -514,7 +534,7 @@ export class ChatPanel {
 
 		const config = await this.getConfig();
 		if (!config.apiKey) {
-			showMessage("Please configure API Key in plugin settings first.");
+			showMessage(this.t("chat.error.apiKeyMissing"));
 			return;
 		}
 
@@ -645,24 +665,8 @@ export class ChatPanel {
 			const errorEl = document.createElement("p");
 			errorEl.className = "chat-msg__error";
 
-			const errStr = String(error);
-			let msg = errStr;
-			// Detect common model API errors and provide helpful messages
-			if (errStr.includes("function.arguments") && errStr.includes("JSON")) {
-				msg = this.t("chat.error.invalidToolArgs", { error: errStr });
-			} else if (errStr.includes("401") || errStr.includes("Unauthorized")) {
-				msg = this.t("chat.error.unauthorized");
-			} else if (errStr.includes("429") || errStr.includes("rate limit")) {
-				msg = this.t("chat.error.rateLimit");
-			} else if (errStr.includes("insufficient_quota") || errStr.includes("quota")) {
-				msg = this.t("chat.error.quota");
-			} else if (errStr.includes("Stream idle timeout")) {
-				msg = this.t("chat.error.timeout");
-			} else if (errStr.includes("\u5b50\u667a\u80fd\u4f53\u6267\u884c\u5931\u8d25") || errStr.includes("Sub-agent failed")) {
-				msg = errStr;
-			}
-
-			errorEl.textContent = `Error: ${msg}`;
+			const msg = localizeErrorMessage(error, this.i18n);
+			errorEl.textContent = this.t("chat.error.prefix", { message: msg });
 			// Add a retry button for recoverable errors
 			const retryBtn = document.createElement("button");
 			retryBtn.className = "chat-msg__retry-btn b3-button b3-button--outline";
@@ -1185,7 +1189,7 @@ export class ChatPanel {
 		let toolCallIndex = startToolCallIndex;
 
 		if (role === "tool") {
-			const trimmed = content?.trim?.();
+			const trimmed = this.localizeToolResult(content || "");
 			if (!trimmed) {
 				// skip empty tool results entirely
 			} else {
@@ -1560,7 +1564,7 @@ export class ChatPanel {
 		if (toolEl.dataset.hasEvents === "true") return;
 
 		// Skip empty or whitespace-only results
-		const trimmed = result?.trim();
+		const trimmed = this.localizeToolResult(result);
 		if (!trimmed) return;
 
 		const pre = document.createElement("pre");
