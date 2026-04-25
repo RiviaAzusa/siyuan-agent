@@ -55,6 +55,8 @@ export {
 export {
 	BUILTIN_SYSTEM_PROMPT,
 	buildSystemPrompt,
+	buildInitPrompt,
 	INIT_PROMPT,
 	SLASH_COMMANDS,
+	getSlashCommands,
 } from "./prompts";

@@ -72,7 +72,7 @@ export interface SessionIndexEntry {
 	task?: ScheduledTaskMeta;
 }
 
-/** 单个会话的持久化格式 */
+/** Persisted format for a single session. */
 export interface SessionData {
 	id: string;
 	title: string;
@@ -86,7 +86,7 @@ export interface SessionData {
 	modelId?: string;
 }
 
-/** 会话列表索引（轻量，不含 messages） */
+/** Lightweight session index without messages. */
 export interface SessionIndex {
 	activeId: string;
 	sessions: SessionIndexEntry[];

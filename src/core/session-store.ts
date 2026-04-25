@@ -136,7 +136,7 @@ function normalizeTaskMeta(raw: any, fallback?: ScheduledTaskMeta): ScheduledTas
 	const createdAt = Number(source.createdAt) || now;
 	const updatedAt = Number(source.updatedAt) || createdAt;
 	const scheduleType = source.scheduleType === "once" ? "once" : "recurring";
-	const title = typeof source.title === "string" && source.title.trim() ? source.title.trim() : "未命名任务";
+	const title = typeof source.title === "string" && source.title.trim() ? source.title.trim() : "Untitled Task";
 	const prompt = typeof source.prompt === "string" ? source.prompt : "";
 	const timezone = typeof source.timezone === "string" && source.timezone.trim()
 		? source.timezone

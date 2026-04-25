@@ -16,6 +16,7 @@ import { getDefaultTools } from "./core/tools";
 import { SessionStore, createPluginStorage } from "./core/session-store";
 import { ScheduledTaskManager } from "./core/scheduled-task-manager";
 import { McpManager } from "./core/mcp-client";
+import { createTranslator, type Translator } from "./i18n";
 
 const CONFIG_STORAGE = "agent-config";
 const DOCK_TYPE = "agent-chat";
@@ -32,8 +33,10 @@ export default class SiYuanAgent extends Plugin {
 	private sessionStore: SessionStore;
 	private scheduledTaskManager: ScheduledTaskManager;
 	private mcpManager: McpManager = new McpManager();
+	private translator: Translator;
 
 	onload() {
+		this.translator = createTranslator(this.i18n);
 		const frontend = getFrontend();
 		this.isMobile = frontend === "mobile" || frontend === "browser-mobile";
 
@@ -41,7 +44,7 @@ export default class SiYuanAgent extends Plugin {
 		(globalThis as any).siyuanApp = this.app;
 
 		const getTools = () => {
-			const builtinTools = getDefaultTools(() => this.getConfig(), () => this.scheduledTaskManager);
+			const builtinTools = getDefaultTools(() => this.getConfig(), () => this.scheduledTaskManager, this.translator);
 			const mcpTools = this.mcpManager.getAllTools();
 			return [...builtinTools, ...mcpTools];
 		};
@@ -50,6 +53,7 @@ export default class SiYuanAgent extends Plugin {
 			store: this.sessionStore,
 			getConfig: () => this.getConfig(),
 			getTools: getTools,
+			i18n: this.translator,
 		});
 
 		this.addIcons(`<symbol id="iconAgent" viewBox="0 0 24 24">
@@ -68,7 +72,7 @@ export default class SiYuanAgent extends Plugin {
 			if (text) {
 				e.detail.menu.addItem({
 					icon: "iconAgent",
-					label: this.i18n.sendToChat || "Send to Chat",
+					label: this.translator.t("sendToChat"),
 					accelerator: this.commands.find(c => c.langKey === "sendToChat")?.hotkey,
 					click: () => {
 						console.log("SiYuan Agent: Send to Chat clicked");
@@ -102,6 +106,7 @@ export default class SiYuanAgent extends Plugin {
 						getTools(),
 						this.sessionStore,
 						this.scheduledTaskManager,
+						this.translator,
 					);
 					this.flushPendingContexts();
 				},
@@ -121,6 +126,7 @@ export default class SiYuanAgent extends Plugin {
 						getTools(),
 						this.sessionStore,
 						this.scheduledTaskManager,
+						this.translator,
 					);
 					this.flushPendingContexts();
 				},
@@ -156,7 +162,7 @@ export default class SiYuanAgent extends Plugin {
 				if (text)
 					this.sendContextToChat(text);
 				else
-					showMessage(this.i18n.noSelection || "No text selected");
+					showMessage(this.translator.t("noSelection"));
 			},
 		});
 	}
@@ -231,14 +237,14 @@ export default class SiYuanAgent extends Plugin {
 		const menu = new Menu();
 		menu.addItem({
 			icon: "iconRightTop",
-			label: this.i18n.openToRight || "打开到右侧",
+			label: this.translator.t("openToRight"),
 			click: () => {
 				void this.setPanelPosition("right", true);
 			},
 		});
 		menu.addItem({
 			icon: "iconBottomLeft",
-			label: this.i18n.openToBottom || "打开到下侧",
+			label: this.translator.t("openToBottom"),
 			click: () => {
 				void this.setPanelPosition("bottom", true);
 			},
@@ -246,7 +252,7 @@ export default class SiYuanAgent extends Plugin {
 		menu.addSeparator();
 		menu.addItem({
 			icon: "iconSettings",
-			label: this.i18n.settings || "设置",
+			label: this.translator.t("settings"),
 			click: () => {
 				void this.openCustomSettings();
 			},

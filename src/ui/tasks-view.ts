@@ -6,6 +6,7 @@ import type { ScheduledTaskMeta, ToolUIEvent, UiMessage } from "../types";
 import type { ScheduledTaskManager } from "../core/scheduled-task-manager";
 import { escapeHtml, normalizeMessagesForDisplay } from "./chat-helpers";
 import { groupTaskRuns, type TaskRunGroup } from "./task-run-group";
+import { defaultTranslator, type Translator } from "../i18n";
 
 /* ── Context interface ───────────────────────────────────────────────── */
 
@@ -14,6 +15,7 @@ export interface TasksViewContext {
 	taskListEl: HTMLElement;
 	taskDetailEl: HTMLElement;
 	taskManager: ScheduledTaskManager;
+	i18n?: Translator;
 	/** Render a set of conversation messages into the given container. */
 	renderConversationMessages: (messages: any[], toolUIEvents: ToolUIEvent[], targetEl: HTMLElement) => void;
 	/** Render UiMessage-based conversation into the given container. */
@@ -26,9 +28,15 @@ export class TasksView {
 	private ctx: TasksViewContext;
 	selectedTaskId: string | null = null;
 	private rendering = false;
+	private i18n: Translator;
 
 	constructor(ctx: TasksViewContext) {
 		this.ctx = ctx;
+		this.i18n = ctx.i18n || defaultTranslator;
+	}
+
+	private t(key: string, params?: Record<string, string | number | boolean | null | undefined>, fallback?: string): string {
+		return this.i18n.t(key, params, fallback);
 	}
 
 	async render(): Promise<void> {
@@ -47,18 +55,18 @@ export class TasksView {
 		this.ctx.taskDetailEl.innerHTML = `
 <form class="task-editor">
 	<label class="task-editor__field">
-		<span>标题</span>
+		<span>${escapeHtml(this.t("tasks.editor.title"))}</span>
 		<input class="b3-text-field" name="title" value="${escapeHtml(task?.title || "")}" required />
 	</label>
 	<label class="task-editor__field">
-		<span>Prompt</span>
+		<span>${escapeHtml(this.t("tasks.editor.prompt"))}</span>
 		<textarea class="b3-text-field" name="prompt" rows="6" required>${escapeHtml(task?.prompt || "")}</textarea>
 	</label>
 	<label class="task-editor__field">
-		<span>类型</span>
+		<span>${escapeHtml(this.t("tasks.editor.type"))}</span>
 		<select class="b3-select" name="scheduleType">
-			<option value="recurring"${scheduleType === "recurring" ? " selected" : ""}>循环</option>
-			<option value="once"${scheduleType === "once" ? " selected" : ""}>一次性</option>
+			<option value="recurring"${scheduleType === "recurring" ? " selected" : ""}>${escapeHtml(this.t("tasks.editor.recurring"))}</option>
+			<option value="once"${scheduleType === "once" ? " selected" : ""}>${escapeHtml(this.t("tasks.editor.once"))}</option>
 		</select>
 	</label>
 	<label class="task-editor__field">
@@ -66,20 +74,20 @@ export class TasksView {
 		<input class="b3-text-field" name="cron" value="${escapeHtml(task?.cron || "")}" placeholder="0 18 * * *" />
 	</label>
 	<label class="task-editor__field">
-		<span>触发时间</span>
+		<span>${escapeHtml(this.t("tasks.editor.triggerAt"))}</span>
 		<input class="b3-text-field" name="triggerAt" value="${task?.triggerAt ? new Date(task.triggerAt).toISOString().slice(0, 16) : ""}" type="datetime-local" />
 	</label>
 	<label class="task-editor__field">
-		<span>时区</span>
+		<span>${escapeHtml(this.t("tasks.editor.timezone"))}</span>
 		<input class="b3-text-field" name="timezone" value="${escapeHtml(task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}" />
 	</label>
 	<label class="task-editor__checkbox">
 		<input type="checkbox" name="enabled"${task?.enabled !== false ? " checked" : ""} />
-		<span>启用</span>
+		<span>${escapeHtml(this.t("tasks.editor.enabled"))}</span>
 	</label>
 	<div class="task-editor__actions">
-		<button class="b3-button" type="submit">${isEditing ? "保存" : "创建"}</button>
-		<button class="b3-button b3-button--text" type="button" data-action="cancel">取消</button>
+		<button class="b3-button" type="submit">${escapeHtml(isEditing ? this.t("common.save") : this.t("common.create"))}</button>
+		<button class="b3-button b3-button--text" type="button" data-action="cancel">${escapeHtml(this.t("common.cancel"))}</button>
 	</div>
 </form>`;
 		const form = this.ctx.taskDetailEl.querySelector<HTMLFormElement>(".task-editor");
@@ -125,15 +133,15 @@ export class TasksView {
 		const runningCount = entries.filter((entry) => entry.task?.lastRunStatus === "running").length;
 		const errorCount = entries.filter((entry) => entry.task?.lastRunStatus === "error").length;
 		tasksSummaryEl.innerHTML = `
-<span class="chat-panel__tasks-stats">${entries.length} 个任务${runningCount ? ` / ${runningCount} 执行中` : ""}${errorCount ? ` / ${errorCount} 失败` : ""}</span>
-<button class="chat-panel__task-create b3-button" type="button">新建任务</button>`;
+<span class="chat-panel__tasks-stats">${escapeHtml(this.t("tasks.summary.count", { count: entries.length }))}${runningCount ? escapeHtml(this.t("tasks.summary.running", { count: runningCount })) : ""}${errorCount ? escapeHtml(this.t("tasks.summary.errors", { count: errorCount })) : ""}</span>
+<button class="chat-panel__task-create b3-button" type="button">${escapeHtml(this.t("tasks.create"))}</button>`;
 		tasksSummaryEl.querySelector(".chat-panel__task-create")?.addEventListener("click", () => {
 			void this.openTaskEditor();
 		});
 
 		if (!entries.length) {
-			taskListEl.innerHTML = "<div class=\"chat-session-list__empty\">暂无定时任务</div>";
-			taskDetailEl.innerHTML = "<div class=\"chat-session-list__empty\">从这里创建你的第一个定时任务</div>";
+			taskListEl.innerHTML = `<div class="chat-session-list__empty">${escapeHtml(this.t("tasks.empty.list"))}</div>`;
+			taskDetailEl.innerHTML = `<div class="chat-session-list__empty">${escapeHtml(this.t("tasks.empty.detail"))}</div>`;
 			this.selectedTaskId = null;
 			return;
 		}
@@ -160,7 +168,7 @@ export class TasksView {
 
 		const selected = this.selectedTaskId ? await taskManager.getTaskSession(this.selectedTaskId) : null;
 		if (!selected?.task) {
-			taskDetailEl.innerHTML = "<div class=\"chat-session-list__empty\">请选择一个定时任务</div>";
+			taskDetailEl.innerHTML = `<div class="chat-session-list__empty">${escapeHtml(this.t("tasks.empty.select"))}</div>`;
 			return;
 		}
 
@@ -185,33 +193,33 @@ export class TasksView {
 		<div class="task-detail__title-area">
 			<h3>${escapeHtml(task.title)}</h3>
 			<span class="task-detail__badge task-detail__badge--${task.lastRunStatus}">${escapeHtml(this.taskStatusText(task))}</span>
-			<span class="task-detail__next-run">下次执行：${escapeHtml(nextRunText)}</span>
+			<span class="task-detail__next-run">${escapeHtml(this.t("tasks.nextRun", { time: nextRunText }))}</span>
 		</div>
 		<div class="task-detail__actions">
-			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${task.enabled ? "停用" : "启用"}" data-action="toggle">
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(task.enabled ? this.t("common.disable") : this.t("common.enable"))}" data-action="toggle">
 				<svg style="width:16px;height:16px"><use xlink:href="${task.enabled ? "#iconPause" : "#iconPlay"}"></use></svg>
 			</span>
-			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="编辑" data-action="edit">
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("common.edit"))}" data-action="edit">
 				<svg style="width:16px;height:16px"><use xlink:href="#iconEdit"></use></svg>
 			</span>
-			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="删除" data-action="delete">
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("common.delete"))}" data-action="delete">
 				<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
 			</span>
 		</div>
 	</div>
 	${lastErrorHtml}
 	<div class="task-detail__meta-row">
-		<span>调度：${escapeHtml(this.formatTaskSchedule(task))}</span>
-		<span>时区：${escapeHtml(task.timezone)}</span>
-		<span>累计 ${task.runCount} 次</span>
-		${task.lastRunAt ? `<span>上次：${escapeHtml(this.formatDateTime(task.lastRunAt))}</span>` : ""}
+		<span>${escapeHtml(this.t("tasks.schedule", { schedule: this.formatTaskSchedule(task) }))}</span>
+		<span>${escapeHtml(this.t("tasks.timezone", { timezone: task.timezone }))}</span>
+		<span>${escapeHtml(this.t("tasks.runCount", { count: task.runCount }))}</span>
+		${task.lastRunAt ? `<span>${escapeHtml(this.t("tasks.lastRun", { time: this.formatDateTime(task.lastRunAt) }))}</span>` : ""}
 	</div>
 	<details class="task-detail__prompt-section">
-		<summary class="task-detail__section-title">任务指令</summary>
+		<summary class="task-detail__section-title">${escapeHtml(this.t("tasks.promptTitle"))}</summary>
 		<pre class="task-detail__prompt-body">${escapeHtml(task.prompt)}</pre>
 	</details>
 	<div class="task-detail__history">
-		<div class="task-detail__section-title">执行历史</div>
+		<div class="task-detail__section-title">${escapeHtml(this.t("tasks.historyTitle"))}</div>
 		${historyHtml}
 	</div>
 </div>`;
@@ -229,14 +237,14 @@ export class TasksView {
 
 	private renderRunGroupsHtml(groups: TaskRunGroup[]): string {
 		if (!groups.length) {
-			return "<div class=\"chat-session-list__empty\">暂无执行记录</div>";
+			return `<div class="chat-session-list__empty">${escapeHtml(this.t("tasks.history.empty"))}</div>`;
 		}
 		const reversed = [...groups].reverse();
 		return reversed.map((group, idx) => {
 			const isLatest = idx === 0;
 			const statusClass = group.status === "error" ? "task-run-card--error" : group.status === "success" ? "task-run-card--success" : "";
-			const statusLabel = group.status === "error" ? "失败" : group.status === "success" ? "成功" : "";
-			const timeLabel = group.runAt || "未知时间";
+			const statusLabel = group.status === "error" ? this.t("tasks.history.status.error") : group.status === "success" ? this.t("tasks.history.status.success") : "";
+			const timeLabel = group.runAt || this.t("common.unknownTime");
 
 			const host = document.createElement("div");
 			if (group.messagesUi.length > 0) {
@@ -244,7 +252,7 @@ export class TasksView {
 			} else {
 				this.ctx.renderConversationMessages(group.messages, group.toolUIEvents, host);
 			}
-			const bodyHtml = host.innerHTML || "<div class=\"chat-session-list__empty\">无内容</div>";
+			const bodyHtml = host.innerHTML || `<div class="chat-session-list__empty">${escapeHtml(this.t("common.noContent"))}</div>`;
 
 			return `<details class="task-run-card ${statusClass}" ${isLatest ? "open" : ""}>
 				<summary class="task-run-card__header">
@@ -263,17 +271,17 @@ export class TasksView {
 
 	private formatTaskSchedule(task: ScheduledTaskMeta): string {
 		if (task.scheduleType === "once") {
-			return `一次性 · ${this.formatDateTime(task.triggerAt)}`;
+			return this.t("tasks.schedule.once", { time: this.formatDateTime(task.triggerAt) });
 		}
-		return `循环 · ${task.cron || "未配置 cron"}`;
+		return this.t("tasks.schedule.recurring", { cron: task.cron || this.t("tasks.schedule.noCron") });
 	}
 
 	private taskStatusText(task: ScheduledTaskMeta): string {
 		switch (task.lastRunStatus) {
-			case "running": return "执行中";
-			case "success": return "最近成功";
-			case "error": return "最近失败";
-			default: return task.enabled ? "待执行" : "已停用";
+			case "running": return this.t("tasks.status.running");
+			case "success": return this.t("tasks.status.success");
+			case "error": return this.t("tasks.status.error");
+			default: return task.enabled ? this.t("tasks.status.idle") : this.t("tasks.status.disabled");
 		}
 	}
 }

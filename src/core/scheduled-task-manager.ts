@@ -13,6 +13,7 @@ import type {
 import { makeAgent, makeTracer } from "./agent";
 import { mergeState, runAgentStream } from "./stream-runtime";
 import { SessionStore } from "./session-store";
+import { defaultTranslator, type Translator } from "../i18n";
 
 const TASK_TICK_INTERVAL = 30_000;
 
@@ -40,6 +41,7 @@ interface ScheduledTaskManagerOptions {
 	store: SessionStore;
 	getConfig: () => AgentConfig | Promise<AgentConfig>;
 	getTools: () => StructuredToolInterface[];
+	i18n?: Translator;
 }
 
 function cloneTask(task: ScheduledTaskMeta): ScheduledTaskMeta {
@@ -74,11 +76,15 @@ function assertTaskFields(task: Pick<ScheduledTaskMeta, "title" | "prompt" | "sc
 	}
 }
 
-export function buildScheduledTaskRunPrompt(task: ScheduledTaskMeta, runAt: number): string {
+export function buildScheduledTaskRunPrompt(
+	task: ScheduledTaskMeta,
+	runAt: number,
+	i18n: Translator = defaultTranslator,
+): string {
 	return [
-		`定时任务执行时间：${new Date(runAt).toLocaleString()}`,
-		`任务名称：${task.title}`,
-		"以下是本次定时任务的用户指令，请直接执行：",
+		i18n.t("scheduled.prompt.runAt", { time: new Date(runAt).toLocaleString() }),
+		i18n.t("scheduled.prompt.title", { title: task.title }),
+		i18n.t("scheduled.prompt.instruction"),
 		task.prompt,
 	].join("\n\n");
 }
@@ -379,6 +385,7 @@ export class ScheduledTaskManager {
 	}
 
 	private async executeTaskInner(session: SessionData, reason: "manual" | "schedule"): Promise<void> {
+		const i18n = this.options.i18n || defaultTranslator;
 		const startedAt = Date.now();
 		const task = cloneTask(session.task!);
 		task.lastRunStatus = "running";
@@ -401,11 +408,11 @@ export class ScheduledTaskManager {
 			if (!config.apiKey) {
 				throw new Error("Please configure API Key in plugin settings first.");
 			}
-			const agent = await makeAgent(config, this.options.getTools());
+			const agent = await makeAgent(config, this.options.getTools(), null, null, i18n);
 			const tracer = makeTracer(config);
-			const input = mergeState(null, buildScheduledTaskRunPrompt(task, startedAt));
+			const input = mergeState(null, buildScheduledTaskRunPrompt(task, startedAt, i18n));
 			/* Ensure the human message also appears in messagesUi */
-			const promptContent = buildScheduledTaskRunPrompt(task, startedAt);
+			const promptContent = buildScheduledTaskRunPrompt(task, startedAt, i18n);
 			input.messagesUi = [{
 				lc: 1,
 				type: "constructor",
@@ -424,7 +431,7 @@ export class ScheduledTaskManager {
 		} catch (error) {
 			finalStatus = "error";
 			lastError = normalizeError(error);
-			const errorContent = `定时任务执行失败\n\n${lastError}`;
+			const errorContent = `${i18n.t("scheduled.error.marker")}\n\n${lastError}`;
 			const errorState = mergeState(null, errorContent) as AgentState;
 			/* Ensure the error human message also appears in messagesUi */
 			errorState.messagesUi = [{
@@ -460,7 +467,10 @@ export class ScheduledTaskManager {
 			state: appendTaskRunState(runningSession.state, latestState),
 		};
 		await this.options.store.saveSession(finishedSession);
-		const statusText = finalStatus === "success" ? "已完成" : `失败：${lastError}`;
-		showMessage(`⏰ 定时任务「${finishedTask.title}」${reason === "manual" ? "手动执行" : "执行"}${statusText ? `，${statusText}` : ""}`);
+		const statusText = finalStatus === "success"
+			? i18n.t("scheduled.message.completed")
+			: i18n.t("scheduled.message.failed", { error: lastError || "" });
+		const runText = reason === "manual" ? i18n.t("scheduled.message.manual") : i18n.t("scheduled.message.scheduled");
+		showMessage(`⏰ ${finishedTask.title} ${runText}${statusText ? `, ${statusText}` : ""}`);
 	}
 }

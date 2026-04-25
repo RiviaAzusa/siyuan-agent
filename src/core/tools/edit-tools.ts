@@ -2,8 +2,10 @@ import { tool, ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
 import { openTab } from "siyuan";
 import { siyuanFetch, emitActivity, sqlEscape } from "./siyuan-api";
+import { defaultTranslator, type Translator } from "../../i18n";
 
-export const editBlocksTool = tool(
+export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ blocks }, runtime: ToolRuntime) => {
 		const ids = blocks.map((b: { id: string }) => b.id);
 		const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
@@ -84,7 +86,7 @@ export const editBlocksTool = tool(
 				id: rootIDs[0],
 				path,
 				label: path || rootIDs[0],
-				meta: `已编辑 ${results.filter((item) => item.status === "ok").length} 个块`,
+				meta: i18n.t("tool.editBlocks.meta", { count: results.filter((item) => item.status === "ok").length }),
 				open: true,
 			});
 		}
@@ -102,8 +104,10 @@ export const editBlocksTool = tool(
 		}),
 	}
 );
+}
 
-export const appendBlockTool = tool(
+export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ parentID, markdown }, runtime: ToolRuntime) => {
 		const data = await siyuanFetch("/api/block/appendBlock", {
 			data: markdown,
@@ -122,7 +126,7 @@ export const appendBlockTool = tool(
 			id: parentID,
 			path: docInfo?.[0]?.hpath || "",
 			label: docInfo?.[0]?.hpath || parentID,
-			meta: `已追加 ${blockIDs.length || 0} 个块`,
+			meta: i18n.t("tool.appendBlock.meta", { count: blockIDs.length || 0 }),
 			open: true,
 		});
 		return JSON.stringify(data, null, 2);
@@ -136,8 +140,10 @@ export const appendBlockTool = tool(
 		}),
 	}
 );
+}
 
-export const createDocumentTool = tool(
+export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ notebook, path, markdown }, runtime: ToolRuntime) => {
 		const id = await siyuanFetch("/api/filetree/createDocWithMd", {
 			notebook,
@@ -151,7 +157,7 @@ export const createDocumentTool = tool(
 			id,
 			path,
 			label: path,
-			meta: "已创建文档",
+			meta: i18n.t("tool.createDocument.meta"),
 			open: true,
 		});
 		return JSON.stringify({ id, notebook, path });
@@ -166,16 +172,18 @@ export const createDocumentTool = tool(
 		}),
 	}
 );
+}
 
-export const moveDocumentTool = tool(
+export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ fromIDs, toID }, runtime: ToolRuntime) => {
 		await siyuanFetch("/api/filetree/moveDocsByID", { fromIDs, toID });
 		emitActivity(runtime, {
 			category: "change",
 			action: "move",
 			id: fromIDs[0],
-			label: fromIDs.length > 1 ? `${fromIDs[0]} 等 ${fromIDs.length} 个文档` : fromIDs[0],
-			meta: `已移动到 ${toID}`,
+			label: fromIDs.length > 1 ? i18n.t("tool.moveDocument.labelMultiple", { first: fromIDs[0], count: fromIDs.length }) : fromIDs[0],
+			meta: i18n.t("tool.moveDocument.meta", { target: toID }),
 		});
 		return JSON.stringify({ ok: true, fromIDs, toID });
 	},
@@ -188,8 +196,10 @@ export const moveDocumentTool = tool(
 		}),
 	}
 );
+}
 
-export const renameDocumentTool = tool(
+export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ id, title }, runtime: ToolRuntime) => {
 		await siyuanFetch("/api/filetree/renameDocByID", { id, title });
 		emitActivity(runtime, {
@@ -197,7 +207,7 @@ export const renameDocumentTool = tool(
 			action: "rename",
 			id,
 			label: title,
-			meta: "已重命名文档",
+			meta: i18n.t("tool.renameDocument.meta"),
 			open: true,
 		});
 		return JSON.stringify({ ok: true, id, title });
@@ -211,6 +221,7 @@ export const renameDocumentTool = tool(
 		}),
 	}
 );
+}
 
 // deleteDocumentTool is intentionally NOT in defaultTools (safety) — export for opt-in use
 export const deleteDocumentTool = tool(
@@ -226,3 +237,9 @@ export const deleteDocumentTool = tool(
 		}),
 	}
 );
+
+export const editBlocksTool = createEditBlocksTool();
+export const appendBlockTool = createAppendBlockTool();
+export const createDocumentTool = createCreateDocumentTool();
+export const moveDocumentTool = createMoveDocumentTool();
+export const renameDocumentTool = createRenameDocumentTool();

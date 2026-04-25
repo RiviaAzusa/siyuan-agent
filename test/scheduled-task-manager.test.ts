@@ -86,8 +86,8 @@ describe("scheduled task helpers", () => {
 			updatedAt: 1,
 		}, new Date("2026-04-08T18:00:00+08:00").getTime());
 
-		expect(prompt).toContain("定时任务执行时间");
-		expect(prompt).toContain("任务名称：Daily Summary");
+		expect(prompt).toContain("Scheduled task run time");
+		expect(prompt).toContain("Task name: Daily Summary");
 		expect(prompt).toContain("总结今天");
 	});
 });

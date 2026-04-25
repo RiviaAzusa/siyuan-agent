@@ -6,6 +6,7 @@
 import type { AgentState, ToolUIEvent, ToolUIEventPayload, UiMessage, ToolMessageUi } from "../types";
 import { isToolMessageUi } from "../types";
 import type { ModelServiceConfig, McpServerConfig } from "../types";
+import { defaultTranslator, type Translator } from "../i18n";
 
 /* ── Interfaces ──────────────────────────────────────────────────────── */
 
@@ -188,47 +189,10 @@ export function getToolAction(toolName?: string, payload?: ToolUIEventPayload): 
 	return map[toolName || ""] || "other";
 }
 
-export function getToolDisplayTitle(toolName: string): string {
-	const map: Record<string, string> = {
-		list_notebooks: "列出笔记本",
-		list_documents: "列出文档",
-		recent_documents: "最近文档",
-		get_document: "读取文档",
-		get_document_blocks: "获取文档块",
-		get_document_outline: "获取大纲",
-		read_block: "读取块",
-		search_fulltext: "全文搜索",
-		search_documents: "搜索文档",
-		explore_notes: "探索笔记",
-		append_block: "追加内容",
-		edit_blocks: "编辑块",
-		create_document: "创建文档",
-		move_document: "移动文档",
-		rename_document: "重命名",
-		delete_document: "删除文档",
-		search_todos: "搜索任务",
-		toggle_todo: "切换任务",
-		get_todo_stats: "任务统计",
-		create_scheduled_task: "创建定时任务",
-		list_scheduled_tasks: "定时任务列表",
-		update_scheduled_task: "更新定时任务",
-		delete_scheduled_task: "删除定时任务",
-	};
-	return map[toolName] || toolName;
+export function getToolDisplayTitle(toolName: string, i18n: Translator = defaultTranslator): string {
+	return i18n.t(`chat.toolTitle.${toolName}`, undefined, toolName);
 }
 
-export function getActionLabel(action: string): string {
-	const map: Record<string, string> = {
-		list: "列出",
-		read: "读取",
-		search: "搜索",
-		create: "创建",
-		append: "追加",
-		edit: "编辑",
-		move: "移动",
-		rename: "重命名",
-		delete: "删除",
-		other: "",
-	};
-	return map[action] || action;
+export function getActionLabel(action: string, i18n: Translator = defaultTranslator): string {
+	return i18n.t(`chat.action.${action}`, undefined, action === "other" ? "" : action);
 }

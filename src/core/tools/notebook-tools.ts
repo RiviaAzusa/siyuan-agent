@@ -3,8 +3,10 @@ import { z } from "zod";
 import { siyuanFetch, emitActivity } from "./siyuan-api";
 import { listDocumentsViaApi } from "../list-documents";
 import { recentDocumentsViaApi } from "../recent-documents";
+import { defaultTranslator, type Translator } from "../../i18n";
 
-export const listNotebooksTool = tool(
+export function createListNotebooksTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async (_, runtime: ToolRuntime) => {
 		const data = await siyuanFetch("/api/notebook/lsNotebooks", {});
 		const notebooks = (data.notebooks || []).map((nb: any) => ({
@@ -16,8 +18,8 @@ export const listNotebooksTool = tool(
 		emitActivity(runtime, {
 			category: "lookup",
 			action: "list",
-			label: "笔记本",
-			meta: `已列出 ${notebooks.length} 个笔记本`,
+			label: i18n.t("tool.listNotebooks.label"),
+			meta: i18n.t("tool.listNotebooks.meta", { count: notebooks.length }),
 		});
 		return JSON.stringify(notebooks, null, 2);
 	},
@@ -27,8 +29,10 @@ export const listNotebooksTool = tool(
 		schema: z.object({}),
 	}
 );
+}
 
-export const listDocumentsTool = tool(
+export function createListDocumentsTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ notebook, path, depth, page, page_size, child_limit, include_summary }, runtime: ToolRuntime) => {
 		const result = await listDocumentsViaApi({
 			notebook,
@@ -44,7 +48,7 @@ export const listDocumentsTool = tool(
 			action: "list",
 			path: result.path,
 			label: result.path,
-			meta: `已列出 ${result.items.length} 项`,
+			meta: i18n.t("tool.listDocuments.meta", { count: result.items.length }),
 		});
 		return JSON.stringify(result, null, 2);
 	},
@@ -62,8 +66,10 @@ export const listDocumentsTool = tool(
 		}),
 	}
 );
+}
 
-export const recentDocumentsTool = tool(
+export function createRecentDocumentsTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ limit }, runtime: ToolRuntime) => {
 		const result = await recentDocumentsViaApi({
 			limit,
@@ -71,8 +77,8 @@ export const recentDocumentsTool = tool(
 		emitActivity(runtime, {
 			category: "lookup",
 			action: "list",
-			label: "最近文档",
-			meta: `已浏览 ${result.items.length} 篇最近文档`,
+			label: i18n.t("tool.recentDocuments.label"),
+			meta: i18n.t("tool.recentDocuments.meta", { count: result.items.length }),
 		});
 		return JSON.stringify(result, null, 2);
 	},
@@ -84,3 +90,8 @@ export const recentDocumentsTool = tool(
 		}),
 	}
 );
+}
+
+export const listNotebooksTool = createListNotebooksTool();
+export const listDocumentsTool = createListDocumentsTool();
+export const recentDocumentsTool = createRecentDocumentsTool();

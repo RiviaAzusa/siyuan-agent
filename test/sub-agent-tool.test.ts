@@ -120,7 +120,7 @@ describe("createSubAgentTool", () => {
 			} as any,
 		);
 
-		expect(result).toBe("Explore 子智能体未返回最终文本结果。");
+		expect(result).toBe("Explore sub-agent did not return a final text result.");
 	});
 
 	it("invokeSubAgentSafe catches errors and returns friendly message", async () => {
@@ -150,7 +150,7 @@ describe("createSubAgentTool", () => {
 			} as any,
 		);
 
-		expect(result).toBe("[子智能体执行失败] API rate limit exceeded");
+		expect(result).toBe("[Sub-agent failed] API rate limit exceeded");
 	});
 
 	it("invokeSubAgentSafe re-throws abort errors", async () => {
@@ -214,7 +214,7 @@ describe("createSubAgentTool", () => {
 		);
 
 		expect(result.length).toBeLessThan(8100);
-		expect(result).toContain("...(已截断)");
+		expect(result).toContain("...(truncated)");
 	});
 });
 

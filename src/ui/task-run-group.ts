@@ -24,9 +24,9 @@ export interface TaskRunGroup {
 	status: "success" | "error" | "unknown";
 }
 
-const SCHEDULED_PREFIX = "定时任务执行时间：";
-const TASK_TITLE_PREFIX = "任务名称：";
-const ERROR_MARKER = "定时任务执行失败";
+const SCHEDULED_PREFIXES = ["\u5b9a\u65f6\u4efb\u52a1\u6267\u884c\u65f6\u95f4\uff1a", "Scheduled task run time: "];
+const TASK_TITLE_PREFIXES = ["\u4efb\u52a1\u540d\u79f0\uff1a", "Task name: "];
+const ERROR_MARKERS = ["\u5b9a\u65f6\u4efb\u52a1\u6267\u884c\u5931\u8d25", "Scheduled task execution failed"];
 
 function msgType(m: any): string {
 	if (typeof m._getType === "function") return m._getType();
@@ -47,13 +47,15 @@ function getContent(m: any): string {
 
 function isScheduledRunStart(m: any): boolean {
 	return (msgType(m) === "human" || msgType(m) === "user") &&
-		getContent(m).startsWith(SCHEDULED_PREFIX);
+		SCHEDULED_PREFIXES.some((prefix) => getContent(m).startsWith(prefix));
 }
 
 function extractRunAt(content: string): string | undefined {
 	const line = content.split("\n")[0];
-	if (line.startsWith(SCHEDULED_PREFIX)) {
-		return line.slice(SCHEDULED_PREFIX.length).trim();
+	for (const prefix of SCHEDULED_PREFIXES) {
+		if (line.startsWith(prefix)) {
+			return line.slice(prefix.length).trim();
+		}
 	}
 	return undefined;
 }
@@ -61,8 +63,10 @@ function extractRunAt(content: string): string | undefined {
 function extractTaskTitle(content: string): string | undefined {
 	for (const line of content.split("\n")) {
 		const trimmed = line.trim();
-		if (trimmed.startsWith(TASK_TITLE_PREFIX)) {
-			return trimmed.slice(TASK_TITLE_PREFIX.length).trim();
+		for (const prefix of TASK_TITLE_PREFIXES) {
+			if (trimmed.startsWith(prefix)) {
+				return trimmed.slice(prefix.length).trim();
+			}
 		}
 	}
 	return undefined;
@@ -71,7 +75,7 @@ function extractTaskTitle(content: string): string | undefined {
 function inferRunStatus(messages: any[]): "success" | "error" | "unknown" {
 	for (const m of messages) {
 		const content = getContent(m);
-		if (content.includes(ERROR_MARKER)) return "error";
+		if (ERROR_MARKERS.some((marker) => content.includes(marker))) return "error";
 	}
 	const hasAi = messages.some(m => {
 		const t = msgType(m);
@@ -98,7 +102,7 @@ function getToolCallIndices(messages: any[]): Set<number> {
 /**
  * Split a scheduled task session's messages into per-execution run groups.
  * 
- * Each run starts with a human message whose content begins with "定时任务执行时间：".
+ * Each run starts with a human message whose content begins with a scheduled task run prefix.
  * If no such messages are found (legacy data), all messages are returned as a single group.
  *
  * When `messagesUi` is provided, the UI messages are split at the same boundaries

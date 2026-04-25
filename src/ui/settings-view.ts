@@ -16,6 +16,7 @@ import {
 } from "../types";
 import type { SettingsSection, SettingsDraft } from "./chat-helpers";
 import { escapeHtml } from "./chat-helpers";
+import { defaultTranslator, type Translator } from "../i18n";
 
 const CONFIG_STORAGE = "agent-config";
 
@@ -24,6 +25,7 @@ const CONFIG_STORAGE = "agent-config";
 export interface SettingsViewContext {
 	settingsViewEl: HTMLElement;
 	plugin: Plugin;
+	i18n?: Translator;
 	getConfig: () => Promise<AgentConfig>;
 	refreshModelSelector: () => Promise<void>;
 	openTaskEditor: (task?: ScheduledTaskMeta) => Promise<void>;
@@ -39,9 +41,15 @@ export class SettingsView {
 	private currentSection: SettingsSection = "general";
 	private draft: SettingsDraft | null = null;
 	private autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	private i18n: Translator;
 
 	constructor(ctx: SettingsViewContext) {
 		this.ctx = ctx;
+		this.i18n = ctx.i18n || defaultTranslator;
+	}
+
+	private t(key: string, params?: Record<string, string | number | boolean | null | undefined>, fallback?: string): string {
+		return this.i18n.t(key, params, fallback);
 	}
 
 	async render(): Promise<void> {
@@ -82,27 +90,27 @@ export class SettingsView {
 			</option>
 		`).join("");
 		const guideDocMeta = draft.guideDoc
-			? `<div><span>当前文档</span><strong>${escapeHtml(draft.guideDoc.title)}</strong></div>
-				<div><span>文档 ID</span><strong>${escapeHtml(draft.guideDoc.id)}</strong></div>`
-			: `<div><span>当前文档</span><strong>未设置</strong></div>
-				<div><span>说明</span><strong>选择后会拼接进系统提示词</strong></div>`;
+			? `<div><span>${escapeHtml(this.t("settings.currentDoc"))}</span><strong>${escapeHtml(draft.guideDoc.title)}</strong></div>
+				<div><span>${escapeHtml(this.t("settings.docId"))}</span><strong>${escapeHtml(draft.guideDoc.id)}</strong></div>`
+			: `<div><span>${escapeHtml(this.t("settings.currentDoc"))}</span><strong>${escapeHtml(this.t("common.notSet"))}</strong></div>
+				<div><span>${escapeHtml(this.t("settings.guideDoc.helpLabel"))}</span><strong>${escapeHtml(this.t("settings.guideDoc.help"))}</strong></div>`;
 		const notebookMeta = draft.defaultNotebook
-			? `<div><span>默认笔记本</span><strong>${escapeHtml(draft.defaultNotebook.name)}</strong></div>
-				<div><span>笔记本 ID</span><strong>${escapeHtml(draft.defaultNotebook.id)}</strong></div>`
-			: `<div><span>默认笔记本</span><strong>未设置</strong></div>
-				<div><span>说明</span><strong>Agent 将优先在这里工作</strong></div>`;
+			? `<div><span>${escapeHtml(this.t("settings.defaultNotebook"))}</span><strong>${escapeHtml(draft.defaultNotebook.name)}</strong></div>
+				<div><span>${escapeHtml(this.t("settings.defaultNotebookId"))}</span><strong>${escapeHtml(draft.defaultNotebook.id)}</strong></div>`
+			: `<div><span>${escapeHtml(this.t("settings.defaultNotebook"))}</span><strong>${escapeHtml(this.t("common.notSet"))}</strong></div>
+				<div><span>${escapeHtml(this.t("settings.guideDoc.helpLabel"))}</span><strong>${escapeHtml(this.t("settings.defaultNotebook.help"))}</strong></div>`;
 		const settingsSections: Array<{ id: SettingsSection; label: string }> = [
-			{ id: "general", label: "常规" },
-			{ id: "model-services", label: "模型服务" },
-			{ id: "default-models", label: "默认模型" },
-			{ id: "tracing", label: "追踪调试" },
+			{ id: "general", label: this.t("settings.nav.general") },
+			{ id: "model-services", label: this.t("settings.nav.modelServices") },
+			{ id: "default-models", label: this.t("settings.nav.defaultModels") },
+			{ id: "tracing", label: this.t("settings.nav.tracing") },
 		];
 
 		this.ctx.settingsViewEl.innerHTML = `
 <div class="settings-panel">
 	<div class="settings-panel__header">
 		<div>
-			<h3>设置</h3>
+			<h3>${escapeHtml(this.t("settings.title"))}</h3>
 		</div>
 	</div>
 	<form class="settings-panel__form">
@@ -120,21 +128,21 @@ export class SettingsView {
 			</aside>
 			<div class="settings-panel__content">
 					<section class="settings-panel__section${this.currentSection === "general" ? " settings-panel__section--active" : ""}" data-settings-panel="general">
-						<div class="settings-panel__section-title">常规</div>
+						<div class="settings-panel__section-title">${escapeHtml(this.t("settings.general.title"))}</div>
 						<label class="settings-panel__field">
-							<span>自定义指令</span>
-							<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="附加给 AI 的个性化指令">${escapeHtml(draft.customInstructions)}</textarea>
+							<span>${escapeHtml(this.t("settings.customInstructions"))}</span>
+							<textarea class="b3-text-field" name="customInstructions" rows="5" placeholder="${escapeHtml(this.t("settings.customInstructions.placeholder"))}">${escapeHtml(draft.customInstructions)}</textarea>
 						</label>
-						<div class="settings-panel__section-title">知识库默认项</div>
+						<div class="settings-panel__section-title">${escapeHtml(this.t("settings.defaults.title"))}</div>
 						<div class="settings-panel__picker">
 							<label class="settings-panel__field">
-								<span>用户指南文档</span>
+								<span>${escapeHtml(this.t("settings.guideDoc"))}</span>
 								<input
 									class="b3-text-field"
 									name="guideDocSearch"
 									data-role="guide-doc-search"
 									value="${escapeHtml(draft.guideDoc?.title || "")}"
-									placeholder="输入文档标题搜索..."
+									placeholder="${escapeHtml(this.t("settings.guideDoc.placeholder"))}"
 									autocomplete="off"
 								/>
 							</label>
@@ -142,17 +150,17 @@ export class SettingsView {
 						</div>
 						<div class="settings-panel__meta-grid">${guideDocMeta}</div>
 						<label class="settings-panel__field">
-							<span>默认工作笔记本</span>
+							<span>${escapeHtml(this.t("settings.defaultNotebook"))}</span>
 							<select class="b3-select" name="defaultNotebookId">
-								<option value="">（不指定）</option>
-								${notebookOptionsHtml || "<option value=\"\">（暂无可用笔记本）</option>"}
+								<option value="">${escapeHtml(this.t("settings.defaultNotebook.none"))}</option>
+								${notebookOptionsHtml || `<option value="">${escapeHtml(this.t("settings.defaultNotebook.empty"))}</option>`}
 							</select>
 						</label>
 						<div class="settings-panel__meta-grid">${notebookMeta}</div>
 					</section>
 
 					<section class="settings-panel__section${this.currentSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
-						<div class="settings-panel__section-title">模型服务</div>
+						<div class="settings-panel__section-title">${escapeHtml(this.t("settings.modelServices.title"))}</div>
 						<div class="agent-model-list">
 							${draft.modelServices.length
 								? draft.modelServices.map((service) => `
@@ -160,12 +168,12 @@ export class SettingsView {
 										<div class="agent-model-list__item">
 											<div class="agent-model-list__info">
 												<span class="agent-model-list__name">${escapeHtml(service.name)}</span>
-												<span class="agent-model-list__detail">${escapeHtml(service.apiBaseURL)} · ${service.models.length} 个模型</span>
+												<span class="agent-model-list__detail">${escapeHtml(service.apiBaseURL)} · ${escapeHtml(this.t("settings.modelServices.count", { count: service.models.length }))}</span>
 											</div>
 											<div class="agent-model-list__actions">
-												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="add-service-model" data-service-id="${escapeHtml(service.id)}">添加模型</button>
-												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model-service" data-service-id="${escapeHtml(service.id)}">编辑服务</button>
-												<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model-service" data-service-id="${escapeHtml(service.id)}">删除服务</button>
+												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="add-service-model" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.addModel"))}</button>
+												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model-service" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.editService"))}</button>
+												<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model-service" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.deleteService"))}</button>
 											</div>
 										</div>
 										<div class="agent-model-service__models">
@@ -177,45 +185,45 @@ export class SettingsView {
 															<span class="agent-model-list__detail">${escapeHtml(item.model)}</span>
 														</div>
 														<div class="agent-model-list__actions">
-															<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(item.id)}">编辑</button>
-															<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(item.id)}">删除</button>
+															<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(item.id)}">${escapeHtml(this.t("common.edit"))}</button>
+															<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(item.id)}">${escapeHtml(this.t("common.delete"))}</button>
 														</div>
 													</div>
 												`).join("")
-												: "<div class=\"agent-model-list__empty\">尚未添加模型。</div>"}
+												: `<div class="agent-model-list__empty">${escapeHtml(this.t("settings.modelServices.emptyModels"))}</div>`}
 										</div>
 									</div>
 								`).join("")
-								: "<div class=\"agent-model-list__empty\">尚未配置模型服务。点击下方按钮添加。</div>"}
+								: `<div class="agent-model-list__empty">${escapeHtml(this.t("settings.modelServices.emptyServices"))}</div>`}
 						</div>
 						<div class="settings-panel__actions settings-panel__actions--inline">
-							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">添加模型服务</button>
+							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">${escapeHtml(this.t("settings.modelServices.addService"))}</button>
 						</div>
 					</section>
 
 					<section class="settings-panel__section${this.currentSection === "default-models" ? " settings-panel__section--active" : ""}" data-settings-panel="default-models">
-						<div class="settings-panel__section-title">默认模型</div>
+						<div class="settings-panel__section-title">${escapeHtml(this.t("settings.defaultModels.title"))}</div>
 						<label class="settings-panel__field">
-							<span>对话模型</span>
+							<span>${escapeHtml(this.t("settings.defaultModels.chat"))}</span>
 							<select class="b3-select" name="defaultModelId">
-								<option value="">（未设置）</option>
+								<option value="">${escapeHtml(this.t("settings.defaultModels.notSet"))}</option>
 								${modelOptions}
 							</select>
 						</label>
 						<label class="settings-panel__field">
-							<span>子智能体模型</span>
+							<span>${escapeHtml(this.t("settings.defaultModels.subAgent"))}</span>
 							<select class="b3-select" name="subAgentModelId">
-								<option value="">（跟随对话模型）</option>
+								<option value="">${escapeHtml(this.t("settings.defaultModels.followChat"))}</option>
 								${subAgentOptions}
 							</select>
 						</label>
 					</section>
 
 				<section class="settings-panel__section${this.currentSection === "tracing" ? " settings-panel__section--active" : ""}" data-settings-panel="tracing">
-					<div class="settings-panel__section-title">追踪调试</div>
+					<div class="settings-panel__section-title">${escapeHtml(this.t("settings.tracing.title"))}</div>
 					<label class="settings-panel__checkbox">
 						<input type="checkbox" name="langSmithEnabled"${draft.langSmithEnabled ? " checked" : ""} />
-						<span>启用 LangSmith Tracing</span>
+						<span>${escapeHtml(this.t("settings.tracing.enable"))}</span>
 					</label>
 					<label class="settings-panel__field">
 						<span>LangSmith API Key</span>
@@ -476,9 +484,9 @@ export class SettingsView {
 		overlay.className = "agent-model-editor-overlay";
 		overlay.innerHTML = `
 			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${existing ? "编辑模型服务" : "添加模型服务"}</h4>
-				<label class="agent-model-editor__label">服务名称
-					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(draftService.name)}" placeholder="OpenAI / Azure / 自建网关" />
+				<h4 class="agent-model-editor__title">${escapeHtml(existing ? this.t("settings.editor.editService") : this.t("settings.editor.addService"))}</h4>
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.serviceName"))}
+					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(draftService.name)}" placeholder="${escapeHtml(this.t("settings.editor.serviceNamePlaceholder"))}" />
 				</label>
 				<label class="agent-model-editor__label">API Base URL
 					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${escapeHtml(draftService.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
@@ -487,8 +495,8 @@ export class SettingsView {
 					<input class="b3-text-field fn__block" type="password" data-field="apiKey" value="${escapeHtml(draftService.apiKey)}" placeholder="sk-..." />
 				</label>
 				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
+					<button class="b3-button b3-button--outline" type="button" data-action="cancel">${escapeHtml(this.t("common.cancel"))}</button>
+					<button class="b3-button b3-button--text" type="button" data-action="save">${escapeHtml(this.t("common.save"))}</button>
 				</div>
 			</div>`;
 		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
@@ -503,11 +511,11 @@ export class SettingsView {
 				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
 			};
 			if (!nextService.name.trim()) {
-				showMessage("请填写服务名称");
+				showMessage(this.t("settings.editor.serviceNameRequired"));
 				return;
 			}
 			if (!nextService.apiBaseURL.trim()) {
-				showMessage("请填写 API Base URL");
+				showMessage(this.t("settings.editor.apiBaseRequired"));
 				return;
 			}
 			const existingIndex = this.draft.modelServices.findIndex((item) => item.id === nextService.id);
@@ -529,7 +537,7 @@ export class SettingsView {
 		if (!this.draft) return;
 		const service = this.draft.modelServices.find((item) => item.id === serviceId);
 		if (!service) {
-			showMessage("未找到模型服务");
+			showMessage(this.t("settings.editor.serviceNotFound"));
 			return;
 		}
 		const existing = service.models.find((item) => item.id === modelId) || null;
@@ -542,22 +550,22 @@ export class SettingsView {
 		overlay.className = "agent-model-editor-overlay";
 		overlay.innerHTML = `
 			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${existing ? "编辑模型" : "添加模型"}</h4>
-				<label class="agent-model-editor__label">所属服务
+				<h4 class="agent-model-editor__title">${escapeHtml(existing ? this.t("settings.editor.editModel") : this.t("settings.editor.addModel"))}</h4>
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.parentService"))}
 					<input class="b3-text-field fn__block" value="${escapeHtml(service.name)}" disabled />
 				</label>
-				<label class="agent-model-editor__label">显示名称
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.displayName"))}
 					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(draftModel.name)}" placeholder="GPT-4o / Claude Sonnet" />
 				</label>
-				<label class="agent-model-editor__label">模型标识
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.modelId"))}
 					<input class="b3-text-field fn__block" data-field="model" value="${escapeHtml(draftModel.model)}" placeholder="gpt-4o" />
 				</label>
-				<label class="agent-model-editor__label">Temperature（可选）
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.temperatureOptional"))}
 					<input class="b3-text-field fn__block" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${draftModel.temperature ?? ""}" placeholder="0" />
 				</label>
 				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
+					<button class="b3-button b3-button--outline" type="button" data-action="cancel">${escapeHtml(this.t("common.cancel"))}</button>
+					<button class="b3-button b3-button--text" type="button" data-action="save">${escapeHtml(this.t("common.save"))}</button>
 				</div>
 			</div>`;
 		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
@@ -575,7 +583,7 @@ export class SettingsView {
 			const temperature = overlay.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
 			nextModel.temperature = temperature ? Number(temperature) : undefined;
 			if (!nextModel.model) {
-				showMessage("请填写模型标识");
+				showMessage(this.t("settings.editor.modelIdRequired"));
 				return;
 			}
 			const existingIndex = nextService.models.findIndex((item) => item.id === nextModel.id);
@@ -631,22 +639,22 @@ export class SettingsView {
 		overlay.className = "agent-model-editor-overlay";
 		overlay.innerHTML = `
 			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${existing ? "编辑 MCP 服务" : "添加 MCP 服务"}</h4>
-				<label class="agent-model-editor__label">名称
+				<h4 class="agent-model-editor__title">${escapeHtml(existing ? this.t("settings.editor.editMcp") : this.t("settings.editor.addMcp"))}</h4>
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.name"))}
 					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(existing?.name || "")}" placeholder="My MCP Server" />
 				</label>
 				<label class="agent-model-editor__label">URL (SSE / Streamable HTTP)
 					<input class="b3-text-field fn__block" data-field="url" value="${escapeHtml(existing?.url || "")}" placeholder="http://localhost:3000/sse" />
 				</label>
-				<label class="agent-model-editor__label">API Key (可选)
-					<input class="b3-text-field fn__block" data-field="apiKey" type="password" value="${escapeHtml(existing?.apiKey || "")}" placeholder="可选的认证密钥" />
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.apiKeyOptional"))}
+					<input class="b3-text-field fn__block" data-field="apiKey" type="password" value="${escapeHtml(existing?.apiKey || "")}" placeholder="${escapeHtml(this.t("settings.editor.mcpApiKeyPlaceholder"))}" />
 				</label>
-				<label class="agent-model-editor__label">描述 (可选)
-					<input class="b3-text-field fn__block" data-field="description" value="${escapeHtml(existing?.description || "")}" placeholder="这个服务提供什么工具？" />
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.descriptionOptional"))}
+					<input class="b3-text-field fn__block" data-field="description" value="${escapeHtml(existing?.description || "")}" placeholder="${escapeHtml(this.t("settings.editor.mcpDescriptionPlaceholder"))}" />
 				</label>
 				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">取消</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">保存</button>
+					<button class="b3-button b3-button--outline" type="button" data-action="cancel">${escapeHtml(this.t("common.cancel"))}</button>
+					<button class="b3-button b3-button--text" type="button" data-action="save">${escapeHtml(this.t("common.save"))}</button>
 				</div>
 			</div>`;
 		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
@@ -655,7 +663,7 @@ export class SettingsView {
 			const name = overlay.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || "";
 			const url = overlay.querySelector<HTMLInputElement>("[data-field='url']")?.value.trim() || "";
 			if (!name || !url) {
-				showMessage("名称和 URL 不能为空");
+				showMessage(this.t("settings.editor.nameUrlRequired"));
 				return;
 			}
 			const nextServer: McpServerConfig = {

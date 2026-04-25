@@ -514,7 +514,7 @@ export async function runAgentStream({
 					}));
 					const tcId = getMessageToolCallId(message);
 					const isError = typeof message.content === "string"
-						&& (/^Error:|^\[子智能体执行失败\]|^ToolError:|"error":/i.test(message.content));
+						&& (/^Error:|^\[(\u5b50\u667a\u80fd\u4f53\u6267\u884c\u5931\u8d25|Sub-agent failed)\]|^ToolError:|"error":/i.test(message.content));
 					uiBuilder.onToolResult(tcId, isError);
 					onUiEvent?.({
 						type: "tool_result",

@@ -3,6 +3,7 @@ import { tool, type StructuredToolInterface, type ToolRuntime } from "@langchain
 import type { ZodTypeAny } from "zod";
 import { makeAgent } from "./agent";
 import { resolveSubAgentModelConfig, type AgentConfig, type ModelConfig } from "../types";
+import { defaultTranslator, type Translator } from "../i18n";
 
 type AgentLike = {
 	invoke: (input: { messages: HumanMessage[] }, options?: Record<string, unknown>) => Promise<any>;
@@ -15,6 +16,7 @@ type CreateAgentFn = (
 	tools: StructuredToolInterface[],
 	extraSystemPrompt?: string | null,
 	modelOverride?: ModelConfig | null,
+	i18n?: Translator,
 ) => Promise<AgentLike>;
 
 export interface SubAgentToolOptions<TSchema extends ZodTypeAny = ZodTypeAny> {
@@ -27,6 +29,7 @@ export interface SubAgentToolOptions<TSchema extends ZodTypeAny = ZodTypeAny> {
 	extractResult?: (result: any) => string;
 	recursionLimit?: number;
 	createAgent?: CreateAgentFn;
+	i18n?: Translator;
 }
 
 function resolveToolset(toolset: ToolsetResolver): StructuredToolInterface[] {
@@ -65,7 +68,7 @@ export function extractLastAiMessageContent(result: any): string {
 		const content = getMessageContent(messages[idx]);
 		if (content !== null) return content;
 	}
-	return "Explore 子智能体未返回最终文本结果。";
+	return defaultTranslator.t("subAgent.noFinal");
 }
 
 export async function invokeSubAgent<TSchema extends ZodTypeAny>(
@@ -80,7 +83,10 @@ export async function invokeSubAgent<TSchema extends ZodTypeAny>(
 	const subAgentModel = resolveSubAgentModelConfig(config);
 	const childTools = resolveToolset(options.toolset)
 		.filter((toolDef) => toolDef.name !== options.name);
-	const childAgent = await createChildAgent(config, childTools, options.systemPrompt, subAgentModel);
+	const i18n = options.i18n || defaultTranslator;
+	const childAgent = options.i18n
+		? await createChildAgent(config, childTools, options.systemPrompt, subAgentModel, i18n)
+		: await createChildAgent(config, childTools, options.systemPrompt, subAgentModel);
 	const prompt = inputToPrompt(input);
 	const invokeOptions: Record<string, unknown> = {
 		recursionLimit,
@@ -97,8 +103,8 @@ export async function invokeSubAgent<TSchema extends ZodTypeAny>(
 	}, invokeOptions);
 	const text = extractResult(result);
 	// Guard against empty or excessively long sub-agent output
-	if (!text || !text.trim()) return "[子智能体未返回有效结果]";
-	if (text.length > 8000) return text.slice(0, 8000) + "\n...(已截断)";
+	if (!text || !text.trim()) return i18n.t("subAgent.noResult");
+	if (text.length > 8000) return text.slice(0, 8000) + i18n.t("subAgent.truncated");
 	return text;
 }
 
@@ -113,7 +119,7 @@ export async function invokeSubAgentSafe<TSchema extends ZodTypeAny>(
 		const msg = err instanceof Error ? err.message : String(err);
 		// Don't propagate abort errors as tool results
 		if (err?.name === "AbortError" || msg.includes("abort")) throw err;
-		return `[子智能体执行失败] ${msg}`;
+		return (options.i18n || defaultTranslator).t("subAgent.failed", { error: msg });
 	}
 }
 

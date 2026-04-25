@@ -12,7 +12,7 @@ import {
 	ToolMessageUi,
 	UiMessage,
 	DEFAULT_CONFIG,
-	INIT_PROMPT,
+	buildInitPrompt,
 	cloneModelServices,
 	genModelServiceId,
 	genModelId,
@@ -23,6 +23,7 @@ import {
 	type ModelServiceModelConfig,
 	type McpServerConfig,
 } from "../types";
+import { defaultTranslator, type Translator } from "../i18n";
 import { makeAgent, makeTracer } from "../core/agent";
 import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
@@ -75,6 +76,7 @@ export class ChatPanel {
 	private settingsView: SettingsView;
 	private tasksView: TasksView;
 	private autocomplete: Autocomplete;
+	private i18n: Translator;
 
 	constructor(
 		element: HTMLElement,
@@ -82,12 +84,14 @@ export class ChatPanel {
 		tools: StructuredToolInterface[],
 		store: SessionStore,
 		taskManager: ScheduledTaskManager,
+		i18n: Translator = defaultTranslator,
 	) {
 		this.container = element;
 		this.plugin = plugin;
 		this.tools = tools;
 		this.store = store;
 		this.taskManager = taskManager;
+		this.i18n = i18n;
 		this.render();
 		this.unsubs.push(this.store.subscribe(() => {
 			void this.handleStoreChanged();
@@ -99,6 +103,10 @@ export class ChatPanel {
 		this.setCurrentView("settings");
 	}
 
+	private t(key: string, params?: Record<string, string | number | boolean | null | undefined>, fallback?: string): string {
+		return this.i18n.t(key, params, fallback);
+	}
+
 	private render(): void {
 		this.container.innerHTML = `
 <div class="chat-panel fn__flex-column" style="height:100%">
@@ -106,17 +114,17 @@ export class ChatPanel {
 		<div class="chat-panel__session-bar">
 			<button class="chat-panel__session-toggle b3-button b3-button--text" type="button" aria-expanded="false">
 				<span class="chat-panel__session-toggle-main">
-					<span class="chat-panel__session-name">New Chat</span>
+					<span class="chat-panel__session-name">${escapeHtml(this.t("chat.newChat"))}</span>
 				</span>
 				<span class="chat-panel__session-toggle-side">
 					<svg class="chat-panel__session-toggle-chevron" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
 				</span>
 			</button>
 			<span class="fn__flex-1"></span>
-			<span class="chat-panel__session-action chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="New Chat">
+			<span class="chat-panel__session-action chat-panel__new-session block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("chat.newChat"))}">
 				<svg style="width:16px;height:16px"><use xlink:href="#iconAdd"></use></svg>
 			</span>
-			<span class="chat-panel__session-action chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="Clear">
+			<span class="chat-panel__session-action chat-panel__clear block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("chat.clear"))}">
 				<svg style="width:16px;height:16px"><use xlink:href="#iconTrashcan"></use></svg>
 			</span>
 		</div>
@@ -135,17 +143,17 @@ export class ChatPanel {
 	<div class="chat-panel__bottom-bar">
 		<div class="chat-panel__composer-body">
 			<div class="chat-panel__input">
-				<textarea class="chat-panel__textarea b3-text-field" rows="2" placeholder="问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)"></textarea>
+				<textarea class="chat-panel__textarea b3-text-field" rows="2" placeholder="${escapeHtml(this.t("chat.placeholder"))}"></textarea>
 			</div>
 		</div>
 		<div class="chat-panel__bottom-footer">
-			<div class="chat-panel__view-switcher" role="tablist" aria-label="视图切换">
-				<button class="chat-panel__switch-btn chat-panel__switch-btn--active" type="button" data-view="chat">聊天</button>
-				<button class="chat-panel__switch-btn" type="button" data-view="tasks">任务</button>
-				<button class="chat-panel__switch-btn" type="button" data-view="settings">设置</button>
+			<div class="chat-panel__view-switcher" role="tablist" aria-label="${escapeHtml(this.t("chat.viewSwitcher"))}">
+				<button class="chat-panel__switch-btn chat-panel__switch-btn--active" type="button" data-view="chat">${escapeHtml(this.t("chat.view.chat"))}</button>
+				<button class="chat-panel__switch-btn" type="button" data-view="tasks">${escapeHtml(this.t("chat.view.tasks"))}</button>
+				<button class="chat-panel__switch-btn" type="button" data-view="settings">${escapeHtml(this.t("chat.view.settings"))}</button>
 			</div>
 			<div class="chat-panel__actions">
-				<button class="chat-panel__send" type="button" title="发送 (Enter)" aria-label="发送">
+				<button class="chat-panel__send" type="button" title="${escapeHtml(this.t("chat.sendTitle"))}" aria-label="${escapeHtml(this.t("chat.send"))}">
 					${this.getSendIconMarkup()}
 				</button>
 			</div>
@@ -175,6 +183,7 @@ export class ChatPanel {
 			taskListEl: this.container.querySelector(".chat-panel__tasks-list"),
 			taskDetailEl: this.container.querySelector(".chat-panel__tasks-detail"),
 			taskManager: this.taskManager,
+			i18n: this.i18n,
 			renderConversationMessages: (messages, toolUIEvents, targetEl) =>
 				this.renderConversationMessages(messages, toolUIEvents, targetEl),
 			renderConversationMessagesUi: (messagesUi, targetEl) =>
@@ -184,6 +193,7 @@ export class ChatPanel {
 		this.settingsView = new SettingsView({
 			settingsViewEl: this.settingsViewEl,
 			plugin: this.plugin,
+			i18n: this.i18n,
 			getConfig: () => this.getConfig(),
 			refreshModelSelector: () => this.refreshModelSelector(),
 			openTaskEditor: (task?) => this.tasksView.openTaskEditor(task),
@@ -333,7 +343,7 @@ export class ChatPanel {
 	private renderSessionList(): void {
 		const sessions = this.getChatSessions();
 		if (!sessions.length) {
-			this.sessionListEl.innerHTML = "<div class=\"chat-session-list__empty\">暂无会话</div>";
+			this.sessionListEl.innerHTML = `<div class="chat-session-list__empty">${escapeHtml(this.t("chat.noSessions"))}</div>`;
 			this.sessionListEl.classList.remove("chat-panel__session-list--expanded");
 			return;
 		}
@@ -350,7 +360,7 @@ export class ChatPanel {
 		this.sessionListEl.innerHTML = `
 			<div class="chat-session-list__items">${visible.map(s => {
 			const active = s.id === activeChatId ? " chat-session-item--active" : "";
-			const title = escapeHtml(s.title || "New Chat");
+			const title = escapeHtml(s.title || this.t("chat.newChat"));
 			const date = escapeHtml(this.formatSessionDate(s.updated));
 			return `<div class="chat-session-item${active}" data-id="${s.id}">
 				<div class="chat-session-item__info">
@@ -359,14 +369,14 @@ export class ChatPanel {
 						<span class="chat-session-item__meta">${date}</span>
 					</div>
 				</div>
-				<span class="chat-session-item__delete block__icon b3-tooltips b3-tooltips__sw" aria-label="Delete" data-delete="${s.id}">
+				<span class="chat-session-item__delete block__icon b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("chat.delete"))}" data-delete="${s.id}">
 					<svg><use xlink:href="#iconTrashcan"></use></svg>
 				</span>
 			</div>`;
 		}).join("")}</div>
 			${canExpand ? `
 				<button class="chat-session-list__more b3-button b3-button--text" type="button" data-action="toggle-expand">
-					<span>${this.sessionListExpanded ? "收起" : `展开更多 ${hiddenCount} 条`}</span>
+					<span>${escapeHtml(this.sessionListExpanded ? this.t("chat.collapse") : this.t("chat.expandMore", { count: hiddenCount }))}</span>
 					<svg class="chat-session-list__more-icon" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
 				</button>
 			` : ""}
@@ -439,7 +449,7 @@ export class ChatPanel {
 		const entry = this.store.getSessionSummary(s.id);
 		const nameEl = this.container.querySelector(".chat-panel__session-name");
 		if (nameEl)
-			nameEl.textContent = entry?.title || "New Chat";
+			nameEl.textContent = entry?.title || this.t("chat.newChat");
 		this.updateSessionToggleState();
 		void this.refreshModelSelector();
 
@@ -466,13 +476,13 @@ export class ChatPanel {
 		el.className = "chat-panel__welcome";
 		el.innerHTML = `
 			<div class="chat-panel__welcome-icon">📚</div>
-			<h3 class="chat-panel__welcome-title">思源笔记 AI 助手</h3>
-			<p class="chat-panel__welcome-desc">试试问我关于你笔记库的任何问题</p>
+			<h3 class="chat-panel__welcome-title">${escapeHtml(this.t("chat.welcome.title"))}</h3>
+			<p class="chat-panel__welcome-desc">${escapeHtml(this.t("chat.welcome.desc"))}</p>
 			<div class="chat-panel__welcome-actions">
-				<button class="chat-panel__welcome-btn" data-prompt="帮我总结一下最近编辑的笔记内容">📋 总结最近笔记</button>
-				<button class="chat-panel__welcome-btn" data-prompt="查看我的笔记库结构">🗂️ 浏览笔记结构</button>
-				<button class="chat-panel__welcome-btn" data-prompt="搜索我笔记中关于「」的内容">🔍 搜索笔记</button>
-				<button class="chat-panel__welcome-btn" data-prompt="查看我的待办任务清单">✅ 查看待办</button>
+				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.recentPrompt"))}">📋 ${escapeHtml(this.t("chat.welcome.recentLabel"))}</button>
+				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.structurePrompt"))}">🗂️ ${escapeHtml(this.t("chat.welcome.structureLabel"))}</button>
+				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.searchPrompt"))}">🔍 ${escapeHtml(this.t("chat.welcome.searchLabel"))}</button>
+				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.todoPrompt"))}">✅ ${escapeHtml(this.t("chat.welcome.todoLabel"))}</button>
 			</div>`;
 		el.querySelectorAll(".chat-panel__welcome-btn").forEach((btn) => {
 			btn.addEventListener("click", () => {
@@ -480,8 +490,8 @@ export class ChatPanel {
 				this.textareaEl.value = prompt;
 				this.textareaEl.focus();
 				// For search prompt, position cursor between quotes
-				if (prompt.includes("「」")) {
-					const idx = prompt.indexOf("「") + 1;
+				if (prompt.includes("「」") || prompt.includes("\"\"")) {
+					const idx = prompt.includes("「」") ? prompt.indexOf("「") + 1 : prompt.indexOf("\"\"") + 1;
 					this.textareaEl.setSelectionRange(idx, idx);
 				}
 			});
@@ -536,14 +546,16 @@ export class ChatPanel {
 		if (initMatch) {
 			const guideDocId = config.guideDoc?.id;
 				if (!guideDocId) {
-					showMessage("请先在面板设置中配置「用户指南文档」，/init 将把探索结果写入该文档。");
+					showMessage(this.t("chat.init.missingGuideDoc"));
 					return;
 				}
 			const extra = (initMatch[1] || "").trim();
-			extraSystemPrompt = INIT_PROMPT.replace(
-				"请开始探索。",
-				`目标文档 ID（请将结果写入此文档）：${guideDocId}\n\n${extra ? "额外指令：" + extra + "\n\n" : ""}请开始探索。`
-			);
+			extraSystemPrompt = [
+				buildInitPrompt(this.i18n),
+				this.t("chat.init.targetDoc", { id: guideDocId }),
+				extra ? this.t("chat.init.extra", { extra }) : "",
+				this.t("chat.init.start"),
+			].filter(Boolean).join("\n\n");
 		}
 
 		/* Build user message content with optional context */
@@ -572,7 +584,7 @@ export class ChatPanel {
 		/* Insert pending placeholder (waiting state) */
 		this.pendingEl = document.createElement("div");
 		this.pendingEl.className = "chat-msg__pending";
-		this.pendingEl.innerHTML = "<span class=\"chat-msg__pending-spinner\"></span><span class=\"chat-msg__pending-text\">思考中</span>";
+		this.pendingEl.innerHTML = `<span class="chat-msg__pending-spinner"></span><span class="chat-msg__pending-text">${escapeHtml(this.t("chat.pending"))}</span>`;
 		assistantShell.stackEl.appendChild(this.pendingEl);
 		this.scrollToBottom();
 
@@ -637,16 +649,16 @@ export class ChatPanel {
 			let msg = errStr;
 			// Detect common model API errors and provide helpful messages
 			if (errStr.includes("function.arguments") && errStr.includes("JSON")) {
-				msg = `模型返回了无效的工具调用参数格式。该模型可能不完全支持 Function Calling。建议切换到支持 Function Calling 的模型（如 GPT-4o、DeepSeek-Chat）。\n\n原始错误: ${errStr}`;
+				msg = this.t("chat.error.invalidToolArgs", { error: errStr });
 			} else if (errStr.includes("401") || errStr.includes("Unauthorized")) {
-				msg = "API 认证失败，请检查 API Key 是否正确。";
+				msg = this.t("chat.error.unauthorized");
 			} else if (errStr.includes("429") || errStr.includes("rate limit")) {
-				msg = "请求频率超限，请稍后重试。";
+				msg = this.t("chat.error.rateLimit");
 			} else if (errStr.includes("insufficient_quota") || errStr.includes("quota")) {
-				msg = "API 额度不足，请检查账户余额。";
+				msg = this.t("chat.error.quota");
 			} else if (errStr.includes("Stream idle timeout")) {
-				msg = "模型响应超时（120秒无数据），可能是网络问题或模型服务繁忙。请重试。";
-			} else if (errStr.includes("子智能体执行失败")) {
+				msg = this.t("chat.error.timeout");
+			} else if (errStr.includes("\u5b50\u667a\u80fd\u4f53\u6267\u884c\u5931\u8d25") || errStr.includes("Sub-agent failed")) {
 				msg = errStr;
 			}
 
@@ -654,7 +666,7 @@ export class ChatPanel {
 			// Add a retry button for recoverable errors
 			const retryBtn = document.createElement("button");
 			retryBtn.className = "chat-msg__retry-btn b3-button b3-button--outline";
-			retryBtn.textContent = "重试";
+			retryBtn.textContent = this.t("chat.retry");
 			retryBtn.addEventListener("click", () => {
 				errorEl.remove();
 				// Re-send the last user message
@@ -671,7 +683,7 @@ export class ChatPanel {
 		try {
 			const sessionModelId = this.activeSession?.modelId;
 			const modelOverride = sessionModelId ? resolveModelConfig(config, sessionModelId) : null;
-			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride);
+			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n);
 			const tracer = makeTracer(config);
 			const result = await runAgentStream({
 				agent,
@@ -686,7 +698,7 @@ export class ChatPanel {
 							reasoningEl = document.createElement("details");
 							reasoningEl.className = "chat-msg__reasoning";
 							reasoningEl.open = true;
-							reasoningEl.innerHTML = "<summary class=\"chat-msg__reasoning-summary\">💭 思考中…</summary><div class=\"chat-msg__reasoning-content\"></div>";
+							reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary">💭 ${escapeHtml(this.t("chat.reasoning.thinking"))}</summary><div class="chat-msg__reasoning-content"></div>`;
 							assistantShell.stackEl.appendChild(reasoningEl);
 						}
 						reasoningBuffer += event.text;
@@ -701,7 +713,7 @@ export class ChatPanel {
 						if (reasoningEl) {
 							reasoningEl.open = false;
 							const summary = reasoningEl.querySelector(".chat-msg__reasoning-summary");
-							if (summary) summary.textContent = "💭 思考过程";
+							if (summary) summary.textContent = `💭 ${this.t("chat.reasoning.process")}`;
 							reasoningEl = null;
 						}
 						const el = getTextEl();
@@ -788,7 +800,7 @@ export class ChatPanel {
 				indexEntry.title = s.title;
 			}
 			const nameEl = this.container.querySelector(".chat-panel__session-name");
-			if (nameEl) nameEl.textContent = s.title || "New Chat";
+			if (nameEl) nameEl.textContent = s.title || this.t("chat.newChat");
 			await this.store.saveSession(s);
 			this.refreshSessionListUi();
 
@@ -802,7 +814,7 @@ export class ChatPanel {
 	private async handleCompact(config: AgentConfig, requirement: string): Promise<void> {
 		const s = this.activeSession;
 		if (!s.state?.messages || s.state.messages.length === 0) {
-			showMessage("没有可压缩的上下文。");
+			showMessage(this.t("chat.compact.noContext"));
 			return;
 		}
 
@@ -824,7 +836,7 @@ export class ChatPanel {
 				source: "manual",
 			});
 			if (!summary) {
-				showMessage("对话轮次过少，无需压缩。");
+				showMessage(this.t("chat.compact.tooFewTurns"));
 				return;
 			}
 
@@ -835,7 +847,9 @@ export class ChatPanel {
 				toolCallId: `compact-${Date.now().toString(36)}`,
 				toolName: "compact",
 				status: "done",
-				summary: `已按要求压缩上下文（${requirement || "默认"}）`,
+				summary: this.t("chat.compact.summary", {
+					requirement: requirement || this.t("chat.compact.defaultRequirement"),
+				}),
 				events: [],
 				startedAt: Date.now(),
 				finishedAt: Date.now(),
@@ -844,10 +858,10 @@ export class ChatPanel {
 
 			s.updated = Date.now();
 			await this.store.saveSession(s);
-			showMessage("上下文已压缩。");
+			showMessage(this.t("chat.compact.success"));
 			this.renderCurrentSession();
 		} catch (err) {
-			showMessage(`压缩失败: ${String(err)}`);
+			showMessage(this.t("chat.compact.failed", { error: String(err) }));
 		} finally {
 			this.setLoading(false);
 		}
@@ -858,24 +872,24 @@ export class ChatPanel {
 	private showHelpMessage(): void {
 		const helpHtml = `
 <div class="chat-msg__help">
-<h4>📖 可用命令</h4>
+<h4>📖 ${escapeHtml(this.t("chat.help.commandsTitle"))}</h4>
 <table>
-<tr><td><code>/init</code></td><td>探索笔记库，生成用户指南</td></tr>
-<tr><td><code>/compact</code></td><td>手动压缩对话上下文</td></tr>
-<tr><td><code>/help</code></td><td>显示此帮助信息</td></tr>
-<tr><td><code>/clear</code></td><td>清空当前对话，开始新会话</td></tr>
+<tr><td><code>/init</code></td><td>${escapeHtml(this.t("slash.init"))}</td></tr>
+<tr><td><code>/compact</code></td><td>${escapeHtml(this.t("slash.compact"))}</td></tr>
+<tr><td><code>/help</code></td><td>${escapeHtml(this.t("slash.help"))}</td></tr>
+<tr><td><code>/clear</code></td><td>${escapeHtml(this.t("slash.clear"))}</td></tr>
 </table>
-<h4>🔧 可用工具 (${this.tools.length})</h4>
-<p>AI 会自动选择合适的工具。你也可以在提问时提示使用特定工具。</p>
+<h4>🔧 ${escapeHtml(this.t("chat.help.toolsTitle", { count: this.tools.length }))}</h4>
+<p>${escapeHtml(this.t("chat.help.toolsDesc"))}</p>
 <details>
-<summary>查看全部工具</summary>
+<summary>${escapeHtml(this.t("chat.help.allTools"))}</summary>
 <ul>${this.tools.map(t => `<li><strong>${t.name}</strong>: ${t.description?.slice(0, 80) || ""}</li>`).join("")}</ul>
 </details>
-<h4>💡 使用技巧</h4>
+<h4>💡 ${escapeHtml(this.t("chat.help.tipsTitle"))}</h4>
 <ul>
-<li>选中文本后按 <kbd>⌥⌘L</kbd> 可将文本作为上下文发送</li>
-<li>编辑器中右键菜单可快速发送选中内容</li>
-<li>底部可切换不同 AI 模型</li>
+<li>${this.t("chat.help.tipSelection")}</li>
+<li>${escapeHtml(this.t("chat.help.tipContextMenu"))}</li>
+<li>${escapeHtml(this.t("chat.help.tipModel"))}</li>
 </ul>
 </div>`;
 		const el = document.createElement("div");
@@ -890,9 +904,9 @@ export class ChatPanel {
 		this.contextBar.classList.remove("fn__none");
 		this.contextBar.innerHTML = `
 <div class="chat-panel__context">
-	<span class="chat-panel__context-label">📎 Reference</span>
+	<span class="chat-panel__context-label">📎 ${escapeHtml(this.t("chat.context.reference"))}</span>
 	<span class="chat-panel__context-text">${escapeHtml(text.length > 100 ? text.slice(0, 100) + "..." : text)}</span>
-	<span class="chat-panel__context-close block__icon b3-tooltips b3-tooltips__sw" aria-label="Remove">
+	<span class="chat-panel__context-close block__icon b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("chat.context.remove"))}">
 		<svg><use xlink:href="#iconClose"></use></svg>
 	</span>
 </div>`;
@@ -1176,7 +1190,7 @@ export class ChatPanel {
 				// skip empty tool results entirely
 			} else {
 				html = `<div class="chat-msg__tool-result">
-				<div class="chat-msg__tool-header">🔧 Result${toolName ? `: ${escapeHtml(toolName)}` : ""}</div>
+				<div class="chat-msg__tool-header">🔧 ${escapeHtml(this.t("chat.tool.result"))}${toolName ? `: ${escapeHtml(toolName)}` : ""}</div>
 				<pre style="max-height: 200px; overflow-y: auto;">${escapeHtml(trimmed)}</pre>
 			</div>`;
 			}
@@ -1279,7 +1293,7 @@ export class ChatPanel {
 		const summary = document.createElement("summary");
 		summary.innerHTML = this.buildToolSummaryHtml(
 			toolName,
-			"<span class=\"chat-msg__doc-meta\">进行中</span>",
+			`<span class="chat-msg__doc-meta">${escapeHtml(this.t("chat.tool.pending"))}</span>`,
 			el.dataset.toolCategory as "lookup" | "change"
 		);
 		details.appendChild(summary);
@@ -1407,9 +1421,11 @@ export class ChatPanel {
 			counts.set(action, (counts.get(action) || 0) + 1);
 		}
 		const chips = [...counts.entries()]
-			.map(([action, count]) => `<span class="chat-msg__activity-chip">${escapeHtml(getActionLabel(action))} ${count}</span>`)
+			.map(([action, count]) => `<span class="chat-msg__activity-chip">${escapeHtml(getActionLabel(action, this.i18n))} ${count}</span>`)
 			.join("");
-		const title = block.category === "change" ? `已更改 ${total} 项` : `已查找 ${total} 项`;
+		const title = block.category === "change"
+			? this.t("chat.tool.changed", { count: total })
+			: this.t("chat.tool.lookedUp", { count: total });
 		summary.innerHTML = `<span class="chat-msg__activity-title">${escapeHtml(title)}</span>${chips}`;
 	}
 
@@ -1466,7 +1482,7 @@ export class ChatPanel {
 				id: event.payload.id,
 				path: event.payload.path,
 				label: event.payload.path,
-				meta: "已创建文档",
+				meta: this.t("chat.tool.createdDocument"),
 				open: true,
 			});
 			return;
@@ -1480,7 +1496,7 @@ export class ChatPanel {
 				id: event.payload.id,
 				path: event.payload.path,
 				label: event.payload.label,
-				meta: "已读取文档",
+				meta: this.t("chat.tool.readDocument"),
 				open: event.payload.open,
 			});
 			return;
@@ -1494,7 +1510,7 @@ export class ChatPanel {
 				id: event.payload.id,
 				path: event.payload.path,
 				label: event.payload.path,
-				meta: `已读取 ${event.payload.blockCount} 个块`,
+				meta: this.t("chat.tool.readBlocks", { count: event.payload.blockCount }),
 				open: event.payload.open,
 			});
 			return;
@@ -1508,7 +1524,7 @@ export class ChatPanel {
 				id: event.payload.parentID,
 				path: event.payload.path,
 				label: event.payload.path,
-				meta: `已追加 ${event.payload.blockIDs.length || 0} 个块`,
+				meta: this.t("chat.tool.appendedBlocks", { count: event.payload.blockIDs.length || 0 }),
 				open: event.payload.open,
 			});
 			return;
@@ -1522,7 +1538,7 @@ export class ChatPanel {
 				id: event.payload.primaryDocumentID || event.payload.documentIDs[0],
 				path: event.payload.path,
 				label: event.payload.path,
-				meta: `已编辑 ${event.payload.editedCount} 个块`,
+				meta: this.t("chat.tool.editedBlocks", { count: event.payload.editedCount }),
 				open: event.payload.open,
 			});
 			return;
@@ -1575,7 +1591,7 @@ export class ChatPanel {
 		if (!summary) return;
 
 		const docId = options.id || "";
-		const docTitle = escapeHtml(options.label || options.path || docId || "文档");
+		const docTitle = escapeHtml(options.label || options.path || docId || this.t("chat.tool.defaultDocument"));
 		const meta = options.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(options.meta)}</span>` : "";
 		const canOpen = Boolean(docId) && options.open !== false;
 		const contentHtml = docId
@@ -1605,8 +1621,8 @@ export class ChatPanel {
 
 	private buildToolSummaryHtml(toolName: string, contentHtml = "", category?: "lookup" | "change"): string {
 		const resolvedCategory = category || getToolCategory(toolName);
-		const badge = resolvedCategory === "change" ? "更改" : "查找";
-		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(badge)}</span><span class="chat-msg__tool-title">${escapeHtml(getToolDisplayTitle(toolName))}</span>${contentHtml}`;
+		const badge = resolvedCategory === "change" ? this.t("chat.tool.badge.change") : this.t("chat.tool.badge.lookup");
+		return `<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(badge)}</span><span class="chat-msg__tool-title">${escapeHtml(getToolDisplayTitle(toolName, this.i18n))}</span>${contentHtml}`;
 	}
 
 	private scrollToBottom(): void {
@@ -1617,16 +1633,16 @@ export class ChatPanel {
 	private setLoading(loading: boolean): void {
 		if (loading) {
 			this.sendBtn.innerHTML = this.getStopIconMarkup();
-			this.sendBtn.title = "停止生成 (Esc)";
-			this.sendBtn.setAttribute("aria-label", "停止生成");
+			this.sendBtn.title = this.t("chat.stopTitle");
+			this.sendBtn.setAttribute("aria-label", this.t("chat.stop"));
 			this.sendBtn.onclick = () => this.stop();
-			this.textareaEl.placeholder = "AI 正在生成… (Shift+Enter 换行, Esc 停止)";
+			this.textareaEl.placeholder = this.t("chat.loadingPlaceholder");
 		} else {
 			this.sendBtn.innerHTML = this.getSendIconMarkup();
-			this.sendBtn.title = "发送 (Enter)";
-			this.sendBtn.setAttribute("aria-label", "发送");
+			this.sendBtn.title = this.t("chat.sendTitle");
+			this.sendBtn.setAttribute("aria-label", this.t("chat.send"));
 			this.sendBtn.onclick = () => this.send();
-			this.textareaEl.placeholder = "问我任何关于笔记的问题… (Enter 发送, Shift+Enter 换行)";
+			this.textareaEl.placeholder = this.t("chat.placeholder");
 		}
 	}
 
@@ -1780,7 +1796,7 @@ export class ChatPanel {
 		};
 		await pluginAny.mcpManager?.connectAll?.((nextConfig.mcpServers || []).filter((item) => item.enabled));
 		this.tools = [
-			...getDefaultTools(() => nextConfig, () => this.taskManager),
+			...getDefaultTools(() => nextConfig, () => this.taskManager, this.i18n),
 			...(pluginAny.mcpManager?.getAllTools?.() || []),
 		];
 		await this.refreshModelSelector();

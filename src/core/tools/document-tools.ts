@@ -1,8 +1,10 @@
 import { tool, ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
 import { siyuanFetch, emitActivity, sqlEscape } from "./siyuan-api";
+import { defaultTranslator, type Translator } from "../../i18n";
 
-export const getDocumentTool = tool(
+export function createGetDocumentTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ id }, runtime: ToolRuntime) => {
 		const docInfo = await siyuanFetch("/api/query/sql", {
 			stmt: `SELECT id, content, hpath FROM blocks WHERE id='${sqlEscape(id)}' LIMIT 1`,
@@ -17,7 +19,7 @@ export const getDocumentTool = tool(
 			id,
 			path: hpath,
 			label,
-			meta: "已读取文档",
+			meta: i18n.t("tool.getDocument.meta"),
 			open: true,
 		});
 		return `# ${hpath}\n\n${content}`;
@@ -30,8 +32,10 @@ export const getDocumentTool = tool(
 		}),
 	}
 );
+}
 
-export const getDocumentBlocksTool = tool(
+export function createGetDocumentBlocksTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ id }, runtime: ToolRuntime) => {
 		const docInfo = await siyuanFetch("/api/query/sql", {
 			stmt: `SELECT id, hpath FROM blocks WHERE id='${sqlEscape(id)}' LIMIT 1`,
@@ -49,7 +53,7 @@ export const getDocumentBlocksTool = tool(
 			id,
 			path: docInfo?.[0]?.hpath || "",
 			label: docInfo?.[0]?.hpath || id,
-			meta: `已读取 ${blocks.length} 个块`,
+			meta: i18n.t("tool.getDocumentBlocks.meta", { count: blocks.length }),
 			open: true,
 		});
 		return JSON.stringify(blocks, null, 2);
@@ -62,8 +66,10 @@ export const getDocumentBlocksTool = tool(
 		}),
 	}
 );
+}
 
-export const getDocumentOutlineTool = tool(
+export function createGetDocumentOutlineTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ id }, runtime: ToolRuntime) => {
 		const stmt = `SELECT id, content, subtype, sort FROM blocks WHERE root_id='${sqlEscape(id)}' AND type='h' ORDER BY sort ASC LIMIT 200`;
 		const data = await siyuanFetch("/api/query/sql", { stmt });
@@ -76,7 +82,7 @@ export const getDocumentOutlineTool = tool(
 			category: "lookup",
 			action: "read",
 			id,
-			label: `文档大纲 (${headings.length} 个标题)`,
+			label: i18n.t("tool.getDocumentOutline.label", { count: headings.length }),
 		});
 		return JSON.stringify(headings, null, 2);
 	},
@@ -88,8 +94,10 @@ export const getDocumentOutlineTool = tool(
 		}),
 	}
 );
+}
 
-export const readBlockTool = tool(
+export function createReadBlockTool() {
+return tool(
 	async ({ id }, runtime: ToolRuntime) => {
 		const kramdowns: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids: [id] });
 		const content = kramdowns?.[id];
@@ -123,8 +131,10 @@ export const readBlockTool = tool(
 		}),
 	}
 );
+}
 
-export const searchFulltextTool = tool(
+export function createSearchFulltextTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ query, page }, runtime: ToolRuntime) => {
 		const data = await siyuanFetch("/api/search/fullTextSearchBlock", {
 			query,
@@ -146,7 +156,7 @@ export const searchFulltextTool = tool(
 			category: "lookup",
 			action: "search",
 			label: query,
-			meta: `命中 ${data.matchedBlockCount || blocks.length || 0} 个块`,
+			meta: i18n.t("tool.searchFulltext.meta", { count: data.matchedBlockCount || blocks.length || 0 }),
 		});
 		return JSON.stringify({
 			blocks,
@@ -164,8 +174,10 @@ export const searchFulltextTool = tool(
 		}),
 	}
 );
+}
 
-export const searchDocumentsTool = tool(
+export function createSearchDocumentsTool(i18n: Translator = defaultTranslator) {
+return tool(
 	async ({ keyword, notebook }, runtime: ToolRuntime) => {
 		const safeKeyword = sqlEscape(keyword);
 		const stmt = notebook
@@ -183,7 +195,7 @@ export const searchDocumentsTool = tool(
 			category: "lookup",
 			action: "search",
 			label: keyword,
-			meta: `命中 ${docs.length} 篇文档`,
+			meta: i18n.t("tool.searchDocuments.meta", { count: docs.length }),
 		});
 		return JSON.stringify(docs, null, 2);
 	},
@@ -196,3 +208,11 @@ export const searchDocumentsTool = tool(
 		}),
 	}
 );
+}
+
+export const getDocumentTool = createGetDocumentTool();
+export const getDocumentBlocksTool = createGetDocumentBlocksTool();
+export const getDocumentOutlineTool = createGetDocumentOutlineTool();
+export const readBlockTool = createReadBlockTool();
+export const searchFulltextTool = createSearchFulltextTool();
+export const searchDocumentsTool = createSearchDocumentsTool();

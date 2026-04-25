@@ -4,6 +4,7 @@ import { LangChainTracer } from "@langchain/core/tracers/tracer_langchain";
 import { Client } from "langsmith";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { buildSystemPrompt, resolveModelConfig, type AgentConfig, type ModelConfig } from "../types";
+import { defaultTranslator, type Translator } from "../i18n";
 
 async function fetchGuideDoc(docId: string): Promise<string> {
 	try {
@@ -20,7 +21,13 @@ async function fetchGuideDoc(docId: string): Promise<string> {
 	}
 }
 
-export async function makeAgent(config: AgentConfig, tools: StructuredToolInterface[], extraSystemPrompt?: string | null, modelOverride?: ModelConfig | null) {
+export async function makeAgent(
+	config: AgentConfig,
+	tools: StructuredToolInterface[],
+	extraSystemPrompt?: string | null,
+	modelOverride?: ModelConfig | null,
+	i18n: Translator = defaultTranslator,
+) {
 	const mc = modelOverride || resolveModelConfig(config);
 	const model = new ChatOpenAI({
 		model: mc.model,
@@ -33,18 +40,23 @@ export async function makeAgent(config: AgentConfig, tools: StructuredToolInterf
 		},
 	});
 
-	let systemPrompt = buildSystemPrompt();
+	let systemPrompt = buildSystemPrompt(i18n);
 	if (config.guideDoc?.id) {
 		const guideContent = await fetchGuideDoc(config.guideDoc.id);
 		if (guideContent) {
-			systemPrompt += `\n\n---\n用户指南（来自笔记库）：\n${guideContent}\n---`;
+			systemPrompt += `\n\n---\n${i18n.t("agent.guideDocHeader")}\n${guideContent}\n---`;
 		}
 	}
 	if (config.defaultNotebook?.id) {
-		systemPrompt += `\n\n用户当前默认的工作笔记本(notebook)为 ${config.defaultNotebook.name}（ID: ${config.defaultNotebook.id}）。除非用户明确提出切换笔记本, 否则默认用此notebook工作。`;
+		systemPrompt += `\n\n${i18n.t("agent.defaultNotebook", {
+			name: config.defaultNotebook.name,
+			id: config.defaultNotebook.id,
+		})}`;
 	}
 	if (config.customInstructions?.trim()) {
-		systemPrompt += `\n\n用户自定义指令：\n${config.customInstructions.trim()}`;
+		systemPrompt += `\n\n${i18n.t("agent.customInstructions", {
+			instructions: config.customInstructions.trim(),
+		})}`;
 	}
 	if (extraSystemPrompt) {
 		systemPrompt += `\n\n${extraSystemPrompt}`;

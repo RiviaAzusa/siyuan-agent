@@ -2,8 +2,12 @@ import { tool, ToolRuntime } from "@langchain/core/tools";
 import { z } from "zod";
 import { emitActivity } from "./siyuan-api";
 import type { ScheduledTaskManager } from "../scheduled-task-manager";
+import { defaultTranslator, type Translator } from "../../i18n";
 
-export function createScheduledTaskTools(getTaskManager: () => ScheduledTaskManager | null) {
+export function createScheduledTaskTools(
+	getTaskManager: () => ScheduledTaskManager | null,
+	i18n: Translator = defaultTranslator,
+) {
 	const requireTaskManager = (): ScheduledTaskManager => {
 		const manager = getTaskManager();
 		if (!manager) {
@@ -27,7 +31,7 @@ export function createScheduledTaskTools(getTaskManager: () => ScheduledTaskMana
 				category: "change",
 				action: "create",
 				label: session.task?.title || title,
-				meta: "已创建定时任务",
+				meta: i18n.t("tool.scheduled.create.meta"),
 			});
 			return JSON.stringify(session.task, null, 2);
 		},
@@ -52,8 +56,8 @@ export function createScheduledTaskTools(getTaskManager: () => ScheduledTaskMana
 			emitActivity(runtime, {
 				category: "lookup",
 				action: "list",
-				label: "定时任务",
-				meta: `已列出 ${tasks.length} 个任务`,
+				label: i18n.t("tool.scheduled.label"),
+				meta: i18n.t("tool.scheduled.list.meta", { count: tasks.length }),
 			});
 			return JSON.stringify(tasks, null, 2);
 		},
@@ -79,7 +83,7 @@ export function createScheduledTaskTools(getTaskManager: () => ScheduledTaskMana
 				category: "change",
 				action: "edit",
 				label: session.task?.title || taskId,
-				meta: "已更新定时任务",
+				meta: i18n.t("tool.scheduled.update.meta"),
 			});
 			return JSON.stringify(session.task, null, 2);
 		},
@@ -106,7 +110,7 @@ export function createScheduledTaskTools(getTaskManager: () => ScheduledTaskMana
 				category: "change",
 				action: "delete",
 				label: taskId,
-				meta: "已删除定时任务",
+				meta: i18n.t("tool.scheduled.delete.meta"),
 			});
 			return JSON.stringify({ ok: true, taskId }, null, 2);
 		},
