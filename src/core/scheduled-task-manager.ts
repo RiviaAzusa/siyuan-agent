@@ -10,6 +10,7 @@ import type {
 	SessionData,
 	SessionIndexEntry,
 } from "../types";
+import { resolveModelConfig } from "../types";
 import { makeAgent, makeTracer } from "./agent";
 import { mergeState, runAgentStream } from "./stream-runtime";
 import { SessionStore } from "./session-store";
@@ -413,7 +414,8 @@ export class ScheduledTaskManager {
 		let lastError: string | undefined;
 		try {
 			const config = await this.options.getConfig();
-			if (!config.apiKey) {
+			const modelConfig = resolveModelConfig(config);
+			if (!modelConfig.apiKey) {
 				throw new Error(i18n.t("chat.error.apiKeyMissing"));
 			}
 			const agent = await makeAgent(config, this.options.getTools(), null, null, i18n);

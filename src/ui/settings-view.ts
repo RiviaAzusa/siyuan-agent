@@ -336,6 +336,15 @@ export class SettingsView {
 		void this.render();
 	}
 
+	private saveCurrentForm(): void {
+		const form = this.ctx.settingsViewEl.querySelector<HTMLFormElement>(".settings-panel__form");
+		if (form) {
+			void this.saveForm(form);
+		} else {
+			void this.render();
+		}
+	}
+
 	private setSection(section: SettingsSection): void {
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((button) => {
 			button.classList.toggle("settings-panel__nav-item--active", button.dataset.settingsSection === section);
@@ -525,7 +534,7 @@ export class SettingsView {
 				this.draft.modelServices.push(nextService);
 			}
 			overlay.remove();
-			void this.render();
+			this.saveCurrentForm();
 		});
 		overlay.addEventListener("click", (event) => {
 			if (event.target === overlay) overlay.remove();
@@ -591,9 +600,12 @@ export class SettingsView {
 				nextService.models[existingIndex] = nextModel;
 			} else {
 				nextService.models.push(nextModel);
+				if (!this.draft.defaultModelId) {
+					this.draft.defaultModelId = nextModel.id;
+				}
 			}
 			overlay.remove();
-			void this.render();
+			this.saveCurrentForm();
 		});
 		overlay.addEventListener("click", (event) => {
 			if (event.target === overlay) overlay.remove();

@@ -19,6 +19,7 @@ import {
 	isToolMessageUi,
 	normalizeAgentConfig,
 	resolveModelConfig,
+	type ModelConfig,
 	type ModelServiceConfig,
 	type ModelServiceModelConfig,
 	type McpServerConfig,
@@ -533,7 +534,9 @@ export class ChatPanel {
 			return;
 
 		const config = await this.getConfig();
-		if (!config.apiKey) {
+		const sessionModelId = this.activeSession?.modelId;
+		const activeModel = resolveModelConfig(config, sessionModelId);
+		if (!activeModel.apiKey) {
 			showMessage(this.t("chat.error.apiKeyMissing"));
 			return;
 		}
@@ -542,7 +545,7 @@ export class ChatPanel {
 		const compactMatch = text.match(/^\/compac?t(?:\s+([\s\S]*))?$/i);
 		if (compactMatch) {
 			this.textareaEl.value = "";
-			await this.handleCompact(config, (compactMatch[1] || "").trim());
+			await this.handleCompact(activeModel, (compactMatch[1] || "").trim());
 			return;
 		}
 
@@ -685,8 +688,7 @@ export class ChatPanel {
 		};
 
 		try {
-			const sessionModelId = this.activeSession?.modelId;
-			const modelOverride = sessionModelId ? resolveModelConfig(config, sessionModelId) : null;
+			const modelOverride = sessionModelId ? activeModel : null;
 			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n);
 			const tracer = makeTracer(config);
 			const result = await runAgentStream({
@@ -788,10 +790,10 @@ export class ChatPanel {
 			if (!this.abortCtrl?.signal.aborted && shouldCompact(latestState)) {
 				try {
 					const compactModel = new ChatOpenAI({
-						model: config.model,
+						model: activeModel.model,
 						temperature: 0,
-						apiKey: config.apiKey,
-						configuration: { dangerouslyAllowBrowser: true, baseURL: config.apiBaseURL },
+						apiKey: activeModel.apiKey,
+						configuration: { dangerouslyAllowBrowser: true, baseURL: activeModel.apiBaseURL },
 					});
 					await compactMessages(s.state, { model: compactModel, source: "auto" });
 				} catch (_) { /* best-effort, don't block save */ }
@@ -815,7 +817,7 @@ export class ChatPanel {
 
 	/* --- /compact --- */
 
-	private async handleCompact(config: AgentConfig, requirement: string): Promise<void> {
+	private async handleCompact(config: ModelConfig, requirement: string): Promise<void> {
 		const s = this.activeSession;
 		if (!s.state?.messages || s.state.messages.length === 0) {
 			showMessage(this.t("chat.compact.noContext"));

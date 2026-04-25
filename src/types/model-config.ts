@@ -181,6 +181,9 @@ export function resolveModelConfig(config: AgentConfig, modelId?: string): Model
 		const found = models.find((m) => m.id === id);
 		if (found) return found;
 	}
+	if (!id && models.length > 0) {
+		return models[0];
+	}
 	// Legacy fallback: construct from top-level fields
 	return {
 		id: "__legacy__",

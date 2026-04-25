@@ -66,6 +66,22 @@ describe("resolveModelConfig", () => {
 		expect(result.apiKey).toBe("ds-key");
 	});
 
+	it("uses the first configured service model when no default model is selected", () => {
+		const config = makeConfig({
+			modelServices: [makeService({
+				apiBaseURL: "https://api.example.com/v1",
+				apiKey: "service-key",
+				models: [{ id: "m1", name: "Configured Model", model: "custom-chat" }],
+			})],
+			defaultModelId: "",
+			apiKey: "",
+		});
+		const result = resolveModelConfig(config);
+		expect(result.id).toBe("m1");
+		expect(result.model).toBe("custom-chat");
+		expect(result.apiKey).toBe("service-key");
+	});
+
 	it("uses explicit modelId over defaultModelId", () => {
 		const config = makeConfig({
 			modelServices: [makeService({
