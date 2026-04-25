@@ -196,6 +196,9 @@ export class TasksView {
 			<span class="task-detail__next-run">${escapeHtml(this.t("tasks.nextRun", { time: nextRunText }))}</span>
 		</div>
 		<div class="task-detail__actions">
+			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(this.t("tasks.runNow"))}" data-action="run-now">
+				<svg style="width:16px;height:16px"><use xlink:href="#iconPlay"></use></svg>
+			</span>
 			<span class="task-detail__action-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" aria-label="${escapeHtml(task.enabled ? this.t("common.disable") : this.t("common.enable"))}" data-action="toggle">
 				<svg style="width:16px;height:16px"><use xlink:href="${task.enabled ? "#iconPause" : "#iconPlay"}"></use></svg>
 			</span>
@@ -224,6 +227,9 @@ export class TasksView {
 	</div>
 </div>`;
 
+		taskDetailEl.querySelector<HTMLElement>("[data-action='run-now']")?.addEventListener("click", () => {
+			void taskManager.runTaskNow(task.id).then(() => this.render()).catch((error) => showMessage(String(error)));
+		});
 		taskDetailEl.querySelector<HTMLElement>("[data-action='toggle']")?.addEventListener("click", () => {
 			void taskManager.setTaskEnabled(task.id, !task.enabled).catch((error) => showMessage(String(error)));
 		});

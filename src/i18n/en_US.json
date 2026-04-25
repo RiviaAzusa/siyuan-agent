@@ -185,6 +185,7 @@
   "tasks.summary.running": " / {count} running",
   "tasks.summary.errors": " / {count} failed",
   "tasks.create": "New Task",
+  "tasks.runNow": "Run Now",
   "tasks.empty.list": "No scheduled tasks",
   "tasks.empty.detail": "Create your first scheduled task here",
   "tasks.empty.select": "Select a scheduled task",

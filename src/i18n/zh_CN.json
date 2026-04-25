@@ -185,6 +185,7 @@
   "tasks.summary.running": " / {count} 执行中",
   "tasks.summary.errors": " / {count} 失败",
   "tasks.create": "新建任务",
+  "tasks.runNow": "立即执行",
   "tasks.empty.list": "暂无定时任务",
   "tasks.empty.detail": "从这里创建你的第一个定时任务",
   "tasks.empty.select": "请选择一个定时任务",
