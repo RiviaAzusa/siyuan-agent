@@ -17,6 +17,7 @@ import {
 	genModelId,
 	isToolMessageUi,
 	normalizeAgentConfig,
+	listConfiguredModels,
 	resolveModelConfig,
 	type ModelConfig,
 	type ModelServiceConfig,
@@ -64,7 +65,9 @@ export class ChatPanel {
 	private messagesEl: HTMLElement;
 	private textareaEl: HTMLTextAreaElement;
 	private sendBtn: HTMLButtonElement;
-	private reasoningSelectEl: HTMLSelectElement;
+	private modelPickerEl: HTMLElement;
+	private modelPickerBtn: HTMLButtonElement;
+	private modelPickerMenuEl: HTMLElement;
 	private contextBar: HTMLElement;
 
 	private activeSession: SessionData;
@@ -74,7 +77,13 @@ export class ChatPanel {
 	private pendingEl: HTMLElement | null = null;
 	private autoScroll = true;
 	private sessionListExpanded = false;
+	private modelPickerOpen = false;
+	private modelSubmenuOpen = false;
 	private unsubs: Array<() => void> = [];
+	private readonly handleDocumentClick = () => this.closeModelPicker();
+	private readonly handleDocumentKeydown = (event: KeyboardEvent) => {
+		if (event.key === "Escape") this.closeModelPicker();
+	};
 
 	private settingsView: SettingsView;
 	private tasksView: TasksView;
@@ -115,8 +124,7 @@ export class ChatPanel {
 	}
 
 	private syncReasoningControl(): void {
-		if (!this.reasoningSelectEl || !this.activeSession) return;
-		this.reasoningSelectEl.value = this.normalizeReasoningEffort(this.activeSession.reasoningEffort);
+		void this.refreshModelSelector();
 	}
 
 	private localizeToolResult(result: string): string {
@@ -185,12 +193,14 @@ export class ChatPanel {
 				<button class="chat-panel__switch-btn" type="button" data-view="settings">${escapeHtml(this.t("chat.view.settings"))}</button>
 			</div>
 			<div class="chat-panel__actions">
-				<select class="chat-panel__reasoning b3-select" title="${escapeHtml(this.t("chat.reasoning.control"))}" aria-label="${escapeHtml(this.t("chat.reasoning.control"))}">
-					<option value="default">${escapeHtml(this.t("chat.reasoning.default"))}</option>
-					<option value="off">${escapeHtml(this.t("chat.reasoning.off"))}</option>
-					<option value="high">${escapeHtml(this.t("chat.reasoning.high"))}</option>
-					<option value="xhigh">${escapeHtml(this.t("chat.reasoning.xhigh"))}</option>
-				</select>
+				<div class="chat-panel__model-picker">
+					<button class="chat-panel__model-picker-btn" type="button" title="${escapeHtml(this.t("chat.reasoning.control"))}" aria-label="${escapeHtml(this.t("chat.reasoning.control"))}" aria-expanded="false">
+						<span class="chat-panel__model-picker-model">Model</span>
+						<span class="chat-panel__model-picker-reasoning">${escapeHtml(this.t("chat.reasoning.default"))}</span>
+						<svg class="chat-panel__model-picker-chevron" aria-hidden="true"><use xlink:href="#iconDown"></use></svg>
+					</button>
+					<div class="chat-panel__model-picker-menu fn__none"></div>
+				</div>
 				<button class="chat-panel__send" type="button" title="${escapeHtml(this.t("chat.sendTitle"))}" aria-label="${escapeHtml(this.t("chat.send"))}">
 					${this.getSendIconMarkup()}
 				</button>
@@ -210,7 +220,9 @@ export class ChatPanel {
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
-		this.reasoningSelectEl = this.container.querySelector(".chat-panel__reasoning");
+		this.modelPickerEl = this.container.querySelector(".chat-panel__model-picker");
+		this.modelPickerBtn = this.container.querySelector(".chat-panel__model-picker-btn");
+		this.modelPickerMenuEl = this.container.querySelector(".chat-panel__model-picker-menu");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
 		this.applyEditorFontFamily();
 
@@ -258,12 +270,30 @@ export class ChatPanel {
 
 		/* Send on click */
 		this.sendBtn.onclick = () => this.send();
-		this.reasoningSelectEl.addEventListener("change", () => {
-			if (!this.activeSession) return;
-			this.activeSession.reasoningEffort = this.normalizeReasoningEffort(this.reasoningSelectEl.value);
-			this.activeSession.updated = Date.now();
-			void this.store.saveSession(this.activeSession);
+		this.modelPickerBtn.addEventListener("click", (event) => {
+			event.stopPropagation();
+			void this.toggleModelPicker();
 		});
+		this.modelPickerMenuEl.addEventListener("click", (event) => {
+			event.stopPropagation();
+			const target = event.target as HTMLElement;
+			const reasoningItem = target.closest<HTMLElement>("[data-reasoning-effort]");
+			if (reasoningItem) {
+				void this.selectReasoningEffort(reasoningItem.dataset.reasoningEffort);
+				return;
+			}
+			if (target.closest("[data-action='toggle-model-submenu']")) {
+				this.modelSubmenuOpen = !this.modelSubmenuOpen;
+				void this.refreshModelSelector();
+				return;
+			}
+			const modelItem = target.closest<HTMLElement>("[data-model-id]");
+			if (modelItem) {
+				void this.selectSessionModel(modelItem.dataset.modelId || "");
+			}
+		});
+		document.addEventListener("click", this.handleDocumentClick);
+		document.addEventListener("keydown", this.handleDocumentKeydown);
 
 		this.refreshModelSelector();
 
@@ -356,6 +386,61 @@ export class ChatPanel {
 		const open = this.isSessionListOpen();
 		this.sessionToggleEl.classList.toggle("chat-panel__session-toggle--open", open);
 		this.sessionToggleEl.setAttribute("aria-expanded", String(open));
+	}
+
+	private getReasoningOptions(): Array<{ value: ReasoningEffort; label: string }> {
+		return [
+			{ value: "default", label: this.t("chat.reasoning.default") },
+			{ value: "off", label: this.t("chat.reasoning.off") },
+			{ value: "high", label: this.t("chat.reasoning.high") },
+			{ value: "xhigh", label: this.t("chat.reasoning.xhigh") },
+		];
+	}
+
+	private getReasoningLabel(value: ReasoningEffort): string {
+		return this.getReasoningOptions().find((item) => item.value === value)?.label || this.t("chat.reasoning.default");
+	}
+
+	private formatModelPickerName(model: ModelConfig): string {
+		return model.name || model.model || this.t("common.notSet");
+	}
+
+	private closeModelPicker(): void {
+		this.modelPickerOpen = false;
+		this.modelSubmenuOpen = false;
+		this.modelPickerBtn?.classList.remove("chat-panel__model-picker-btn--open");
+		this.modelPickerBtn?.setAttribute("aria-expanded", "false");
+		this.modelPickerMenuEl?.classList.add("fn__none");
+	}
+
+	private async toggleModelPicker(): Promise<void> {
+		if (this.modelPickerOpen) {
+			this.closeModelPicker();
+			return;
+		}
+		this.modelPickerOpen = true;
+		this.modelSubmenuOpen = false;
+		await this.refreshModelSelector();
+		this.modelPickerBtn.classList.add("chat-panel__model-picker-btn--open");
+		this.modelPickerBtn.setAttribute("aria-expanded", "true");
+		this.modelPickerMenuEl.classList.remove("fn__none");
+	}
+
+	private async selectReasoningEffort(value: string | undefined): Promise<void> {
+		if (!this.activeSession) return;
+		this.activeSession.reasoningEffort = this.normalizeReasoningEffort(value);
+		this.activeSession.updated = Date.now();
+		await this.store.saveSession(this.activeSession);
+		await this.refreshModelSelector();
+	}
+
+	private async selectSessionModel(modelId: string): Promise<void> {
+		if (!this.activeSession) return;
+		this.activeSession.modelId = modelId || undefined;
+		this.activeSession.updated = Date.now();
+		await this.store.saveSession(this.activeSession);
+		this.closeModelPicker();
+		await this.refreshModelSelector();
 	}
 
 	private toggleSessionListExpanded(): void {
@@ -947,6 +1032,8 @@ export class ChatPanel {
 
 	destroy(): void {
 		this.stop();
+		document.removeEventListener("click", this.handleDocumentClick);
+		document.removeEventListener("keydown", this.handleDocumentKeydown);
 		this.unsubs.splice(0).forEach((unsubscribe) => unsubscribe());
 	}
 
@@ -1657,7 +1744,8 @@ export class ChatPanel {
 	}
 
 	private setLoading(loading: boolean): void {
-		if (this.reasoningSelectEl) this.reasoningSelectEl.disabled = loading;
+		if (this.modelPickerBtn) this.modelPickerBtn.disabled = loading;
+		if (loading) this.closeModelPicker();
 		if (loading) {
 			this.sendBtn.innerHTML = this.getStopIconMarkup();
 			this.sendBtn.title = this.t("chat.stopTitle");
@@ -1761,6 +1849,8 @@ export class ChatPanel {
 		this.settingsViewEl.classList.toggle("fn__none", view !== "settings");
 		this.bottomBarEl.classList.toggle("chat-panel__bottom-bar--chat", view === "chat");
 		this.composerBodyEl.classList.toggle("chat-panel__composer-body--collapsed", view !== "chat");
+		this.modelPickerEl.classList.toggle("fn__none", view !== "chat");
+		if (view !== "chat") this.closeModelPicker();
 		this.bottomBarEl.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
 			button.classList.toggle("chat-panel__switch-btn--active", button.dataset.view === view);
 			button.setAttribute("aria-selected", String(button.dataset.view === view));
@@ -1773,7 +1863,50 @@ export class ChatPanel {
 	}
 
 	private async refreshModelSelector(): Promise<void> {
-		return Promise.resolve();
+		if (!this.modelPickerBtn || !this.modelPickerMenuEl) return;
+		const config = await this.getConfig();
+		const models = listConfiguredModels(config);
+		const activeModel = resolveModelConfig(config, this.activeSession?.modelId);
+		const reasoningEffort = this.normalizeReasoningEffort(this.activeSession?.reasoningEffort);
+		const modelName = this.formatModelPickerName(activeModel);
+		const modelNameEl = this.modelPickerBtn.querySelector<HTMLElement>(".chat-panel__model-picker-model");
+		const reasoningEl = this.modelPickerBtn.querySelector<HTMLElement>(".chat-panel__model-picker-reasoning");
+		if (modelNameEl) {
+			modelNameEl.textContent = modelName;
+			modelNameEl.title = modelName;
+		}
+		if (reasoningEl)
+			reasoningEl.textContent = this.getReasoningLabel(reasoningEffort);
+
+		const reasoningHtml = this.getReasoningOptions().map((item) => {
+			const selected = item.value === reasoningEffort;
+			return `<button class="chat-panel__model-menu-item${selected ? " chat-panel__model-menu-item--selected" : ""}" type="button" data-reasoning-effort="${escapeHtml(item.value)}">
+				<span class="chat-panel__model-menu-check">${selected ? "✓" : ""}</span>
+				<span class="chat-panel__model-menu-label">${escapeHtml(item.label)}</span>
+			</button>`;
+		}).join("");
+		const hasModels = models.length > 0;
+		const modelOptionsHtml = hasModels && this.modelSubmenuOpen
+			? `<div class="chat-panel__model-submenu">
+				${models.map((model) => {
+					const selected = model.id === activeModel.id;
+					const label = this.formatModelPickerName(model);
+					return `<button class="chat-panel__model-menu-item chat-panel__model-menu-item--sub${selected ? " chat-panel__model-menu-item--selected" : ""}" type="button" data-model-id="${escapeHtml(model.id)}" title="${escapeHtml(model.provider)} / ${escapeHtml(model.model)}">
+						<span class="chat-panel__model-menu-check">${selected ? "✓" : ""}</span>
+						<span class="chat-panel__model-menu-label">${escapeHtml(label)}</span>
+					</button>`;
+				}).join("")}
+			</div>`
+			: "";
+		this.modelPickerMenuEl.innerHTML = `
+			<div class="chat-panel__model-menu-section">${reasoningHtml}</div>
+			<div class="chat-panel__model-menu-divider"></div>
+			<button class="chat-panel__model-menu-item chat-panel__model-menu-item--model" type="button" data-action="toggle-model-submenu" ${hasModels ? "" : "disabled"}>
+				<span class="chat-panel__model-menu-check"></span>
+				<span class="chat-panel__model-menu-label">${escapeHtml(modelName)}</span>
+				${hasModels ? `<svg class="chat-panel__model-menu-chevron${this.modelSubmenuOpen ? " chat-panel__model-menu-chevron--open" : ""}" aria-hidden="true"><use xlink:href="#iconRight"></use></svg>` : ""}
+			</button>
+			${modelOptionsHtml}`;
 	}
 
 	private async getConfig(): Promise<AgentConfig> {
