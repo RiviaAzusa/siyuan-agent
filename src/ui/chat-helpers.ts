@@ -26,6 +26,13 @@ export interface ActivityBlockRefs {
 
 export type SettingsSection = "general" | "model-services" | "default-models" | "tracing";
 
+export interface ComposerKeyEvent {
+	key: string;
+	shiftKey: boolean;
+	isComposing?: boolean;
+	keyCode?: number;
+}
+
 export interface SettingsDraft {
 	customInstructions: string;
 	guideDoc: { id: string; title: string } | null;
@@ -42,6 +49,12 @@ export interface SettingsDraft {
 }
 
 /* ── Pure functions ──────────────────────────────────────────────────── */
+
+export function shouldSendComposerOnKeydown(e: ComposerKeyEvent): boolean {
+	if (e.key !== "Enter" || e.shiftKey) return false;
+	if (e.isComposing || e.keyCode === 229) return false;
+	return true;
+}
 
 /** Extract the role string from either a live BaseMessage or a serialised dict. */
 export function msgType(m: any): string {

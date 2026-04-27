@@ -40,7 +40,7 @@ import {
 	msgType, sessionTitle, cloneMessage, getMessageContent, getMessageToolCalls,
 	getMessageToolCallId, getToolCallId, setMessageContent, setMessageToolCalls,
 	normalizeMessagesForDisplay, escapeHtml, getToolCategory, getToolAction,
-	getToolDisplayTitle, getActionLabel,
+	getToolDisplayTitle, getActionLabel, shouldSendComposerOnKeydown,
 	type AssistantMessageShell, type ActivityBlockRefs,
 } from "./chat-helpers";
 const CONFIG_STORAGE = "agent-config";
@@ -249,7 +249,7 @@ export class ChatPanel {
 				this.autocomplete.handleKey(e);
 				return;
 			}
-			if (e.key === "Enter" && !e.shiftKey) {
+			if (shouldSendComposerOnKeydown(e)) {
 				e.preventDefault();
 				this.send();
 			}
