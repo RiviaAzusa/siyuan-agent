@@ -44,6 +44,8 @@ export class SettingsView {
 	private draft: SettingsDraft | null = null;
 	private autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	private i18n: Translator;
+	private editingModelServiceId: string | null = null;
+	private editingServiceModelTarget: { serviceId: string; modelId?: string } | null = null;
 
 	constructor(ctx: SettingsViewContext) {
 		this.ctx = ctx;
@@ -107,6 +109,7 @@ export class SettingsView {
 			{ id: "default-models", label: this.t("settings.nav.defaultModels") },
 			{ id: "tracing", label: this.t("settings.nav.tracing") },
 		];
+		const modelServicesHtml = this.renderModelServices(draft.modelServices);
 
 		this.ctx.settingsViewEl.innerHTML = `
 <div class="settings-panel">
@@ -162,46 +165,11 @@ export class SettingsView {
 					</section>
 
 					<section class="settings-panel__section${this.currentSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
-						<div class="settings-panel__section-title">${escapeHtml(this.t("settings.modelServices.title"))}</div>
-						<div class="agent-model-list">
-							${draft.modelServices.length
-								? draft.modelServices.map((service) => `
-									<div class="agent-model-service">
-										<div class="agent-model-list__item">
-											<div class="agent-model-list__info">
-												<span class="agent-model-list__name">${escapeHtml(service.name)}</span>
-												<span class="agent-model-list__detail">${escapeHtml(service.providerType === "deepseek" ? "DeepSeek" : "OpenAI Compatible")} · ${escapeHtml(service.apiBaseURL)} · ${escapeHtml(this.t("settings.modelServices.count", { count: service.models.length }))}</span>
-											</div>
-											<div class="agent-model-list__actions">
-												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="add-service-model" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.addModel"))}</button>
-												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model-service" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.editService"))}</button>
-												<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model-service" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.deleteService"))}</button>
-											</div>
-										</div>
-										<div class="agent-model-service__models">
-											${service.models.length
-												? service.models.map((item) => `
-													<div class="agent-model-list__item agent-model-list__item--sub">
-														<div class="agent-model-list__info">
-															<span class="agent-model-list__name">${escapeHtml(item.name)}</span>
-															<span class="agent-model-list__detail">${escapeHtml(item.model)}</span>
-														</div>
-														<div class="agent-model-list__actions">
-															<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="edit-model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(item.id)}">${escapeHtml(this.t("common.edit"))}</button>
-															<button class="b3-button b3-button--small b3-button--outline b3-button--error" type="button" data-action="delete-model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(item.id)}">${escapeHtml(this.t("common.delete"))}</button>
-														</div>
-													</div>
-												`).join("")
-												: `<div class="agent-model-list__empty">${escapeHtml(this.t("settings.modelServices.emptyModels"))}</div>`}
-										</div>
-									</div>
-								`).join("")
-								: `<div class="agent-model-list__empty">${escapeHtml(this.t("settings.modelServices.emptyServices"))}</div>`}
+						<div class="agent-model-section__header">
+							<div class="settings-panel__section-title">${escapeHtml(this.t("settings.modelServices.title"))}</div>
+							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">${escapeHtml(this.t("settings.modelServices.addServiceInline"))}</button>
 						</div>
-						<div class="settings-panel__actions settings-panel__actions--inline">
-							<button class="b3-button b3-button--outline" type="button" data-action="add-deepseek-service">${escapeHtml(this.t("settings.modelServices.addDeepSeek"))}</button>
-							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">${escapeHtml(this.t("settings.modelServices.addService"))}</button>
-						</div>
+						${modelServicesHtml}
 					</section>
 
 					<section class="settings-panel__section${this.currentSection === "default-models" ? " settings-panel__section--active" : ""}" data-settings-panel="default-models">
@@ -266,11 +234,13 @@ export class SettingsView {
 		};
 		form?.addEventListener("change", (e) => {
 			const target = e.target as HTMLElement;
+			if (target.closest(".agent-model-inline-form")) return;
 			const isText = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && (target as HTMLInputElement).type === "text");
 			if (!isText) scheduleAutoSave(true);
 		});
 		form?.addEventListener("input", (e) => {
 			const target = e.target as HTMLElement;
+			if (target.closest(".agent-model-inline-form")) return;
 			const isText = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && (target as HTMLInputElement).type !== "checkbox");
 			if (isText) scheduleAutoSave(false);
 		});
@@ -374,6 +344,129 @@ export class SettingsView {
 		this.draft.defaultNotebook = notebook ? { ...notebook } : null;
 	}
 
+	private renderIconAction(action: string, icon: string, label: string, attrs = ""): string {
+		return `<span class="agent-model-icon-btn block__icon block__icon--show b3-tooltips b3-tooltips__sw" role="button" tabindex="0" aria-label="${escapeHtml(label)}" data-action="${escapeHtml(action)}" ${attrs}>
+			<svg style="width:16px;height:16px"><use xlink:href="${icon}"></use></svg>
+		</span>`;
+	}
+
+	private renderModelServices(services: ModelServiceConfig[]): string {
+		const addServiceForm = this.editingModelServiceId === "__new__" ? this.renderServiceInlineForm() : "";
+		const listHtml = services.length
+			? services.map((service) => this.renderModelService(service)).join("")
+			: `<div class="agent-model-list__empty">${escapeHtml(this.t("settings.modelServices.emptyServices"))}</div>`;
+		return `<div class="agent-model-list">${listHtml}${addServiceForm}</div>`;
+	}
+
+	private renderModelService(service: ModelServiceConfig): string {
+		const providerLabel = service.providerType === "deepseek" ? "DeepSeek" : "OpenAI Compatible";
+		const serviceAttrs = `data-service-id="${escapeHtml(service.id)}"`;
+		const serviceForm = this.editingModelServiceId === service.id ? this.renderServiceInlineForm(service) : "";
+		const modelFormAtEnd = this.editingServiceModelTarget?.serviceId === service.id && !this.editingServiceModelTarget.modelId
+			? this.renderModelInlineForm(service)
+			: "";
+		return `
+			<div class="agent-model-service">
+				<div class="agent-model-service__header">
+					<div class="agent-model-list__info">
+						<span class="agent-model-list__name">${escapeHtml(service.name)}</span>
+						<span class="agent-model-list__detail">${escapeHtml(providerLabel)} · ${escapeHtml(service.apiBaseURL)} · ${escapeHtml(this.t("settings.modelServices.count", { count: service.models.length }))}</span>
+					</div>
+					<div class="agent-model-list__actions">
+						${this.renderIconAction("add-service-model", "#iconAdd", this.t("settings.modelServices.addModel"), serviceAttrs)}
+						${this.renderIconAction("edit-model-service", "#iconEdit", this.t("settings.modelServices.editService"), serviceAttrs)}
+						${this.renderIconAction("delete-model-service", "#iconTrashcan", this.t("settings.modelServices.deleteService"), serviceAttrs)}
+					</div>
+				</div>
+				${serviceForm}
+				<div class="agent-model-service__models">
+					${service.models.length
+						? service.models.map((item) => this.renderServiceModel(service, item)).join("")
+						: `<div class="agent-model-list__empty agent-model-list__empty--sub">${escapeHtml(this.t("settings.modelServices.emptyModels"))}</div>`}
+					${modelFormAtEnd}
+				</div>
+			</div>`;
+	}
+
+	private renderServiceModel(service: ModelServiceConfig, model: ModelServiceModelConfig): string {
+		const attrs = `data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(model.id)}"`;
+		const modelForm = this.editingServiceModelTarget?.serviceId === service.id && this.editingServiceModelTarget.modelId === model.id
+			? this.renderModelInlineForm(service, model)
+			: "";
+		return `
+			<div class="agent-model-row">
+				<div class="agent-model-list__info">
+					<span class="agent-model-list__name">${escapeHtml(model.name)}</span>
+					<span class="agent-model-list__detail">${escapeHtml(model.model)}</span>
+				</div>
+				<div class="agent-model-list__actions">
+					${this.renderIconAction("edit-model", "#iconEdit", this.t("common.edit"), attrs)}
+					${this.renderIconAction("delete-model", "#iconTrashcan", this.t("common.delete"), attrs)}
+				</div>
+			</div>
+			${modelForm}`;
+	}
+
+	private renderServiceInlineForm(service?: ModelServiceConfig): string {
+		const providerType = service?.providerType || "openai-compatible";
+		const title = service ? this.t("settings.editor.editService") : this.t("settings.editor.addService");
+		return `
+			<div class="agent-model-inline-form agent-model-inline-form--service" data-inline-form="service" data-service-id="${escapeHtml(service?.id || "")}">
+				<div class="agent-model-inline-form__title">${escapeHtml(title)}</div>
+				<div class="agent-model-inline-form__grid">
+					<label class="settings-panel__field">
+						<span>${escapeHtml(this.t("settings.editor.serviceName"))}</span>
+						<input class="b3-text-field" data-field="name" value="${escapeHtml(service?.name || "")}" placeholder="${escapeHtml(this.t("settings.editor.serviceNamePlaceholder"))}" />
+					</label>
+					<label class="settings-panel__field">
+						<span>${escapeHtml(this.t("settings.editor.providerType"))}</span>
+						<select class="b3-select" data-field="providerType" data-is-new="${service ? "false" : "true"}">
+							<option value="openai-compatible"${providerType !== "deepseek" ? " selected" : ""}>OpenAI Compatible</option>
+							<option value="deepseek"${providerType === "deepseek" ? " selected" : ""}>DeepSeek</option>
+						</select>
+					</label>
+					<label class="settings-panel__field">
+						<span>API Base URL</span>
+						<input class="b3-text-field" data-field="apiBaseURL" value="${escapeHtml(service?.apiBaseURL || DEFAULT_CONFIG.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
+					</label>
+					<label class="settings-panel__field">
+						<span>API Key</span>
+						<input class="b3-text-field" type="password" data-field="apiKey" value="${escapeHtml(service?.apiKey || "")}" placeholder="sk-..." />
+					</label>
+				</div>
+				<div class="agent-model-inline-form__actions">
+					<button class="b3-button b3-button--text" type="button" data-action="cancel-inline-service">${escapeHtml(this.t("settings.modelServices.cancelEdit"))}</button>
+					<button class="b3-button b3-button--outline" type="button" data-action="save-inline-service">${escapeHtml(this.t("settings.modelServices.saveService"))}</button>
+				</div>
+			</div>`;
+	}
+
+	private renderModelInlineForm(service: ModelServiceConfig, model?: ModelServiceModelConfig): string {
+		const title = model ? this.t("settings.editor.editModel") : this.t("settings.editor.addModel");
+		return `
+			<div class="agent-model-inline-form agent-model-inline-form--model" data-inline-form="model" data-service-id="${escapeHtml(service.id)}" data-model-id="${escapeHtml(model?.id || "")}">
+				<div class="agent-model-inline-form__title">${escapeHtml(title)}</div>
+				<div class="agent-model-inline-form__grid agent-model-inline-form__grid--model">
+					<label class="settings-panel__field">
+						<span>${escapeHtml(this.t("settings.editor.displayName"))}</span>
+						<input class="b3-text-field" data-field="name" value="${escapeHtml(model?.name || "")}" placeholder="GPT-4o / Claude Sonnet" />
+					</label>
+					<label class="settings-panel__field">
+						<span>${escapeHtml(this.t("settings.editor.modelId"))}</span>
+						<input class="b3-text-field" data-field="model" value="${escapeHtml(model?.model || "")}" placeholder="gpt-4o" />
+					</label>
+					<label class="settings-panel__field">
+						<span>${escapeHtml(this.t("settings.editor.temperatureOptional"))}</span>
+						<input class="b3-text-field" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${model?.temperature ?? ""}" placeholder="0" />
+					</label>
+				</div>
+				<div class="agent-model-inline-form__actions">
+					<button class="b3-button b3-button--text" type="button" data-action="cancel-inline-model">${escapeHtml(this.t("settings.modelServices.cancelEdit"))}</button>
+					<button class="b3-button b3-button--outline" type="button" data-action="save-inline-model">${escapeHtml(this.t("settings.modelServices.saveModel"))}</button>
+				</div>
+			</div>`;
+	}
+
 	private bindGuideDocPicker(): void {
 		const input = this.ctx.settingsViewEl.querySelector<HTMLInputElement>("[data-role='guide-doc-search']");
 		const dropdown = this.ctx.settingsViewEl.querySelector<HTMLElement>("[data-role='guide-doc-dropdown']");
@@ -429,24 +522,16 @@ export class SettingsView {
 	private bindModelActions(): void {
 		this.ctx.settingsViewEl.querySelector<HTMLElement>("[data-action='add-model-service']")?.addEventListener("click", () => {
 			this.syncDraftFromForm();
-			this.openModelServiceEditor();
-		});
-		this.ctx.settingsViewEl.querySelector<HTMLElement>("[data-action='add-deepseek-service']")?.addEventListener("click", () => {
-			this.syncDraftFromForm();
-			this.openModelServiceEditor(undefined, {
-				name: "DeepSeek",
-				providerType: "deepseek",
-				apiBaseURL: DEEPSEEK_API_BASE_URL,
-				models: [
-					{ id: genModelId(), name: "DeepSeek V4 Pro", model: "deepseek-v4-pro" },
-					{ id: genModelId(), name: "DeepSeek V4 Flash", model: "deepseek-v4-flash" },
-				],
-			});
+			this.editingModelServiceId = "__new__";
+			this.editingServiceModelTarget = null;
+			void this.render();
 		});
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model-service']").forEach((button) => {
 			button.addEventListener("click", () => {
 				this.syncDraftFromForm();
-				this.openModelServiceEditor(button.dataset.serviceId);
+				this.editingModelServiceId = button.dataset.serviceId || null;
+				this.editingServiceModelTarget = null;
+				void this.render();
 			});
 		});
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model-service']").forEach((button) => {
@@ -460,19 +545,28 @@ export class SettingsView {
 				this.draft.modelServices = this.draft.modelServices.filter((item) => item.id !== serviceId);
 				if (removedModelIds.has(this.draft.defaultModelId)) this.draft.defaultModelId = "";
 				if (removedModelIds.has(this.draft.subAgentModelId)) this.draft.subAgentModelId = "";
-				void this.render();
+				if (this.editingModelServiceId === serviceId) this.editingModelServiceId = null;
+				if (this.editingServiceModelTarget?.serviceId === serviceId) this.editingServiceModelTarget = null;
+				this.saveCurrentForm();
 			});
 		});
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='add-service-model']").forEach((button) => {
 			button.addEventListener("click", () => {
 				this.syncDraftFromForm();
-				this.openServiceModelEditor(button.dataset.serviceId || "");
+				this.editingServiceModelTarget = { serviceId: button.dataset.serviceId || "" };
+				this.editingModelServiceId = null;
+				void this.render();
 			});
 		});
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model']").forEach((button) => {
 			button.addEventListener("click", () => {
 				this.syncDraftFromForm();
-				this.openServiceModelEditor(button.dataset.serviceId || "", button.dataset.modelId);
+				this.editingServiceModelTarget = {
+					serviceId: button.dataset.serviceId || "",
+					modelId: button.dataset.modelId,
+				};
+				this.editingModelServiceId = null;
+				void this.render();
 			});
 		});
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='delete-model']").forEach((button) => {
@@ -486,156 +580,120 @@ export class SettingsView {
 				service.models = service.models.filter((item) => item.id !== modelId);
 				if (this.draft.defaultModelId === modelId) this.draft.defaultModelId = "";
 				if (this.draft.subAgentModelId === modelId) this.draft.subAgentModelId = "";
+				if (this.editingServiceModelTarget?.modelId === modelId) this.editingServiceModelTarget = null;
+				this.saveCurrentForm();
+			});
+		});
+		this.ctx.settingsViewEl.querySelectorAll<HTMLSelectElement>(".agent-model-inline-form [data-field='providerType']").forEach((select) => {
+			select.addEventListener("change", () => {
+				const form = select.closest<HTMLElement>(".agent-model-inline-form");
+				if (!form || select.dataset.isNew !== "true" || select.value !== "deepseek") return;
+				const nameField = form.querySelector<HTMLInputElement>("[data-field='name']");
+				const baseUrlField = form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
+				if (nameField && !nameField.value.trim()) nameField.value = "DeepSeek";
+				if (baseUrlField && (!baseUrlField.value.trim() || baseUrlField.value.trim() === DEFAULT_CONFIG.apiBaseURL)) {
+					baseUrlField.value = DEEPSEEK_API_BASE_URL;
+				}
+			});
+		});
+		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='cancel-inline-service']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.editingModelServiceId = null;
 				void this.render();
+			});
+		});
+		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='save-inline-service']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.saveInlineService(button.closest<HTMLElement>(".agent-model-inline-form"));
+			});
+		});
+		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='cancel-inline-model']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.editingServiceModelTarget = null;
+				void this.render();
+			});
+		});
+		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='save-inline-model']").forEach((button) => {
+			button.addEventListener("click", () => {
+				this.saveInlineModel(button.closest<HTMLElement>(".agent-model-inline-form"));
 			});
 		});
 	}
 
-	private openModelServiceEditor(serviceId?: string, preset?: Partial<ModelServiceConfig>): void {
-		if (!this.draft) return;
+	private saveInlineService(form: HTMLElement | null): void {
+		if (!this.draft || !form) return;
+		this.syncDraftFromForm();
+		const serviceId = form.dataset.serviceId || "";
 		const existing = this.draft.modelServices.find((item) => item.id === serviceId) || null;
-		const draftService: ModelServiceConfig = existing ? {
-			...existing,
-			models: existing.models.map((item) => ({ ...item })),
-		} : {
-			id: genModelServiceId(),
-			name: preset?.name || "",
-			providerType: preset?.providerType || "openai-compatible",
-			apiBaseURL: preset?.apiBaseURL || DEFAULT_CONFIG.apiBaseURL,
-			apiKey: "",
-			models: preset?.models?.map((item) => ({ ...item })) || [],
+		const providerType = form.querySelector<HTMLSelectElement>("[data-field='providerType']")?.value === "deepseek"
+			? "deepseek"
+			: "openai-compatible";
+		const nextService: ModelServiceConfig = {
+			id: existing?.id || genModelServiceId(),
+			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || (providerType === "deepseek" ? "DeepSeek" : "Unnamed Service"),
+			providerType: providerType as ModelProviderType,
+			apiBaseURL: form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']")?.value.trim() || (providerType === "deepseek" ? DEEPSEEK_API_BASE_URL : DEFAULT_CONFIG.apiBaseURL),
+			apiKey: form.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
+			models: existing?.models.map((item) => ({ ...item })) || [],
 		};
-		const overlay = document.createElement("div");
-		overlay.className = "agent-model-editor-overlay";
-		overlay.innerHTML = `
-			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${escapeHtml(existing ? this.t("settings.editor.editService") : this.t("settings.editor.addService"))}</h4>
-				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.serviceName"))}
-					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(draftService.name)}" placeholder="${escapeHtml(this.t("settings.editor.serviceNamePlaceholder"))}" />
-				</label>
-				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.providerType"))}
-					<select class="b3-select fn__block" data-field="providerType">
-						<option value="openai-compatible"${draftService.providerType !== "deepseek" ? " selected" : ""}>OpenAI Compatible</option>
-						<option value="deepseek"${draftService.providerType === "deepseek" ? " selected" : ""}>DeepSeek</option>
-					</select>
-				</label>
-				<label class="agent-model-editor__label">API Base URL
-					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${escapeHtml(draftService.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
-				</label>
-				<label class="agent-model-editor__label">API Key
-					<input class="b3-text-field fn__block" type="password" data-field="apiKey" value="${escapeHtml(draftService.apiKey)}" placeholder="sk-..." />
-				</label>
-				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">${escapeHtml(this.t("common.cancel"))}</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">${escapeHtml(this.t("common.save"))}</button>
-				</div>
-			</div>`;
-		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
-		const baseUrlField = overlay.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
-		const providerTypeField = overlay.querySelector<HTMLSelectElement>("[data-field='providerType']");
-		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
-		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
-			if (!this.draft) return;
-			const providerType = providerTypeField?.value === "deepseek" ? "deepseek" : "openai-compatible";
-			const nextService: ModelServiceConfig = {
-				...draftService,
-				name: nameField?.value.trim() || "Unnamed Service",
-				providerType: providerType as ModelProviderType,
-				apiBaseURL: baseUrlField?.value.trim() || DEFAULT_CONFIG.apiBaseURL,
-				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
-			};
-			if (!nextService.name.trim()) {
-				showMessage(this.t("settings.editor.serviceNameRequired"));
-				return;
-			}
-			if (!nextService.apiBaseURL.trim()) {
-				showMessage(this.t("settings.editor.apiBaseRequired"));
-				return;
-			}
-			const existingIndex = this.draft.modelServices.findIndex((item) => item.id === nextService.id);
-			if (existingIndex >= 0) {
-				this.draft.modelServices[existingIndex] = nextService;
-			} else {
-				this.draft.modelServices.push(nextService);
-			}
-			overlay.remove();
-			this.saveCurrentForm();
-		});
-		overlay.addEventListener("click", (event) => {
-			if (event.target === overlay) overlay.remove();
-		});
-		document.body.appendChild(overlay);
+		if (!nextService.name.trim()) {
+			showMessage(this.t("settings.editor.serviceNameRequired"));
+			return;
+		}
+		if (!nextService.apiBaseURL.trim()) {
+			showMessage(this.t("settings.editor.apiBaseRequired"));
+			return;
+		}
+		if (!existing && nextService.providerType === "deepseek" && nextService.models.length === 0) {
+			nextService.models = [
+				{ id: genModelId(), name: "DeepSeek V4 Pro", model: "deepseek-v4-pro" },
+				{ id: genModelId(), name: "DeepSeek V4 Flash", model: "deepseek-v4-flash" },
+			];
+		}
+		const existingIndex = this.draft.modelServices.findIndex((item) => item.id === nextService.id);
+		if (existingIndex >= 0) {
+			this.draft.modelServices[existingIndex] = nextService;
+		} else {
+			this.draft.modelServices.push(nextService);
+		}
+		this.editingModelServiceId = null;
+		this.saveCurrentForm();
 	}
 
-	private openServiceModelEditor(serviceId: string, modelId?: string): void {
-		if (!this.draft) return;
+	private saveInlineModel(form: HTMLElement | null): void {
+		if (!this.draft || !form) return;
+		this.syncDraftFromForm();
+		const serviceId = form.dataset.serviceId || "";
+		const modelId = form.dataset.modelId || "";
 		const service = this.draft.modelServices.find((item) => item.id === serviceId);
 		if (!service) {
 			showMessage(this.t("settings.editor.serviceNotFound"));
 			return;
 		}
 		const existing = service.models.find((item) => item.id === modelId) || null;
-		const draftModel: ModelServiceModelConfig = existing ? { ...existing } : {
-			id: genModelId(),
-			name: "",
-			model: "",
+		const modelValue = form.querySelector<HTMLInputElement>("[data-field='model']")?.value.trim() || "";
+		const nextModel: ModelServiceModelConfig = {
+			id: existing?.id || genModelId(),
+			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || modelValue || "Unnamed Model",
+			model: modelValue,
 		};
-		const overlay = document.createElement("div");
-		overlay.className = "agent-model-editor-overlay";
-		overlay.innerHTML = `
-			<div class="agent-model-editor">
-				<h4 class="agent-model-editor__title">${escapeHtml(existing ? this.t("settings.editor.editModel") : this.t("settings.editor.addModel"))}</h4>
-				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.parentService"))}
-					<input class="b3-text-field fn__block" value="${escapeHtml(service.name)}" disabled />
-				</label>
-				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.displayName"))}
-					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(draftModel.name)}" placeholder="GPT-4o / Claude Sonnet" />
-				</label>
-				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.modelId"))}
-					<input class="b3-text-field fn__block" data-field="model" value="${escapeHtml(draftModel.model)}" placeholder="gpt-4o" />
-				</label>
-				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.temperatureOptional"))}
-					<input class="b3-text-field fn__block" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${draftModel.temperature ?? ""}" placeholder="0" />
-				</label>
-				<div class="agent-model-editor__buttons">
-					<button class="b3-button b3-button--outline" type="button" data-action="cancel">${escapeHtml(this.t("common.cancel"))}</button>
-					<button class="b3-button b3-button--text" type="button" data-action="save">${escapeHtml(this.t("common.save"))}</button>
-				</div>
-			</div>`;
-		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
-		const modelField = overlay.querySelector<HTMLInputElement>("[data-field='model']");
-		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
-		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
-			if (!this.draft) return;
-			const nextService = this.draft.modelServices.find((item) => item.id === serviceId);
-			if (!nextService) return;
-			const nextModel: ModelServiceModelConfig = {
-				...draftModel,
-				name: nameField?.value.trim() || modelField?.value.trim() || "Unnamed Model",
-				model: modelField?.value.trim() || "",
-			};
-			const temperature = overlay.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
-			nextModel.temperature = temperature ? Number(temperature) : undefined;
-			if (!nextModel.model) {
-				showMessage(this.t("settings.editor.modelIdRequired"));
-				return;
+		const temperature = form.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
+		nextModel.temperature = temperature ? Number(temperature) : undefined;
+		if (!nextModel.model) {
+			showMessage(this.t("settings.editor.modelIdRequired"));
+			return;
+		}
+		const existingIndex = service.models.findIndex((item) => item.id === nextModel.id);
+		if (existingIndex >= 0) {
+			service.models[existingIndex] = nextModel;
+		} else {
+			service.models.push(nextModel);
+			if (!this.draft.defaultModelId) {
+				this.draft.defaultModelId = nextModel.id;
 			}
-			const existingIndex = nextService.models.findIndex((item) => item.id === nextModel.id);
-			if (existingIndex >= 0) {
-				nextService.models[existingIndex] = nextModel;
-			} else {
-				nextService.models.push(nextModel);
-				if (!this.draft.defaultModelId) {
-					this.draft.defaultModelId = nextModel.id;
-				}
-			}
-			overlay.remove();
-			this.saveCurrentForm();
-		});
-		overlay.addEventListener("click", (event) => {
-			if (event.target === overlay) overlay.remove();
-		});
-		document.body.appendChild(overlay);
+		}
+		this.editingServiceModelTarget = null;
+		this.saveCurrentForm();
 	}
 
 	private bindMcpActions(): void {
