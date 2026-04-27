@@ -11,13 +11,17 @@ An AI agent plugin for SiYuan. Ask questions, search notes, read documents, edit
 ## What It Does
 
 - Open the chat panel from the top bar and place it on the right or bottom side.
+- Use a unified settings interface for model services, default models, knowledge base defaults, and tracing.
+- Use the plugin in English or Simplified Chinese.
 - Connect any OpenAI-compatible model with a custom base URL, API key, and model name.
+- Use built-in DeepSeek provider support, including reasoning-capable models.
+- Select reasoning effort per conversation for supported models.
 - Use real note tools for search, read, append, block editing, move, and rename operations.
 - Display responses in layers: main answer, lookup tools, and change tools.
 - Keep recent sessions compact, with 3 shown by default and more available on demand.
 - Send selected editor content directly into the chat context.
 - Run `/init` to build a reusable guide document for the agent.
-- Create recurring tasks for summaries, reminders, and routine note maintenance.
+- Create recurring tasks for summaries, reminders, and routine note maintenance, with a manual "Run now" action.
 - Optionally enable LangSmith tracing for debugging and evaluation.
 
 ## Built-in Tools
@@ -61,11 +65,14 @@ After enabling the plugin, fill in:
 
 - `API Base URL`, for example `https://api.openai.com/v1`
 - `API Key`
+- `Provider`, such as OpenAI-compatible or DeepSeek
 - `Model`, for example `gpt-4o`, `gpt-4.1`, or another compatible model
 - `Custom Instructions`, optional
 - `Guide Document`, optional but recommended
 - `Default Notebook`, optional default target for write operations
 - `LangSmith Tracing`, optional
+
+The settings view is cached after opening, and scheduled tasks are loaded lazily so the chat panel can start faster.
 
 ## Development
 
