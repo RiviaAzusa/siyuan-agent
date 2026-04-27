@@ -40,6 +40,10 @@ function getUiAiContents(messagesUi: any[]): string[] {
 		.map((message) => String(message?.kwargs?.content ?? message?.content ?? ""));
 }
 
+function getReasoning(message: any): string {
+	return String(message?.additional_kwargs?.reasoning_content ?? message?.kwargs?.additional_kwargs?.reasoning_content ?? "");
+}
+
 describe("runAgentStream", () => {
 	it("keeps the latest values snapshot as the recovery source of truth", async () => {
 		const input = mergeState(null, "hello");
@@ -281,5 +285,38 @@ describe("runAgentStream", () => {
 
 		expect(result.aborted).toBe(true);
 		expect(getUiAiContents(result.lastState.messagesUi || [])).toEqual(["我来看看", "结果是 42"]);
+	});
+
+	it("preserves reasoning_content on tool-calling AI turns for later requests", async () => {
+		const input = mergeState(null, "search foo");
+
+		const result = await runAgentStream({
+			agent: createAgent([
+				["messages", [{
+					_getType: () => "ai",
+					content: "",
+					additional_kwargs: { reasoning_content: "Need to search first." },
+					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
+				}, {}]],
+				["messages", [{
+					_getType: () => "tool",
+					content: "42",
+					tool_call_id: "call-1",
+				}, {}]],
+				createAbortError(),
+			]),
+			input,
+		});
+
+		const messages = result.lastState.messages || [];
+		const uiAi = (result.lastState.messagesUi || [])
+			.find((message: any) => (message?.id?.[message.id.length - 1] ?? "") === "AIMessage");
+		expect(getTypes(messages)).toEqual(["human", "ai", "tool"]);
+		expect(getReasoning(messages[1])).toBe("Need to search first.");
+		expect(getReasoning(uiAi)).toBe("Need to search first.");
+
+		const nextInput = mergeState(result.lastState, "next question");
+		expect(getReasoning(nextInput.messages[1])).toBe("Need to search first.");
+		expect(getContents(nextInput.messages)).toEqual(["search foo", "", "42", "next question"]);
 	});
 });

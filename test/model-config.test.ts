@@ -64,6 +64,25 @@ describe("resolveModelConfig", () => {
 		expect(result.id).toBe("m1");
 		expect(result.model).toBe("deepseek-chat");
 		expect(result.apiKey).toBe("ds-key");
+		expect(result.providerType).toBe("deepseek");
+	});
+
+	it("infers DeepSeek provider type from API base URL", () => {
+		const config = makeConfig({
+			modelServices: [makeService({
+				name: "Custom",
+				apiBaseURL: "https://api.deepseek.com",
+				models: [{ id: "m_ds", name: "DeepSeek", model: "deepseek-v4-pro" }],
+			})],
+			defaultModelId: "m_ds",
+		});
+		expect(config.modelServices?.[0].providerType).toBe("deepseek");
+		expect(resolveModelConfig(config).providerType).toBe("deepseek");
+	});
+
+	it("keeps legacy services openai-compatible by default", () => {
+		const config = makeConfig({ modelServices: [makeService()] });
+		expect(config.modelServices?.[0].providerType).toBe("openai-compatible");
 	});
 
 	it("uses the first configured service model when no default model is selected", () => {

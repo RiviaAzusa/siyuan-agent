@@ -1,4 +1,5 @@
 import type { ToolUIEvent, UiMessage } from "./tool-events";
+import type { ReasoningEffort } from "./model-config";
 
 /* ── TodoList (agent plan management) ────────────────────────────────── */
 
@@ -84,6 +85,8 @@ export interface SessionData {
 	state: AgentState;
 	/** Per-conversation model override (model config ID) */
 	modelId?: string;
+	/** Per-conversation reasoning effort control for providers that support it. */
+	reasoningEffort?: ReasoningEffort;
 }
 
 /** Lightweight session index without messages. */

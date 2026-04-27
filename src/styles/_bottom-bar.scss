@@ -107,6 +107,13 @@
 	min-width: 0;
 }
 
+.chat-panel__reasoning {
+	width: 74px;
+	height: 32px;
+	padding: 0 6px;
+	font-size: 11px;
+}
+
 .chat-panel__send {
 	display: inline-flex;
 	align-items: center;

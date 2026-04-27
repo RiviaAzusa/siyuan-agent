@@ -96,6 +96,14 @@ export function getMessageContent(raw: Record<string, any>): string {
 	return typeof content === "string" ? content : "";
 }
 
+export function getMessageReasoning(raw: Record<string, any>): string {
+	const reasoning = raw.kwargs?.additional_kwargs?.reasoning_content
+		?? raw.additional_kwargs?.reasoning_content
+		?? raw.kwargs?.lc_kwargs?.additional_kwargs?.reasoning_content
+		?? raw.lc_kwargs?.additional_kwargs?.reasoning_content;
+	return typeof reasoning === "string" ? reasoning : "";
+}
+
 export function getMessageToolCalls(raw: Record<string, any>): any[] {
 	const toolCalls = raw.kwargs?.tool_calls ?? raw.tool_calls;
 	return Array.isArray(toolCalls) ? toolCalls : [];

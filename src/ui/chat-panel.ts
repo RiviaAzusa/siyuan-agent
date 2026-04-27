@@ -1,5 +1,4 @@
 import { Plugin, showMessage, openTab } from "siyuan";
-import { ChatOpenAI } from "@langchain/openai";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
 	AgentConfig,
@@ -23,6 +22,7 @@ import {
 	type ModelServiceConfig,
 	type ModelServiceModelConfig,
 	type McpServerConfig,
+	type ReasoningEffort,
 } from "../types";
 import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 import { makeAgent, makeTracer } from "../core/agent";
@@ -32,12 +32,13 @@ import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
 import { UiMessageBuilder, ensureMessagesUi } from "../core/ui-message-builder";
 import { compactMessages, shouldCompact } from "../core/compaction";
+import { createChatModel } from "../core/chat-model";
 import { getDefaultTools } from "../core/tools";
 import { SettingsView, type SettingsViewContext } from "./settings-view";
 import { TasksView, type TasksViewContext } from "./tasks-view";
 import { Autocomplete } from "./autocomplete";
 import {
-	msgType, sessionTitle, cloneMessage, getMessageContent, getMessageToolCalls,
+	msgType, sessionTitle, cloneMessage, getMessageContent, getMessageReasoning, getMessageToolCalls,
 	getMessageToolCallId, getToolCallId, setMessageContent, setMessageToolCalls,
 	normalizeMessagesForDisplay, escapeHtml, getToolCategory, getToolAction,
 	getToolDisplayTitle, getActionLabel, shouldSendComposerOnKeydown,
@@ -63,6 +64,7 @@ export class ChatPanel {
 	private messagesEl: HTMLElement;
 	private textareaEl: HTMLTextAreaElement;
 	private sendBtn: HTMLButtonElement;
+	private reasoningSelectEl: HTMLSelectElement;
 	private contextBar: HTMLElement;
 
 	private activeSession: SessionData;
@@ -106,6 +108,15 @@ export class ChatPanel {
 
 	private t(key: string, params?: Record<string, string | number | boolean | null | undefined>, fallback?: string): string {
 		return this.i18n.t(key, params, fallback);
+	}
+
+	private normalizeReasoningEffort(value: string | undefined): ReasoningEffort {
+		return value === "off" || value === "high" || value === "xhigh" ? value : "default";
+	}
+
+	private syncReasoningControl(): void {
+		if (!this.reasoningSelectEl || !this.activeSession) return;
+		this.reasoningSelectEl.value = this.normalizeReasoningEffort(this.activeSession.reasoningEffort);
 	}
 
 	private localizeToolResult(result: string): string {
@@ -174,6 +185,12 @@ export class ChatPanel {
 				<button class="chat-panel__switch-btn" type="button" data-view="settings">${escapeHtml(this.t("chat.view.settings"))}</button>
 			</div>
 			<div class="chat-panel__actions">
+				<select class="chat-panel__reasoning b3-select" title="${escapeHtml(this.t("chat.reasoning.control"))}" aria-label="${escapeHtml(this.t("chat.reasoning.control"))}">
+					<option value="default">${escapeHtml(this.t("chat.reasoning.default"))}</option>
+					<option value="off">${escapeHtml(this.t("chat.reasoning.off"))}</option>
+					<option value="high">${escapeHtml(this.t("chat.reasoning.high"))}</option>
+					<option value="xhigh">${escapeHtml(this.t("chat.reasoning.xhigh"))}</option>
+				</select>
 				<button class="chat-panel__send" type="button" title="${escapeHtml(this.t("chat.sendTitle"))}" aria-label="${escapeHtml(this.t("chat.send"))}">
 					${this.getSendIconMarkup()}
 				</button>
@@ -193,6 +210,7 @@ export class ChatPanel {
 		this.messagesEl = this.container.querySelector(".chat-panel__messages");
 		this.textareaEl = this.container.querySelector(".chat-panel__textarea");
 		this.sendBtn = this.container.querySelector(".chat-panel__send");
+		this.reasoningSelectEl = this.container.querySelector(".chat-panel__reasoning");
 		this.contextBar = this.container.querySelector(".chat-panel__context-bar");
 		this.applyEditorFontFamily();
 
@@ -240,6 +258,12 @@ export class ChatPanel {
 
 		/* Send on click */
 		this.sendBtn.onclick = () => this.send();
+		this.reasoningSelectEl.addEventListener("change", () => {
+			if (!this.activeSession) return;
+			this.activeSession.reasoningEffort = this.normalizeReasoningEffort(this.reasoningSelectEl.value);
+			this.activeSession.updated = Date.now();
+			void this.store.saveSession(this.activeSession);
+		});
 
 		this.refreshModelSelector();
 
@@ -472,6 +496,7 @@ export class ChatPanel {
 		if (nameEl)
 			nameEl.textContent = entry?.title || this.t("chat.newChat");
 		this.updateSessionToggleState();
+		this.syncReasoningControl();
 		void this.refreshModelSelector();
 
 	/* Lazy-migrate old sessions that lack messagesUi */
@@ -536,6 +561,7 @@ export class ChatPanel {
 		const config = await this.getConfig();
 		const sessionModelId = this.activeSession?.modelId;
 		const activeModel = resolveModelConfig(config, sessionModelId);
+		const reasoningEffort = this.normalizeReasoningEffort(this.activeSession?.reasoningEffort);
 		if (!activeModel.apiKey) {
 			showMessage(this.t("chat.error.apiKeyMissing"));
 			return;
@@ -689,7 +715,7 @@ export class ChatPanel {
 
 		try {
 			const modelOverride = sessionModelId ? activeModel : null;
-			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n);
+			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n, reasoningEffort);
 			const tracer = makeTracer(config);
 			const result = await runAgentStream({
 				agent,
@@ -789,12 +815,7 @@ export class ChatPanel {
 			/* Auto-compact if context grew too large */
 			if (!this.abortCtrl?.signal.aborted && shouldCompact(latestState)) {
 				try {
-					const compactModel = new ChatOpenAI({
-						model: activeModel.model,
-						temperature: 0,
-						apiKey: activeModel.apiKey,
-						configuration: { dangerouslyAllowBrowser: true, baseURL: activeModel.apiBaseURL },
-					});
+					const compactModel = createChatModel(activeModel, { temperature: 0 });
 					await compactMessages(s.state, { model: compactModel, source: "auto" });
 				} catch (_) { /* best-effort, don't block save */ }
 			}
@@ -826,15 +847,7 @@ export class ChatPanel {
 
 		this.setLoading(true);
 		try {
-			const model = new ChatOpenAI({
-				model: config.model,
-				temperature: 0,
-				apiKey: config.apiKey,
-				configuration: {
-					dangerouslyAllowBrowser: true,
-					baseURL: config.apiBaseURL,
-				},
-			});
+			const model = createChatModel(config, { temperature: 0 });
 			const summary = await compactMessages(s.state, {
 				model,
 				keepRecentTurns: 4,
@@ -1092,6 +1105,7 @@ export class ChatPanel {
 
 			const type = msgType(m);
 			const content = getMessageContent(m);
+			const reasoning = getMessageReasoning(m);
 			const toolCalls = getMessageToolCalls(m);
 
 			if (type === "human" || type === "user") {
@@ -1112,6 +1126,12 @@ export class ChatPanel {
 				if (!currentAssistantShell) {
 					currentAssistantShell = this.createAssistantMessageShell();
 					currentListEl.appendChild(currentAssistantShell.el);
+				}
+				if (reasoning) {
+					const reasoningEl = document.createElement("details");
+					reasoningEl.className = "chat-msg__reasoning";
+					reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary">💭 ${escapeHtml(this.t("chat.reasoning.process"))}</summary><div class="chat-msg__reasoning-content">${renderMarkdown(reasoning)}</div>`;
+					currentAssistantShell.stackEl.appendChild(reasoningEl);
 				}
 				if (content) {
 					this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
@@ -1637,6 +1657,7 @@ export class ChatPanel {
 	}
 
 	private setLoading(loading: boolean): void {
+		if (this.reasoningSelectEl) this.reasoningSelectEl.disabled = loading;
 		if (loading) {
 			this.sendBtn.innerHTML = this.getStopIconMarkup();
 			this.sendBtn.title = this.t("chat.stopTitle");

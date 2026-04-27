@@ -1,10 +1,10 @@
 import { createAgent, summarizationMiddleware } from "langchain";
-import { ChatOpenAI } from "@langchain/openai";
 import { LangChainTracer } from "@langchain/core/tracers/tracer_langchain";
 import { Client } from "langsmith";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { buildSystemPrompt, resolveModelConfig, type AgentConfig, type ModelConfig } from "../types";
+import { buildSystemPrompt, resolveModelConfig, type AgentConfig, type ModelConfig, type ReasoningEffort } from "../types";
 import { defaultTranslator, type Translator } from "../i18n";
+import { createChatModel } from "./chat-model";
 
 async function fetchGuideDoc(docId: string): Promise<string> {
 	try {
@@ -27,18 +27,10 @@ export async function makeAgent(
 	extraSystemPrompt?: string | null,
 	modelOverride?: ModelConfig | null,
 	i18n: Translator = defaultTranslator,
+	reasoningEffort: ReasoningEffort = "default",
 ) {
 	const mc = modelOverride || resolveModelConfig(config);
-	const model = new ChatOpenAI({
-		model: mc.model,
-		temperature: mc.temperature ?? 0,
-		streaming: true,
-		apiKey: mc.apiKey,
-		configuration: {
-			dangerouslyAllowBrowser: true,
-			baseURL: mc.apiBaseURL,
-		},
-	});
+	const model = createChatModel(mc, { streaming: true, reasoningEffort });
 
 	let systemPrompt = buildSystemPrompt(i18n);
 	if (config.guideDoc?.id) {

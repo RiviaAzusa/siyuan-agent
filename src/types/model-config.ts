@@ -4,6 +4,7 @@ export interface ModelConfig {
 	id: string;
 	name: string;
 	provider: string;
+	providerType?: ModelProviderType;
 	serviceId?: string;
 	model: string;
 	apiBaseURL: string;
@@ -27,10 +28,17 @@ export interface ModelServiceModelConfig {
 export interface ModelServiceConfig {
 	id: string;
 	name: string;
+	providerType?: ModelProviderType;
 	apiBaseURL: string;
 	apiKey: string;
 	models: ModelServiceModelConfig[];
 }
+
+export type ModelProviderType = "openai-compatible" | "deepseek";
+
+export type ReasoningEffort = "default" | "off" | "high" | "xhigh";
+
+export const DEEPSEEK_API_BASE_URL = "https://api.deepseek.com";
 
 /* ── MCP (Model Context Protocol) ────────────────────────────────────── */
 
@@ -98,10 +106,20 @@ function cloneLegacyModels(models?: ModelConfig[]): ModelConfig[] {
 	return Array.isArray(models) ? models.map((item) => ({ ...item })) : [];
 }
 
+function inferProviderType(service: Pick<ModelServiceConfig, "name" | "apiBaseURL" | "providerType">): ModelProviderType {
+	if (service.providerType === "deepseek") return "deepseek";
+	if (service.providerType === "openai-compatible") return "openai-compatible";
+	const name = String(service.name || "").toLowerCase();
+	const baseURL = String(service.apiBaseURL || "").toLowerCase();
+	if (name.includes("deepseek") || baseURL.includes("api.deepseek.com")) return "deepseek";
+	return "openai-compatible";
+}
+
 export function cloneModelServices(services?: ModelServiceConfig[]): ModelServiceConfig[] {
 	return Array.isArray(services)
 		? services.map((service) => ({
 			...service,
+			providerType: inferProviderType(service),
 			models: Array.isArray(service.models) ? service.models.map((model) => ({ ...model })) : [],
 		}))
 		: [];
@@ -118,6 +136,11 @@ function migrateLegacyModels(models?: ModelConfig[]): ModelServiceConfig[] {
 			service = {
 				id: `svc_${legacyModel.id}`,
 				name: legacyModel.provider || "OpenAI Compatible",
+				providerType: inferProviderType({
+					name: legacyModel.provider || "OpenAI Compatible",
+					apiBaseURL: legacyModel.apiBaseURL,
+					providerType: legacyModel.providerType,
+				}),
 				apiBaseURL: legacyModel.apiBaseURL,
 				apiKey: legacyModel.apiKey,
 				models: [],
@@ -157,6 +180,7 @@ export function flattenModelServices(services?: ModelServiceConfig[]): ModelConf
 				id: model.id,
 				name: model.name,
 				provider: service.name,
+				providerType: inferProviderType(service),
 				serviceId: service.id,
 				model: model.model,
 				apiBaseURL: service.apiBaseURL,
@@ -189,6 +213,10 @@ export function resolveModelConfig(config: AgentConfig, modelId?: string): Model
 		id: "__legacy__",
 		name: config.model || "gpt-4o",
 		provider: "custom",
+		providerType: inferProviderType({
+			name: "custom",
+			apiBaseURL: config.apiBaseURL || "https://api.openai.com/v1",
+		}),
 		model: config.model || "gpt-4o",
 		apiBaseURL: config.apiBaseURL || "https://api.openai.com/v1",
 		apiKey: config.apiKey || "",

@@ -4,6 +4,7 @@
 import { Plugin, showMessage } from "siyuan";
 import {
 	AgentConfig,
+	DEEPSEEK_API_BASE_URL,
 	DEFAULT_CONFIG,
 	cloneModelServices,
 	flattenModelServices,
@@ -11,6 +12,7 @@ import {
 	genModelId,
 	type ModelServiceConfig,
 	type ModelServiceModelConfig,
+	type ModelProviderType,
 	type McpServerConfig,
 	type ScheduledTaskMeta,
 } from "../types";
@@ -168,7 +170,7 @@ export class SettingsView {
 										<div class="agent-model-list__item">
 											<div class="agent-model-list__info">
 												<span class="agent-model-list__name">${escapeHtml(service.name)}</span>
-												<span class="agent-model-list__detail">${escapeHtml(service.apiBaseURL)} · ${escapeHtml(this.t("settings.modelServices.count", { count: service.models.length }))}</span>
+												<span class="agent-model-list__detail">${escapeHtml(service.providerType === "deepseek" ? "DeepSeek" : "OpenAI Compatible")} · ${escapeHtml(service.apiBaseURL)} · ${escapeHtml(this.t("settings.modelServices.count", { count: service.models.length }))}</span>
 											</div>
 											<div class="agent-model-list__actions">
 												<button class="b3-button b3-button--small b3-button--outline" type="button" data-action="add-service-model" data-service-id="${escapeHtml(service.id)}">${escapeHtml(this.t("settings.modelServices.addModel"))}</button>
@@ -197,6 +199,7 @@ export class SettingsView {
 								: `<div class="agent-model-list__empty">${escapeHtml(this.t("settings.modelServices.emptyServices"))}</div>`}
 						</div>
 						<div class="settings-panel__actions settings-panel__actions--inline">
+							<button class="b3-button b3-button--outline" type="button" data-action="add-deepseek-service">${escapeHtml(this.t("settings.modelServices.addDeepSeek"))}</button>
 							<button class="b3-button b3-button--outline" type="button" data-action="add-model-service">${escapeHtml(this.t("settings.modelServices.addService"))}</button>
 						</div>
 					</section>
@@ -428,6 +431,18 @@ export class SettingsView {
 			this.syncDraftFromForm();
 			this.openModelServiceEditor();
 		});
+		this.ctx.settingsViewEl.querySelector<HTMLElement>("[data-action='add-deepseek-service']")?.addEventListener("click", () => {
+			this.syncDraftFromForm();
+			this.openModelServiceEditor(undefined, {
+				name: "DeepSeek",
+				providerType: "deepseek",
+				apiBaseURL: DEEPSEEK_API_BASE_URL,
+				models: [
+					{ id: genModelId(), name: "DeepSeek V4 Pro", model: "deepseek-v4-pro" },
+					{ id: genModelId(), name: "DeepSeek V4 Flash", model: "deepseek-v4-flash" },
+				],
+			});
+		});
 		this.ctx.settingsViewEl.querySelectorAll<HTMLElement>("[data-action='edit-model-service']").forEach((button) => {
 			button.addEventListener("click", () => {
 				this.syncDraftFromForm();
@@ -476,7 +491,7 @@ export class SettingsView {
 		});
 	}
 
-	private openModelServiceEditor(serviceId?: string): void {
+	private openModelServiceEditor(serviceId?: string, preset?: Partial<ModelServiceConfig>): void {
 		if (!this.draft) return;
 		const existing = this.draft.modelServices.find((item) => item.id === serviceId) || null;
 		const draftService: ModelServiceConfig = existing ? {
@@ -484,10 +499,11 @@ export class SettingsView {
 			models: existing.models.map((item) => ({ ...item })),
 		} : {
 			id: genModelServiceId(),
-			name: "",
-			apiBaseURL: DEFAULT_CONFIG.apiBaseURL,
+			name: preset?.name || "",
+			providerType: preset?.providerType || "openai-compatible",
+			apiBaseURL: preset?.apiBaseURL || DEFAULT_CONFIG.apiBaseURL,
 			apiKey: "",
-			models: [],
+			models: preset?.models?.map((item) => ({ ...item })) || [],
 		};
 		const overlay = document.createElement("div");
 		overlay.className = "agent-model-editor-overlay";
@@ -496,6 +512,12 @@ export class SettingsView {
 				<h4 class="agent-model-editor__title">${escapeHtml(existing ? this.t("settings.editor.editService") : this.t("settings.editor.addService"))}</h4>
 				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.serviceName"))}
 					<input class="b3-text-field fn__block" data-field="name" value="${escapeHtml(draftService.name)}" placeholder="${escapeHtml(this.t("settings.editor.serviceNamePlaceholder"))}" />
+				</label>
+				<label class="agent-model-editor__label">${escapeHtml(this.t("settings.editor.providerType"))}
+					<select class="b3-select fn__block" data-field="providerType">
+						<option value="openai-compatible"${draftService.providerType !== "deepseek" ? " selected" : ""}>OpenAI Compatible</option>
+						<option value="deepseek"${draftService.providerType === "deepseek" ? " selected" : ""}>DeepSeek</option>
+					</select>
 				</label>
 				<label class="agent-model-editor__label">API Base URL
 					<input class="b3-text-field fn__block" data-field="apiBaseURL" value="${escapeHtml(draftService.apiBaseURL)}" placeholder="https://api.openai.com/v1" />
@@ -510,12 +532,15 @@ export class SettingsView {
 			</div>`;
 		const nameField = overlay.querySelector<HTMLInputElement>("[data-field='name']");
 		const baseUrlField = overlay.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
+		const providerTypeField = overlay.querySelector<HTMLSelectElement>("[data-field='providerType']");
 		overlay.querySelector<HTMLElement>("[data-action='cancel']")?.addEventListener("click", () => overlay.remove());
 		overlay.querySelector<HTMLElement>("[data-action='save']")?.addEventListener("click", () => {
 			if (!this.draft) return;
+			const providerType = providerTypeField?.value === "deepseek" ? "deepseek" : "openai-compatible";
 			const nextService: ModelServiceConfig = {
 				...draftService,
 				name: nameField?.value.trim() || "Unnamed Service",
+				providerType: providerType as ModelProviderType,
 				apiBaseURL: baseUrlField?.value.trim() || DEFAULT_CONFIG.apiBaseURL,
 				apiKey: overlay.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
 			};

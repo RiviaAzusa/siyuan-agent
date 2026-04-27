@@ -187,6 +187,13 @@ function normalizeSessionData(raw: any, fallbackId?: string, fallbackEntry?: Ses
 		group,
 		task,
 		state: raw?.state && typeof raw.state === "object" ? raw.state : {},
+		modelId: typeof raw?.modelId === "string" ? raw.modelId : undefined,
+		reasoningEffort: raw?.reasoningEffort === "off"
+			|| raw?.reasoningEffort === "high"
+			|| raw?.reasoningEffort === "xhigh"
+			|| raw?.reasoningEffort === "default"
+			? raw.reasoningEffort
+			: "default",
 	};
 }
 
@@ -200,6 +207,7 @@ function makeChatSessionData(): SessionData {
 		kind: "chat",
 		group: "chat_history",
 		state: {},
+		reasoningEffort: "default",
 	};
 }
 

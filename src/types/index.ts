@@ -1,9 +1,12 @@
 export {
 	type ModelConfig,
+	type ModelProviderType,
+	type ReasoningEffort,
 	type ModelServiceModelConfig,
 	type ModelServiceConfig,
 	type McpServerConfig,
 	type AgentConfig,
+	DEEPSEEK_API_BASE_URL,
 	DEFAULT_CONFIG,
 	cloneModelServices,
 	normalizeAgentConfig,
