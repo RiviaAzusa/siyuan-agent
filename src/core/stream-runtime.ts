@@ -80,6 +80,14 @@ function getMessageReasoning(message: any): string {
 	return typeof reasoning === "string" ? reasoning : "";
 }
 
+function normalizeReasoningDelta(current: string, incoming: string): string {
+	if (!incoming) return "";
+	if (incoming.startsWith(current)) {
+		return incoming.slice(current.length);
+	}
+	return incoming;
+}
+
 function getMessageToolCallId(message: any): string {
 	const toolCallId = message?.kwargs?.tool_call_id ?? message?.tool_call_id;
 	return typeof toolCallId === "string" ? toolCallId : "";
@@ -394,6 +402,7 @@ export async function runAgentStream({
 
 	/* Track the latest serialised AI message dict for the builder */
 	let currentAiDict: Record<string, any> | null = null;
+	let streamReasoningBuffer = "";
 
 	let aborted = false;
 	let error: unknown;
@@ -439,11 +448,15 @@ export async function runAgentStream({
 				if (messageType === "ai" || messageType === "AIMessageChunk") {
 					const reasoning = getMessageReasoning(message);
 					if (reasoning) {
-						parserState.reasoningBuffer += reasoning;
-						onUiEvent?.({
-							type: "reasoning_delta",
-							text: reasoning,
-						});
+						const reasoningDelta = normalizeReasoningDelta(streamReasoningBuffer, reasoning);
+						if (reasoningDelta) {
+							streamReasoningBuffer += reasoningDelta;
+							parserState.reasoningBuffer += reasoningDelta;
+							onUiEvent?.({
+								type: "reasoning_delta",
+								text: streamReasoningBuffer,
+							});
+						}
 					}
 
 					const textContent = getMessageContent(message);

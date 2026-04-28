@@ -6,21 +6,21 @@
 .chat-msg__assistant-stack {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 6px;
 }
 
 .chat-msg__activity-block {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
-	margin: 2px 0 4px;
+	gap: 3px;
+	margin: 0;
 }
 
 .chat-msg__activity-current,
 .chat-msg__activity-list {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: 3px;
 }
 
 .chat-msg__activity-archive {
@@ -33,6 +33,7 @@
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 6px;
+		min-height: 24px;
 		padding: 0;
 		cursor: pointer;
 		list-style: none;
@@ -45,10 +46,49 @@
 	> summary::-webkit-details-marker {
 		display: none;
 	}
+
+	> summary::after {
+		content: ">";
+		margin-left: 2px;
+		opacity: 0;
+		transform: rotate(0deg);
+		transition: opacity 0.12s ease, transform 0.12s ease;
+	}
+
+	&:hover > summary::after,
+	&[open] > summary::after,
+	> summary:focus-visible::after {
+		opacity: 0.72;
+	}
+
+	&[open] > summary::after {
+		transform: rotate(90deg);
+	}
 }
 
 .chat-msg__activity-title {
 	margin-right: 2px;
+}
+
+.chat-msg__process-prefix {
+	display: inline-flex;
+	align-items: center;
+	min-height: 24px;
+	white-space: nowrap;
+	gap: 6px;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+}
+
+.chat-msg__process-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 999px;
+	flex-shrink: 0;
+	background: rgba(127, 127, 127, 0.58);
+}
+
+.chat-msg__activity-block--change .chat-msg__process-dot {
+	background: color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 78%, white 22%);
 }
 
 .chat-msg__activity-chip {
@@ -76,6 +116,7 @@
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 4px 6px;
+		min-height: 24px;
 		padding: 0;
 		cursor: pointer;
 		font-weight: 500;
@@ -85,6 +126,25 @@
 
 	summary::-webkit-details-marker {
 		display: none;
+	}
+
+	summary::after {
+		content: ">";
+		margin-left: 2px;
+		opacity: 0;
+		transform: rotate(0deg);
+		transition: opacity 0.12s ease, transform 0.12s ease;
+	}
+
+	&:hover summary::after,
+	details:hover > summary::after,
+	details[open] > summary::after,
+	summary:focus-visible::after {
+		opacity: 0.72;
+	}
+
+	details[open] > summary::after {
+		transform: rotate(90deg);
 	}
 
 	pre {
@@ -174,19 +234,24 @@
 
 /* Reasoning / thinking display */
 .chat-msg__reasoning {
-	border: 1px solid var(--agent-border, var(--b3-border-color));
-	border-radius: 6px;
+	margin: 0;
 	padding: 0;
-	margin-bottom: 4px;
-	background: var(--agent-surface, var(--b3-theme-surface));
-	font-size: 13px;
-	opacity: 0.85;
+	border: none;
+	background: transparent;
+	font-size: 12px;
+	opacity: 0.92;
 }
 
 .chat-msg__reasoning-summary {
-	padding: 6px 10px;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px 6px;
+	min-height: 24px;
+	padding: 0;
 	cursor: pointer;
 	font-size: 12px;
+	font-weight: 500;
 	color: var(--agent-text-muted, var(--b3-theme-on-surface));
 	user-select: none;
 	list-style: none;
@@ -195,16 +260,36 @@
 	&::-webkit-details-marker {
 		display: none;
 	}
+
+	&::after {
+		content: ">";
+		margin-left: 2px;
+		opacity: 0;
+		transform: rotate(0deg);
+		transition: opacity 0.12s ease, transform 0.12s ease;
+	}
+}
+
+.chat-msg__reasoning:hover > .chat-msg__reasoning-summary::after,
+.chat-msg__reasoning[open] > .chat-msg__reasoning-summary::after,
+.chat-msg__reasoning-summary:focus-visible::after {
+	opacity: 0.72;
+}
+
+.chat-msg__reasoning[open] > .chat-msg__reasoning-summary::after {
+	transform: rotate(90deg);
 }
 
 .chat-msg__reasoning-content {
-	padding: 4px 10px 8px;
-	border-top: 1px solid var(--agent-border, var(--b3-border-color));
+	margin: 6px 0 0 20px;
+	padding: 0;
+	border: none;
 	color: var(--agent-text-muted, var(--b3-theme-on-surface));
-	font-size: 13px;
+	font-size: 12px;
 	line-height: 1.5;
 	max-height: 300px;
 	overflow-y: auto;
+	opacity: 0.9;
 
 	p {
 		margin: 4px 0;

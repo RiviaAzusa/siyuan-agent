@@ -815,10 +815,10 @@ export class ChatPanel {
 							reasoningEl = document.createElement("details");
 							reasoningEl.className = "chat-msg__reasoning";
 							reasoningEl.open = true;
-							reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary">💭 ${escapeHtml(this.t("chat.reasoning.thinking"))}</summary><div class="chat-msg__reasoning-content"></div>`;
+							reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary"><span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.reasoning.process"))}</span></summary><div class="chat-msg__reasoning-content"></div>`;
 							assistantShell.stackEl.appendChild(reasoningEl);
 						}
-						reasoningBuffer += event.text;
+						reasoningBuffer = event.text;
 						const contentEl = reasoningEl.querySelector(".chat-msg__reasoning-content")!;
 						contentEl.innerHTML = renderMarkdown(reasoningBuffer);
 						this.scrollToBottom();
@@ -830,7 +830,7 @@ export class ChatPanel {
 						if (reasoningEl) {
 							reasoningEl.open = false;
 							const summary = reasoningEl.querySelector(".chat-msg__reasoning-summary");
-							if (summary) summary.textContent = `💭 ${this.t("chat.reasoning.process")}`;
+							if (summary) summary.innerHTML = `<span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.reasoning.process"))}</span>`;
 							reasoningEl = null;
 						}
 						const el = getTextEl();
@@ -1217,7 +1217,7 @@ export class ChatPanel {
 				if (reasoning) {
 					const reasoningEl = document.createElement("details");
 					reasoningEl.className = "chat-msg__reasoning";
-					reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary">💭 ${escapeHtml(this.t("chat.reasoning.process"))}</summary><div class="chat-msg__reasoning-content">${renderMarkdown(reasoning)}</div>`;
+					reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary"><span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.reasoning.process"))}</span></summary><div class="chat-msg__reasoning-content">${renderMarkdown(reasoning)}</div>`;
 					currentAssistantShell.stackEl.appendChild(reasoningEl);
 				}
 				if (content) {
@@ -1539,7 +1539,7 @@ export class ChatPanel {
 		const title = block.category === "change"
 			? this.t("chat.tool.changed", { count: total })
 			: this.t("chat.tool.lookedUp", { count: total });
-		summary.innerHTML = `<span class="chat-msg__activity-title">${escapeHtml(title)}</span>${chips}`;
+		summary.innerHTML = `<span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span><span class="chat-msg__activity-title">${escapeHtml(title)}</span></span>${chips}`;
 	}
 
 	private findPendingToolElement(toolCallId: string, pendingToolEls: HTMLElement[]): HTMLElement | null {

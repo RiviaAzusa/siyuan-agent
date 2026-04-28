@@ -105,7 +105,7 @@
 .chat-msg__doc-meta {
 	display: inline-flex;
 	align-items: center;
-	min-height: 28px;
+	min-height: 24px;
 }
 
 .chat-msg__tool-prefix {
@@ -119,6 +119,10 @@
 	height: 8px;
 	border-radius: 999px;
 	flex-shrink: 0;
+	background: rgba(127, 127, 127, 0.58);
+}
+
+.chat-msg__tool[data-tool-category="change"] .chat-msg__tool-dot {
 	background: color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 78%, white 22%);
 }
 

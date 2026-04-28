@@ -319,4 +319,38 @@ describe("runAgentStream", () => {
 		expect(getReasoning(nextInput.messages[1])).toBe("Need to search first.");
 		expect(getContents(nextInput.messages)).toEqual(["search foo", "", "42", "next question"]);
 	});
+
+	it("normalizes cumulative reasoning_content chunks into UI snapshots", async () => {
+		const input = mergeState(null, "search foo");
+		const events: AgentStreamUiEvent[] = [];
+
+		const result = await runAgentStream({
+			agent: createAgent([
+				["messages", [{
+					_getType: () => "ai",
+					content: "",
+					additional_kwargs: { reasoning_content: "Need to search first." },
+				}, {}]],
+				["messages", [{
+					_getType: () => "ai",
+					content: "",
+					additional_kwargs: { reasoning_content: "Need to search first. Then inspect the result." },
+				}, {}]],
+				["messages", [{
+					_getType: () => "ai",
+					content: "Done",
+				}, {}]],
+				createAbortError(),
+			]),
+			input,
+			onUiEvent: (event) => events.push(event),
+		});
+
+		expect(result.aborted).toBe(true);
+		expect(events.filter((event) => event.type === "reasoning_delta").map((event) => event.text)).toEqual([
+			"Need to search first.",
+			"Need to search first. Then inspect the result.",
+		]);
+		expect(getReasoning(result.lastState.messages?.[1])).toBe("Need to search first. Then inspect the result.");
+	});
 });
