@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.3
+
+- Improved the welcome screen.
+- Improved `/init`.
+- Improved user onboarding.
+
+中文：
+
+- 优化欢迎页。
+- 优化 `/init` 功能。
+- 优化用户引导。
+
 ## 0.1.2
 
 - Added built-in model provider support for DeepSeek.
