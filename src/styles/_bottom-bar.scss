@@ -117,7 +117,7 @@
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	max-width: 160px;
+	max-width: 220px;
 	height: 32px;
 	padding: 0 11px;
 	border: 1px solid transparent;
@@ -155,12 +155,12 @@
 }
 
 .chat-panel__model-picker-model {
-	max-width: 82px;
+	max-width: 138px;
 	font-weight: 600;
 }
 
 .chat-panel__model-picker-reasoning {
-	max-width: 44px;
+	max-width: 52px;
 	color: var(--agent-text-muted, var(--b3-theme-on-surface));
 }
 

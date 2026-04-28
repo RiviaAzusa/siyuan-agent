@@ -46,6 +46,9 @@ import {
 	type AssistantMessageShell, type ActivityBlockRefs,
 } from "./chat-helpers";
 const CONFIG_STORAGE = "agent-config";
+const INIT_NOTEBOOK_NAME = "SiYuan-Agent";
+const INIT_DOC_TITLE = "SiYuan-Agent-Init";
+const INIT_DOC_PATH = `/${INIT_DOC_TITLE}`;
 
 export class ChatPanel {
 	private container: HTMLElement;
@@ -643,7 +646,7 @@ export class ChatPanel {
 		if (!text && !this.pendingContext)
 			return;
 
-		const config = await this.getConfig();
+		let config = await this.getConfig();
 		const sessionModelId = this.activeSession?.modelId;
 		const activeModel = resolveModelConfig(config, sessionModelId);
 		const reasoningEffort = this.normalizeReasoningEffort(this.activeSession?.reasoningEffort);
@@ -678,11 +681,15 @@ export class ChatPanel {
 		let extraSystemPrompt: string | null = null;
 		const initMatch = text.match(/^\/init(?:\s+([\s\S]*))?$/i);
 		if (initMatch) {
-			const guideDocId = config.guideDoc?.id;
-				if (!guideDocId) {
-					showMessage(this.t("chat.init.missingGuideDoc"));
+			if (!config.guideDoc?.id) {
+				try {
+					config = await this.ensureInitGuideDoc(config);
+				} catch (err) {
+					showMessage(this.t("chat.error.prefix", { message: localizeErrorMessage(err, this.i18n) }));
 					return;
 				}
+			}
+			const guideDocId = config.guideDoc?.id || "";
 			const extra = (initMatch[1] || "").trim();
 			extraSystemPrompt = [
 				buildInitPrompt(this.i18n),
@@ -1924,6 +1931,53 @@ export class ChatPanel {
 			/* Use defaults */
 		}
 		return normalizeAgentConfig();
+	}
+
+	private async postSiyuan<T = any>(url: string, data: any): Promise<T> {
+		const resp = await fetch(url, {
+			method: "POST",
+			body: JSON.stringify(data),
+		});
+		const json = await resp.json();
+		if (json.code !== 0) {
+			throw new Error(json.msg || `API error code ${json.code}`);
+		}
+		return json.data as T;
+	}
+
+	private async ensureInitGuideDoc(config: AgentConfig): Promise<AgentConfig> {
+		const notebooksData = await this.postSiyuan<{ notebooks?: Array<{ id: string; name: string; closed?: boolean }> }>("/api/notebook/lsNotebooks", {});
+		let notebook = (notebooksData.notebooks || []).find((item) => item.name === INIT_NOTEBOOK_NAME);
+
+		if (!notebook) {
+			const created = await this.postSiyuan<{ notebook?: { id: string; name: string; closed?: boolean } }>("/api/notebook/createNotebook", {
+				name: INIT_NOTEBOOK_NAME,
+			});
+			if (!created.notebook?.id) {
+				throw new Error("Failed to create init notebook");
+			}
+			notebook = created.notebook;
+		}
+
+		if (notebook.closed) {
+			await this.postSiyuan("/api/notebook/openNotebook", { notebook: notebook.id });
+		}
+
+		const docId = await this.postSiyuan<string>("/api/filetree/createDocWithMd", {
+			notebook: notebook.id,
+			path: INIT_DOC_PATH,
+			markdown: "",
+		});
+
+		const nextConfig: AgentConfig = {
+			...config,
+			guideDoc: { id: docId, title: INIT_DOC_TITLE },
+			defaultNotebook: config.defaultNotebook || { id: notebook.id, name: notebook.name },
+		};
+		this.plugin.data[CONFIG_STORAGE] = nextConfig;
+		await this.plugin.saveData(CONFIG_STORAGE, nextConfig);
+		await this.handleConfigSaved(nextConfig);
+		return normalizeAgentConfig(nextConfig);
 	}
 
 	/* --- Autocomplete --- */
