@@ -6,7 +6,7 @@ An AI agent plugin for SiYuan. Ask questions, search notes, read documents, edit
 
 ## Feature Example
 
-<img src="https://github.com/RiviaAzusa/siyuan-agent/blob/main/samples/sample1.png?raw=1" alt="SiYuan Agent feature example" width="50%" />
+<img src="https://github.com/RiviaAzusa/siyuan-agent/blob/main/samples/sample1.png?raw=1" alt="SiYuan Agent feature example" width="100%" />
 
 ## What It Does
 

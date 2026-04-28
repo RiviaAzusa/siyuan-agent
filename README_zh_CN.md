@@ -6,7 +6,7 @@
 
 ## 功能示例
 
-<img src="https://github.com/RiviaAzusa/siyuan-agent/blob/main/samples/sample1.png?raw=1" alt="SiYuan Agent 功能示例" width="50%" />
+<img src="https://github.com/RiviaAzusa/siyuan-agent/blob/main/samples/sample1.png?raw=1" alt="SiYuan Agent 功能示例" width="100%" />
 
 ## 它能做什么
 
