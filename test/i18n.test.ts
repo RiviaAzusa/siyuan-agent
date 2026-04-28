@@ -10,7 +10,7 @@ describe("i18n", () => {
 		});
 
 		expect(i18n.t("custom.count", { count: 3 })).toBe("Count: 3");
-		expect(i18n.t("slash.help")).toBe("Show available commands and tools");
+		expect(i18n.t("slash.help")).toBe("Show available commands");
 	});
 
 	it("builds localized slash command descriptions", () => {

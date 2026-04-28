@@ -179,12 +179,33 @@
 	padding: 0;
 
 	> summary {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		list-style: none;
 		padding: 4px 0;
+
+		&::after {
+			content: ">";
+			margin-left: 2px;
+			opacity: 0;
+			transform: rotate(0deg);
+			transition: opacity 0.12s ease, transform 0.12s ease;
+		}
 	}
 
 	> summary::-webkit-details-marker {
 		display: none;
+	}
+
+	&:hover > summary::after,
+	&[open] > summary::after,
+	> summary:focus-visible::after {
+		opacity: 0.72;
+	}
+
+	&[open] > summary::after {
+		transform: rotate(90deg);
 	}
 }
 

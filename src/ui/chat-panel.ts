@@ -82,6 +82,8 @@ export class ChatPanel {
 	private sessionListExpanded = false;
 	private modelPickerOpen = false;
 	private modelSubmenuOpen = false;
+	private placeholderIndex = 0;
+	private placeholderTimer: number | null = null;
 	private unsubs: Array<() => void> = [];
 	private readonly handleDocumentClick = () => this.closeModelPicker();
 	private readonly handleDocumentKeydown = (event: KeyboardEvent) => {
@@ -326,6 +328,7 @@ export class ChatPanel {
 		};
 		this.textareaEl.addEventListener("input", autoResize);
 		this.textareaEl.style.overflowY = "hidden";
+		this.startPlaceholderRotation();
 
 		/* Autocomplete trigger */
 		this.textareaEl.addEventListener("input", (e) => {
@@ -609,27 +612,7 @@ export class ChatPanel {
 		const el = document.createElement("div");
 		el.className = "chat-panel__welcome";
 		el.innerHTML = `
-			<div class="chat-panel__welcome-icon">📚</div>
-			<h3 class="chat-panel__welcome-title">${escapeHtml(this.t("chat.welcome.title"))}</h3>
-			<p class="chat-panel__welcome-desc">${escapeHtml(this.t("chat.welcome.desc"))}</p>
-			<div class="chat-panel__welcome-actions">
-				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.recentPrompt"))}">📋 ${escapeHtml(this.t("chat.welcome.recentLabel"))}</button>
-				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.structurePrompt"))}">🗂️ ${escapeHtml(this.t("chat.welcome.structureLabel"))}</button>
-				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.searchPrompt"))}">🔍 ${escapeHtml(this.t("chat.welcome.searchLabel"))}</button>
-				<button class="chat-panel__welcome-btn" data-prompt="${escapeHtml(this.t("chat.welcome.todoPrompt"))}">✅ ${escapeHtml(this.t("chat.welcome.todoLabel"))}</button>
-			</div>`;
-		el.querySelectorAll(".chat-panel__welcome-btn").forEach((btn) => {
-			btn.addEventListener("click", () => {
-				const prompt = (btn as HTMLElement).dataset.prompt || "";
-				this.textareaEl.value = prompt;
-				this.textareaEl.focus();
-				// For search prompt, position cursor between quotes
-				if (prompt.includes("「」") || prompt.includes("\"\"")) {
-					const idx = prompt.includes("「」") ? prompt.indexOf("「") + 1 : prompt.indexOf("\"\"") + 1;
-					this.textareaEl.setSelectionRange(idx, idx);
-				}
-			});
-		});
+			<h3 class="chat-panel__welcome-title">${escapeHtml(this.t("chat.welcome.title"))}</h3>`;
 		this.messagesEl.appendChild(el);
 	}
 
@@ -650,14 +633,13 @@ export class ChatPanel {
 		const sessionModelId = this.activeSession?.modelId;
 		const activeModel = resolveModelConfig(config, sessionModelId);
 		const reasoningEffort = this.normalizeReasoningEffort(this.activeSession?.reasoningEffort);
-		if (!activeModel.apiKey) {
-			showMessage(this.t("chat.error.apiKeyMissing"));
-			return;
-		}
-
 		/* Handle /compact command */
 		const compactMatch = text.match(/^\/compac?t(?:\s+([\s\S]*))?$/i);
 		if (compactMatch) {
+			if (!activeModel.apiKey) {
+				showMessage(this.t("chat.error.apiKeyMissing"));
+				return;
+			}
 			this.textareaEl.value = "";
 			await this.handleCompact(activeModel, (compactMatch[1] || "").trim());
 			return;
@@ -674,6 +656,11 @@ export class ChatPanel {
 		if (/^\/clear$/i.test(text)) {
 			this.textareaEl.value = "";
 			this.newSession();
+			return;
+		}
+
+		if (!activeModel.apiKey) {
+			showMessage(this.t("chat.error.apiKeyMissing"));
 			return;
 		}
 
@@ -983,20 +970,14 @@ export class ChatPanel {
 	private showHelpMessage(): void {
 		const helpHtml = `
 <div class="chat-msg__help">
-<h4>📖 ${escapeHtml(this.t("chat.help.commandsTitle"))}</h4>
+<h4>${escapeHtml(this.t("chat.help.commandsTitle"))}</h4>
 <table>
 <tr><td><code>/init</code></td><td>${escapeHtml(this.t("slash.init"))}</td></tr>
 <tr><td><code>/compact</code></td><td>${escapeHtml(this.t("slash.compact"))}</td></tr>
 <tr><td><code>/help</code></td><td>${escapeHtml(this.t("slash.help"))}</td></tr>
 <tr><td><code>/clear</code></td><td>${escapeHtml(this.t("slash.clear"))}</td></tr>
 </table>
-<h4>🔧 ${escapeHtml(this.t("chat.help.toolsTitle", { count: this.tools.length }))}</h4>
-<p>${escapeHtml(this.t("chat.help.toolsDesc"))}</p>
-<details>
-<summary>${escapeHtml(this.t("chat.help.allTools"))}</summary>
-<ul>${this.tools.map(t => `<li><strong>${t.name}</strong>: ${t.description?.slice(0, 80) || ""}</li>`).join("")}</ul>
-</details>
-<h4>💡 ${escapeHtml(this.t("chat.help.tipsTitle"))}</h4>
+<h4>${escapeHtml(this.t("chat.help.tipsTitle"))}</h4>
 <ul>
 <li>${this.t("chat.help.tipSelection")}</li>
 <li>${escapeHtml(this.t("chat.help.tipContextMenu"))}</li>
@@ -1006,6 +987,7 @@ export class ChatPanel {
 		const el = document.createElement("div");
 		el.className = "chat-msg chat-msg--system";
 		el.innerHTML = helpHtml;
+		this.messagesEl.innerHTML = "";
 		this.messagesEl.appendChild(el);
 		this.scrollToBottom();
 	}
@@ -1039,6 +1021,10 @@ export class ChatPanel {
 
 	destroy(): void {
 		this.stop();
+		if (this.placeholderTimer !== null) {
+			window.clearInterval(this.placeholderTimer);
+			this.placeholderTimer = null;
+		}
 		document.removeEventListener("click", this.handleDocumentClick);
 		document.removeEventListener("keydown", this.handleDocumentKeydown);
 		this.unsubs.splice(0).forEach((unsubscribe) => unsubscribe());
@@ -1764,8 +1750,31 @@ export class ChatPanel {
 			this.sendBtn.title = this.t("chat.sendTitle");
 			this.sendBtn.setAttribute("aria-label", this.t("chat.send"));
 			this.sendBtn.onclick = () => this.send();
-			this.textareaEl.placeholder = this.t("chat.placeholder");
+			this.updateComposerPlaceholder();
 		}
+	}
+
+	private getComposerPlaceholders(): string[] {
+		return [
+			this.t("chat.placeholder.ask"),
+			this.t("chat.placeholder.init"),
+			this.t("chat.placeholder.mention"),
+			this.t("chat.placeholder.commands"),
+		].filter((text) => text && !text.startsWith("chat.placeholder."));
+	}
+
+	private updateComposerPlaceholder(): void {
+		const placeholders = this.getComposerPlaceholders();
+		this.textareaEl.placeholder = placeholders[this.placeholderIndex % placeholders.length] || this.t("chat.placeholder");
+	}
+
+	private startPlaceholderRotation(): void {
+		this.updateComposerPlaceholder();
+		this.placeholderTimer = window.setInterval(() => {
+			if (this.abortCtrl) return;
+			this.placeholderIndex += 1;
+			this.updateComposerPlaceholder();
+		}, 4500);
 	}
 
 	/* --- Todos progress bar rendering --- */
