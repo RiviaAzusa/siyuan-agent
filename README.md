@@ -2,56 +2,51 @@
 
 # SiYuan Agent
 
-An AI agent plugin for SiYuan. Ask questions, search notes, read documents, edit content, and run recurring tasks without leaving your workspace.
+An AI Agent plugin built for SiYuan.
 
-## Feature Example
+It understands your notes and writing habits, then helps with search, drafting, editing, document management, and recurring tasks.
 
 <img src="https://github.com/RiviaAzusa/siyuan-agent/blob/main/samples/sample1.png?raw=1" alt="SiYuan Agent feature example" width="100%" />
 
-## What It Does
+## Quick Start
 
-- Open the chat panel from the top bar and place it on the right or bottom side.
-- Use a unified settings interface for model services, default models, knowledge base defaults, and tracing.
-- Use the plugin in English or Simplified Chinese.
-- Connect any OpenAI-compatible model with a custom base URL, API key, and model name.
-- Use built-in DeepSeek provider support, including reasoning-capable models.
-- Select reasoning effort per conversation for supported models.
-- Use real note tools for search, read, append, block editing, move, and rename operations.
-- Display responses in layers: main answer, lookup tools, and change tools.
-- Keep recent sessions compact, with 3 shown by default and more available on demand.
-- Send selected editor content directly into the chat context.
-- Run `/init` to build a reusable guide document for the agent.
-- Create recurring tasks for summaries, reminders, and routine note maintenance, with a manual "Run now" action.
-- Optionally enable LangSmith tracing for debugging and evaluation.
+> [!IMPORTANT]
+> Configure `API Key` and `API Base URL` in the settings page first.
 
-## Built-in Tools
+1. Open `SiYuan Agent` from the SiYuan top bar.
+2. For first-time use, run `/init` so the Agent can learn your document structure and writing style.
+3. Ask questions directly, or let it search, summarize, create, append, edit, and move documents.
+4. Create scheduled tasks, for example: "Every morning at 9, summarize what I did yesterday and write it into today's journal."
 
-### Notes and Documents
+## Features
 
-- `list_notebooks`
-- `list_documents`
-- `recent_documents`
-- `search_fulltext`
-- `get_document`
-- `get_document_blocks`
-- `create_document`
-- `append_block`
-- `edit_blocks`
-- `move_document`
-- `rename_document`
+- Restrained UI that blends into different SiYuan themes.
+- Interaction and workflow design inspired by mature Agent products:
+  - Combines multiple retrieval tools and explorer agents to search note context like a codebase.
+  - Automatically compresses context in the background, and manages long tasks with Todo.
+- Scheduled tasks: delegate recurring work to the Agent.
 
-### Scheduled Tasks
+## Roadmap
 
-- `create_scheduled_task`
-- `list_scheduled_tasks`
-- `update_scheduled_task`
-- `delete_scheduled_task`
+- Tool permission management
+- Visual edit history and rollback
+- ACP protocol exposure
+- ... (tentative, issues are welcome)
+
+## Tech Stack
+
+- [LangChain](https://js.langchain.com/): Agent, tool calling, and streaming runtime
+- [SiYuan Plugin API](https://github.com/siyuan-note/siyuan): SiYuan plugin integration and document operations
+- TypeScript
+- Webpack
+- Sass
+- Vitest
 
 ## Installation
 
 ### Bazaar
 
-Install `SiYuan Agent` from the SiYuan community bazaar and enable it in Settings.
+Install `SiYuan Agent` from the SiYuan community bazaar and enable it.
 
 ### Manual
 
@@ -63,16 +58,17 @@ Install `SiYuan Agent` from the SiYuan community bazaar and enable it in Setting
 
 After enabling the plugin, fill in:
 
-- `API Base URL`, for example `https://api.openai.com/v1`
+- `API Base URL`
 - `API Key`
-- `Provider`, such as OpenAI-compatible or DeepSeek
-- `Model`, for example `gpt-4o`, `gpt-4.1`, or another compatible model
-- `Custom Instructions`, optional
-- `Guide Document`, optional but recommended
-- `Default Notebook`, optional default target for write operations
-- `LangSmith Tracing`, optional
+- `Provider`
+- `Model`
 
-The settings view is cached after opening, and scheduled tasks are loaded lazily so the chat panel can start faster.
+Optional settings:
+
+- `Custom Instructions`
+- `Guide Document`
+- `Default Notebook`
+- `LangSmith Tracing`
 
 ## Development
 
@@ -82,7 +78,9 @@ npm run build
 npm run test
 ```
 
-Repository: [RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent)
+## Feedback
+
+Feature ideas, bug reports, and improvements are welcome via [Issue](https://github.com/RiviaAzusa/siyuan-agent/issues) or Pull Request.
 
 ## License
 

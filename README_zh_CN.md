@@ -2,57 +2,45 @@
 
 # SiYuan Agent
 
-面向思源笔记的 AI Agent 插件。你可以直接在思源里提问、检索笔记、读取文档、改写内容，并把重复性工作交给定时任务。
+专为思源笔记打造的 AI Agent 插件。
 
-## 功能示例
+它可以在理解笔记内容和个人写作习惯的基础上，协助你完成检索、撰写、编辑、文档管理与周期性任务。
 
 <img src="https://github.com/RiviaAzusa/siyuan-agent/blob/main/samples/sample1.png?raw=1" alt="SiYuan Agent 功能示例" width="100%" />
 
-## 它能做什么
+## 快速开始
 
-- 在思源顶部栏打开聊天面板，并切换到右侧或下侧区域，不占用传统 dock。
-- 使用统一设置界面集中管理模型服务、默认模型、知识库默认项和追踪配置。
-- 支持英文和简体中文界面。
-- 使用 OpenAI 兼容模型进行对话，支持自定义 `API Base URL`、`API Key` 和模型名。
-- 内置支持 DeepSeek 模型供应商，包括支持思考过程的模型。
-- 支持按对话选择思考深度。
-- 在回答过程中调用真实工具，完成笔记检索、文档读取、内容追加、块级编辑、移动和重命名。
-- 将工具行为按“正文 / 查找 / 更改”分层展示，查找类操作默认更克制，更改类操作更醒目。
-- 维护紧凑的最近会话列表，默认展示 3 条，并可在面板内继续展开查看更多历史。
-- 把编辑器中选中的内容直接送入对话上下文，减少复制粘贴。
-- 通过 `/init` 探索你的笔记库，生成一份长期可复用的用户指南文档。
-- 创建和管理定时任务，用于日报、周报、提醒、周期性整理等重复流程，并支持手动“立即执行”。
-- 可选接入 LangSmith，便于调试调用链和评估效果。
+> [!IMPORTANT]
+> 请先在设置页配置 `API Key` 与 `API Base URL`。
 
-## 适合的使用场景
+1. 从思源顶部栏打开 `SiYuan Agent`。
+2. 首次使用建议输入 `/init`，让 Agent 了解你的文档结构和写作风格。
+3. 直接提问，或让它检索、总结、创建、追加、编辑和移动文档。
+4. 创建定时任务，例如"每天早上9点总结我昨天干了什么，并写到今天的日记里。"
 
-- “帮我基于最近修改的文档整理今天的工作进展。”
-- “搜索和这个项目相关的笔记，整理成会议纪要。”
-- “把这段草稿追加到某篇文档末尾，再顺手改一下标题。”
-- “每周五下班前自动生成一份本周总结。”
+## 功能&特性
 
-## 内置工具
+- 界面克制，可融入不同思源主题。
+- 参考了多个成熟 Agent 产品的交互与工作流设计：
+  - 融合多种检索工具和探索智能体，像检索代码库一样检索笔记上下文。
+  - 后台自动压缩上下文，长任务通过 Todo 管理过程。
+- 定时任务：支持将定期重复任务交给Agent完成。
 
-### 笔记与文档
+## 未来计划
 
-- `list_notebooks`
-- `list_documents`
-- `recent_documents`
-- `search_fulltext`
-- `get_document`
-- `get_document_blocks`
-- `create_document`
-- `append_block`
-- `edit_blocks`
-- `move_document`
-- `rename_document`
+- 工具权限管理
+- 编辑记录可视化与回退
+- 暴露ACP协议
+- ... (暂定, 欢迎提Issue)
 
-### 定时任务
+## 技术栈
 
-- `create_scheduled_task`
-- `list_scheduled_tasks`
-- `update_scheduled_task`
-- `delete_scheduled_task`
+- [LangChain](https://js.langchain.com/)：Agent、工具调用与流式运行
+- [SiYuan Plugin API](https://github.com/siyuan-note/siyuan)：思源插件集成与文档操作
+- TypeScript
+- Webpack
+- Sass
+- Vitest
 
 ## 安装
 
@@ -66,35 +54,21 @@
 2. 解压到思源工作空间下的 `data/plugins/siyuan-agent/`。
 3. 重启思源并启用插件。
 
-## 配置说明
+## 配置
 
-启用插件后，在设置页补充以下内容：
+启用插件后，在设置页填写：
 
-- `API Base URL`：例如 `https://api.openai.com/v1`
+- `API Base URL`
 - `API Key`
-- `Provider`：例如 OpenAI 兼容服务或 DeepSeek
-- `Model`：例如 `gpt-4o`、`gpt-4.1` 或其他兼容模型
-- `Custom Instructions`：可选，用于补充固定行为偏好
-- `Guide Document`：可选但推荐，作为长期用户指南文档
-- `Default Notebook`：可选，作为写入任务默认目标笔记本
-- `LangSmith Tracing`：可选，用于调试与追踪
+- `Provider`
+- `Model`
 
-设置界面会在首次打开后缓存，定时任务也会懒加载，以减少聊天面板初始打开时的工作量。
+可选配置：
 
-## 快速开始
-
-1. 从顶部栏打开聊天面板。
-2. 直接提问，或使用 `Option + Command + L` 把当前选中文本发给 Agent。
-3. 让 Agent 在思源中搜索、总结、创建或编辑文档。
-4. 首次使用建议执行 `/init`，帮助 Agent 了解你的笔记结构和写作习惯。
-5. 需要固定频率执行的任务时，创建对应的定时任务。
-
-## 注意事项
-
-- 你需要自行提供可用的模型服务和 API Key。
-- 写入类操作会直接作用于真实思源内容，重要文档建议自行复核。
-- 插件优先调用真实工具，而不是编造“看起来合理”的结果。
-- 当前默认不暴露删除文档能力，以降低误操作风险。
+- `Custom Instructions`
+- `Guide Document`
+- `Default Notebook`
+- `LangSmith Tracing`
 
 ## 开发
 
@@ -104,8 +78,10 @@ npm run build
 npm run test
 ```
 
-项目地址：[RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent)
+## 反馈
 
-## 许可证
+有功能想法、Bug 反馈或改进建议，欢迎提交 [Issue](https://github.com/RiviaAzusa/siyuan-agent/issues) 或 Pull Request。
+
+## License
 
 MIT
