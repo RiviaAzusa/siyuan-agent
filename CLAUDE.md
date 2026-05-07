@@ -1,89 +1,99 @@
-# SiYuan Agent
+# CLAUDE.md
 
-思源笔记 AI 助手插件，类 Notion AI 体验。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概况
+## Build & Test
 
-- **构建**: Webpack 5 + TypeScript + SCSS, `npm run dev` / `npm run build`
-- **SDK**: `siyuan` npm 包 (v1.1.7), 外部引用不打包
-- **LangChain**: `@langchain/core` + `@langchain/openai` 构建 Agent
-- **产物**: `dist/index.js` + `dist/index.css`
-- **思源源码参考**: `/Users/azusa/projects/research/siyuan/`
-
-## 架构
-
-```
-src/
-  index.ts           # 插件入口: Dock/Command/Setting
-  index.scss         # 样式, 使用思源 CSS 变量 (--b3-theme-*)
-  types.ts           # ChatMessage, AgentConfig
-  core/
-    agent.ts         # LangChain Agent 循环 (stream + tool call)
-    tools.ts         # Tool Definitions (Zod Schema + SiYuan API)
-  ui/
-    chat-panel.ts    # Dock 聊天面板 (消息列表 + 输入框 + 流式渲染)
-    markdown.ts      # Markdown→HTML 渲染器
-test/
-    test-tools.ts    # 工具测试: `npx tsx test/test-tools.ts`
+```bash
+npm run dev          # Dev build with watch (Webpack 5 + esbuild-loader)
+npm run build        # Production build → dist/index.js + dist/index.css + package.zip
+npm run test         # Vitest single pass
+npm run test:watch   # Vitest watch mode
+npm run lint         # ESLint --fix with cache
+./deploy.sh          # Build + copy to local SiYuan plugin directory
 ```
 
-## 思源插件 API 要点
+Single test file: `npx vitest run test/markdown.test.ts`
 
-### Command 回调类型 (ICommand)
-- `callback`: 通用回调, 仅在其余回调都不存在时触发
-- `editorCallback(protyle: IProtyle)`: 焦点在编辑器时触发, 传入 protyle 对象
-- `globalCallback`: 焦点不在应用内时触发
-- `fileTreeCallback(file)` / `dockCallback(element)`: 对应焦点场景
-- **注意**: 全局 keydown 中, 如果 command 定义了任一非 callback 回调, callback 不会被触发
+## Architecture
 
-### 编辑器 Keydown 拦截 (protyle/wysiwyg/keydown.ts)
-- 跨块选择 (range 跨越不同 block 元素) 时, 编辑器会 `stopPropagation()` + `return`, **只放行 ⌘C**
-- 因此 `editorCallback` 在跨块选择场景下不会被调用
-- 块级选择通过 `.protyle-wysiwyg--select` CSS 类标记整个块元素
+SiYuan Agent — AI assistant plugin for the SiYuan note-taking app. LangChain agent with streaming, tool calling, and MCP support.
 
-### 获取选中文本的正确方式
+### Entry & Lifecycle
+- `src/index.ts`: Plugin class → creates Dock (mobile) / Tab (desktop), registers `editorCallback` (`⌥⌘L`) for send-to-chat, right-click context menu. Lifecycle: `onload` → `onLayoutReady` → `onunload` → `uninstall`
+
+### Core (`src/core/`)
+- **`agent.ts`**: `makeAgent()` — LangChain `createAgent()` with customizable system prompt (guide doc, default notebook, custom instructions). Auto-compacts after 30 messages via `summarizationMiddleware`
+- **`stream-runtime.ts`**: Core streaming engine (~590 lines). Processes `agent.stream()` with three modes: `messages` (token deltas), `values` (state snapshots), `custom` (tool UI events). Handles abort, idle timeout (120s), reasoning content (DeepSeek thinking), tool call dedup
+- **`chat-model.ts`**: LLM factory — `ChatOpenAI` or custom `SiYuanChatDeepSeek` (injects `reasoning_content`). Supports `ReasoningEffort`: `default`, `off`, `high`, `xhigh`
+- **`compaction.ts`**: Splits messages into turns, summarizes older turns, preserves todo plans
+- **`session-store.ts`**: Uses native `fetch` (not SDK's `fetchPost` which has a hanging-Promise bug)
+- **`sub-agent.ts`**: `explore_notes` — sub-agent with its own recursive tool loop (12 steps max)
+
+### Tools (`src/core/tools/`)
+19 tools, all Zod-schema validated, all use `siyuanFetch` (native fetch wrapper):
+
+| Category | Tools |
+|----------|-------|
+| Lookup | `list_notebooks`, `list_documents`, `recent_documents`, `get_document`, `get_document_blocks`, `get_document_outline`, `read_block`, `search_fulltext`, `search_documents` |
+| Change | `append_block`, `edit_blocks`, `create_document`, `move_document`, `rename_document` |
+| Planning | `write_todos` |
+| Scheduling | `create/list/update/delete_scheduled_task` |
+| Meta | `explore_notes` (sub-agent with own lookup toolset) |
+
+`delete_document` is exported but **not registered** (safety). Import and register manually if needed.
+
+### UI (`src/ui/`)
+- **`chat-panel.ts`** (74KB): Main orchestrator, delegate pattern → `SettingsView`, `TasksView`, `Autocomplete`
+- **`settings-view.ts`** (39KB): Model service management, MCP config, guide doc, LangSmith tracing
+- **`markdown.ts`**: Zero-dependency MD→HTML renderer
+- **`chat-helpers.ts`**: Pure functions for message type detection, HTML escaping, tool display
+
+### Types (`src/types/`)
+- Barrel re-export via `src/types/index.ts`, import via `"../types"`
+- `model-config.ts`: Multi-model registry (`ModelServiceConfig` grouped by provider, `ModelConfig` per model), legacy flat migration
+- `session.ts`: `SessionData` with dual messages — `messages` (LLM context, compressible) + `messagesUi` (user-visible, never compressed). Supports `chat` and `scheduled_task` kinds
+- `tool-events.ts`: `ToolUIEvent` types for rendering tool activity cards
+- `prompts.ts`: System prompt, init prompt, slash commands
+
+### Styles (`src/styles/`)
+SCSS with `@use` partials. Uses SiYuan CSS variables (`--b3-theme-*`).
+
+## Key Design Decisions
+
+- **Native fetch over SDK**: `siyuanFetch` uses `fetch()` directly; SDK's `fetchPost` has a hanging-Promise bug
+- **Auto-apply + Diff + Undo**: Edit tools apply changes automatically, return diff info for git-style UI with undo
+- **Tool events via writer**: Tools emit structured JSON through `runtime.writer()`, parsed into typed `ToolUIEvent` objects
+- **Streaming with state recovery**: `stream-runtime.ts` builds recoverable state incrementally
+- **Document tree via filetree API**: Prefer SiYuan native `filetree` API over SQL enumeration; `recent_documents` uses restricted SQL only for IDs, then reads individually
+- **`edit_blocks` diff**: `stripIAL()` filters kramdown `{: ...}` markers before comparison; LCS line-level diff algorithm, no external deps
+
+## Session Management (chat-panel.ts)
+
+- Title lives only in `SessionIndex.sessions[].title`, not in `SessionData.title`
+- `newSession()` checks `messagesEl.children.length === 0` (UI state), not `state`
+- `loadSession()` on miss returns `{ id: <passed id>, ... }` (no random new id, prevents key drift)
+- `deleteSession()` picks next session by `updated` descending
+- `title`/`updated` only written after stream completes (prevents stale reads)
+- `switchSession()` saves current session first
+
+## SiYuan Plugin API Gotchas
+
+### Command Callbacks (ICommand)
+- `editorCallback(protyle)`: fires when editor has focus; `globalCallback`: fires when app unfocused
+- `callback`: generic, only fires when no other callback type is defined
+- If any non-`callback` callback exists on a command, `callback` is **not** triggered by global keydown
+
+### Editor Keydown Interception
+- Cross-block selection causes `stopPropagation()` + `return` — only `⌘C` passes through
+- `editorCallback` won't fire during cross-block selection
+- Block-level selection marked by `.protyle-wysiwyg--select` CSS class
+
+### Getting Selected Text
 ```typescript
 editorCallback: (protyle) => {
-    // 1. 文本级选区: 通过 window.getSelection() + 验证在 wysiwyg 内
-    // 2. 块级选区 fallback: querySelectorAll(".protyle-wysiwyg--select")
+    // 1. Text selection: window.getSelection() + verify inside wysiwyg
+    // 2. Block selection fallback: querySelectorAll(".protyle-wysiwyg--select")
 }
 ```
-右键菜单通过 `open-menu-content` 事件的 `e.detail.range` 获取选中文本。
-
-## 设计决策
-
-- 流式输出使用 `AIMessageChunk.concat()` 聚合, 避免 incomplete JSON args
-- LangSmith tracing 可选, Settings 中配置 enabled/key/endpoint/project
-- 文档树查询优先使用 SiYuan 原生 `filetree` API，避免直接 SQL 枚举文档
-- 仍保留 `/api/query/sql` 做部分灵活查询
-- 编辑工具采用 "自动应用 + diff 展示 + Undo" 方案, 不打断 agent 循环
-- `edit_blocks` 返回 `{ __tool_type: "edit_blocks", results }`, chat-panel 的 `onToolEnd` 检测此标记渲染 git-diff 风格视图
-- diff 比较前 `stripIAL()` 过滤 kramdown `{: ...}` 标记, undo 恢复原始 kramdown
-- LCS 行级 diff 算法内置, 无外部依赖 (块内容通常 1-20 行)
-
-## Session 管理设计 (chat-panel.ts)
-
-- **单一 title 来源**: title 只存在 `SessionIndex.sessions[].title`，`SessionData.title` 不使用
-- **空判断用 UI**: `newSession()` 判断是否新建用 `messagesEl.children.length === 0`，不依赖 `state`
-- **loadSession 找不到时**: 返回 `{ id: <传入id>, ... }` 而非随机生成新 id，避免 key 漂移
-- **deleteSession 后选最新**: 按 `updated` 降序排序选下一个 session，而非 `sessions[0]`
-- **title/updated 只在 stream 完成后更新**: `send()` 开头不提前更新，防止 state 未就绪时读到旧标题
-- **switchSession 前先保存**: `saveSession(this.activeSession)` 防止切换时丢失当前状态
-- **renderCurrentSession 从 index 读 title**: `sessionIndex.sessions.find(e => e.id === s.id)?.title`
-
-## 内置工具
-
-| Tool | API | 用途 |
-|------|-----|------|
-| list_notebooks | `/api/notebook/lsNotebooks` | 列出笔记本 |
-| list_documents | `/api/filetree/getIDsByHPath` + `/api/filetree/getPathByID` + `/api/filetree/listDocsByPath` | 获取树形文档列表 |
-| get_document | `/api/export/exportMdContent` | 读取文档内容 (纯 Markdown) |
-| get_document_blocks | `/api/block/getChildBlocks` | 获取文档子块 (带 block ID, 用于编辑) |
-| search_fulltext | `/api/search/fullTextSearchBlock` | 全文搜索 |
-| search_documents | `/api/query/sql` | 按标题关键词搜索笔记 |
-| append_block | `/api/block/appendBlock` | 向文档追加内容 |
-| edit_blocks | `/api/block/getBlockKramdowns` + `updateBlock` | 编辑块内容, 返回 diff + 支持 undo |
-| create_document | `/api/filetree/createDocWithMd` | 新建笔记 (notebook + hpath + markdown) |
-| move_document | `/api/filetree/moveDocsByID` | 移动笔记, toID 可为笔记本或父文档 ID |
-| rename_document | `/api/filetree/renameDocByID` | 重命名笔记标题 |
-| delete_document | `/api/filetree/removeDocByID` | 删除笔记 (已实现, **不注册**, export 供手动启用) |
+Right-click menu: use `open-menu-content` event's `e.detail.range`.
