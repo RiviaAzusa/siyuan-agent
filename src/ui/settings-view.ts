@@ -113,11 +113,6 @@ export class SettingsView {
 
 		this.ctx.settingsViewEl.innerHTML = `
 <div class="settings-panel">
-	<div class="settings-panel__header">
-		<div>
-			<h3>${escapeHtml(this.t("settings.title"))}</h3>
-		</div>
-	</div>
 	<form class="settings-panel__form">
 		<div class="settings-panel__shell">
 			<aside class="settings-panel__nav">

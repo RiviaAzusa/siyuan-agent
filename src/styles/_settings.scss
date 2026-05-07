@@ -2,7 +2,7 @@
 .chat-panel__context-bar {
 	padding: 6px 12px;
 	border-bottom: 1px solid var(--agent-border, var(--b3-border-color));
-	background: var(--agent-surface-soft, var(--b3-theme-surface));
+	background: transparent;
 }
 
 .chat-panel__context {

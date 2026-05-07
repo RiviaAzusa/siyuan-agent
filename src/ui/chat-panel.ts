@@ -60,6 +60,7 @@ export class ChatPanel {
 	private chatViewEl: HTMLElement;
 	private tasksViewEl: HTMLElement;
 	private settingsViewEl: HTMLElement;
+	private todosDockEl: HTMLElement;
 	private bottomBarEl: HTMLElement;
 	private composerBodyEl: HTMLElement;
 
@@ -185,6 +186,7 @@ export class ChatPanel {
 		</div>
 	</div>
 	<div class="chat-panel__settings-view fn__none"></div>
+	<div class="chat-panel__todos-dock fn__none"></div>
 	<div class="chat-panel__bottom-bar">
 		<div class="chat-panel__composer-body">
 			<div class="chat-panel__input">
@@ -218,6 +220,7 @@ export class ChatPanel {
 		this.chatViewEl = this.container.querySelector(".chat-panel__chat-view");
 		this.tasksViewEl = this.container.querySelector(".chat-panel__tasks-view");
 		this.settingsViewEl = this.container.querySelector(".chat-panel__settings-view");
+		this.todosDockEl = this.container.querySelector(".chat-panel__todos-dock");
 		this.bottomBarEl = this.container.querySelector(".chat-panel__bottom-bar");
 		this.composerBodyEl = this.container.querySelector(".chat-panel__composer-body");
 		this.sessionToggleEl = this.container.querySelector(".chat-panel__session-toggle");
@@ -320,13 +323,7 @@ export class ChatPanel {
 		});
 
 		/* Auto-resize textarea */
-		const autoResize = () => {
-			this.textareaEl.style.height = "auto";
-			const maxH = 200;
-			this.textareaEl.style.height = Math.min(this.textareaEl.scrollHeight, maxH) + "px";
-			this.textareaEl.style.overflowY = this.textareaEl.scrollHeight > maxH ? "auto" : "hidden";
-		};
-		this.textareaEl.addEventListener("input", autoResize);
+		this.textareaEl.addEventListener("input", () => this.resizeComposer());
 		this.textareaEl.style.overflowY = "hidden";
 		this.startPlaceholderRotation();
 
@@ -601,11 +598,9 @@ export class ChatPanel {
 			this.renderWelcomeScreen();
 		} else {
 			this.renderConversationMessagesUi(messagesUi);
-			/* Render persisted todos bar at the end if present */
-			if (s.state?.todos && s.state.todos.items.length > 0) {
-				this.renderPersistedTodosBar(s.state.todos);
-			}
 		}
+		/* Update todos dock — show latest plan or hide if none */
+		this.renderTodosBar(s.state?.todos && s.state.todos.items.length > 0 ? s.state.todos : null);
 	}
 
 	private renderWelcomeScreen(): void {
@@ -614,6 +609,18 @@ export class ChatPanel {
 		el.innerHTML = `
 			<h3 class="chat-panel__welcome-title">${escapeHtml(this.t("chat.welcome.title"))}</h3>`;
 		this.messagesEl.appendChild(el);
+	}
+
+	private resizeComposer(): void {
+		this.textareaEl.style.height = "auto";
+		const maxH = 200;
+		this.textareaEl.style.height = Math.min(this.textareaEl.scrollHeight, maxH) + "px";
+		this.textareaEl.style.overflowY = this.textareaEl.scrollHeight > maxH ? "auto" : "hidden";
+	}
+
+	private clearComposer(): void {
+		this.textareaEl.value = "";
+		this.resizeComposer();
 	}
 
 	/* --- Send --- */
@@ -640,21 +647,21 @@ export class ChatPanel {
 				showMessage(this.t("chat.error.apiKeyMissing"));
 				return;
 			}
-			this.textareaEl.value = "";
+			this.clearComposer();
 			await this.handleCompact(activeModel, (compactMatch[1] || "").trim());
 			return;
 		}
 
 		/* Handle /help command */
 		if (/^\/help$/i.test(text)) {
-			this.textareaEl.value = "";
+			this.clearComposer();
 			this.showHelpMessage();
 			return;
 		}
 
 		/* Handle /clear command */
 		if (/^\/clear$/i.test(text)) {
-			this.textareaEl.value = "";
+			this.clearComposer();
 			this.newSession();
 			return;
 		}
@@ -701,7 +708,7 @@ export class ChatPanel {
 		/* Show user message in UI */
 		const { listEl } = this.createConversationTurn(content);
 
-		this.textareaEl.value = "";
+		this.clearComposer();
 		const s = this.activeSession;
 		this.setLoading(true);
 
@@ -784,6 +791,7 @@ export class ChatPanel {
 				// Re-send the last user message
 				if (this.textareaEl && !this.textareaEl.value.trim()) {
 					this.textareaEl.value = text;
+					this.resizeComposer();
 				}
 				this.send();
 			});
@@ -861,7 +869,7 @@ export class ChatPanel {
 					}
 
 					if (event.type === "todos_update") {
-						this.renderTodosBar(assistantShell, event.todos);
+						this.renderTodosBar(event.todos);
 						this.scrollToBottom();
 						return;
 					}
@@ -1779,47 +1787,33 @@ export class ChatPanel {
 
 	/* --- Todos progress bar rendering --- */
 
-	private renderTodosBar(shell: AssistantMessageShell, todos: TodoList): void {
-		/* Remove any existing todos bar in the same assistant message */
-		const existing = shell.stackEl.querySelector(".chat-todos-bar");
-		if (existing) existing.remove();
-
-		const bar = this.buildTodosBarElement(todos);
-		shell.stackEl.appendChild(bar);
-	}
-
-	private renderPersistedTodosBar(todos: TodoList): void {
-		/* Render at end of messagesEl for persisted sessions */
-		const bar = this.buildTodosBarElement(todos);
-		this.messagesEl.appendChild(bar);
-	}
-
-	private buildTodosBarElement(todos: TodoList): HTMLElement {
-		const bar = document.createElement("details");
-		bar.className = "chat-todos-bar";
-		bar.open = true;
+	private renderTodosBar(todos: TodoList | null): void {
+		if (!todos || todos.items.length === 0) {
+			this.todosDockEl.classList.add("fn__none");
+			this.todosDockEl.innerHTML = "";
+			return;
+		}
 
 		const completed = todos.items.filter((i) => i.status === "completed").length;
 		const total = todos.items.length;
 		const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-		const summary = document.createElement("summary");
-		summary.className = "chat-todos-bar__summary";
-		summary.innerHTML = `📋 ${escapeHtml(todos.goal)} <span class="chat-todos-bar__progress">${completed}/${total} (${pct}%)</span>`;
-		bar.appendChild(summary);
+		this.todosDockEl.innerHTML = `
+			<details class="chat-todos-bar" open>
+				<summary class="chat-todos-bar__summary">
+					<span class="chat-todos-bar__title">${escapeHtml(todos.goal)}</span>
+					<span class="chat-todos-bar__progress">${completed}/${total} (${pct}%)</span>
+					<span class="chat-todos-bar__chevron">›</span>
+				</summary>
+				<ul class="chat-todos-bar__list">
+					${todos.items.map((item) => {
+						const icon = item.status === "completed" ? "✓" : item.status === "in_progress" ? "●" : "○";
+						return `<li class="chat-todos-bar__item chat-todos-bar__item--${item.status}"><span class="chat-todos-bar__icon">${icon}</span>${escapeHtml(item.content)}</li>`;
+					}).join("")}
+				</ul>
+			</details>`;
 
-		const list = document.createElement("ul");
-		list.className = "chat-todos-bar__list";
-		for (const item of todos.items) {
-			const li = document.createElement("li");
-			li.className = `chat-todos-bar__item chat-todos-bar__item--${item.status}`;
-			const icon = item.status === "completed" ? "✅" : item.status === "in_progress" ? "🔄" : "⬜";
-			li.textContent = `${icon} ${item.content}`;
-			list.appendChild(li);
-		}
-		bar.appendChild(list);
-
-		return bar;
+		if (this.currentView === "chat") this.todosDockEl.classList.remove("fn__none");
 	}
 
 	/* --- Edit blocks diff rendering (commented out for future reimplementation) --- */
@@ -1863,6 +1857,7 @@ export class ChatPanel {
 		this.chatViewEl.classList.toggle("fn__none", view !== "chat");
 		this.tasksViewEl.classList.toggle("fn__none", view !== "tasks");
 		this.settingsViewEl.classList.toggle("fn__none", view !== "settings");
+		this.todosDockEl.classList.toggle("fn__none", view !== "chat" || !this.todosDockEl.querySelector(".chat-todos-bar"));
 		this.bottomBarEl.classList.toggle("chat-panel__bottom-bar--chat", view === "chat");
 		this.composerBodyEl.classList.toggle("chat-panel__composer-body--collapsed", view !== "chat");
 		this.modelPickerEl.classList.toggle("fn__none", view !== "chat");
@@ -1901,14 +1896,14 @@ export class ChatPanel {
 				<span class="chat-panel__model-menu-label">${escapeHtml(item.label)}</span>
 			</button>`;
 		}).join("");
-		const hasModels = models.length > 0;
+		const filteredModels = models.filter((m) => m.id !== activeModel.id);
+		const hasModels = filteredModels.length > 0;
 		const modelOptionsHtml = hasModels && this.modelSubmenuOpen
 			? `<div class="chat-panel__model-submenu">
-				${models.map((model) => {
-					const selected = model.id === activeModel.id;
+				${filteredModels.map((model) => {
 					const label = this.formatModelPickerName(model);
-					return `<button class="chat-panel__model-menu-item chat-panel__model-menu-item--sub${selected ? " chat-panel__model-menu-item--selected" : ""}" type="button" data-model-id="${escapeHtml(model.id)}" title="${escapeHtml(model.provider)} / ${escapeHtml(model.model)}">
-						<span class="chat-panel__model-menu-check">${selected ? "✓" : ""}</span>
+					return `<button class="chat-panel__model-menu-item chat-panel__model-menu-item--sub" type="button" data-model-id="${escapeHtml(model.id)}" title="${escapeHtml(model.provider)} / ${escapeHtml(model.model)}">
+						<span class="chat-panel__model-menu-check"></span>
 						<span class="chat-panel__model-menu-label">${escapeHtml(label)}</span>
 					</button>`;
 				}).join("")}

@@ -159,15 +159,15 @@ function migrateLegacyModels(models?: ModelConfig[]): ModelServiceConfig[] {
 }
 
 export function normalizeAgentConfig(raw?: Partial<AgentConfig> | null): AgentConfig {
-	const hasModelServices = Array.isArray(raw?.modelServices);
-	const modelServices = Array.isArray(raw?.modelServices)
+	const hasModelServices = Array.isArray(raw?.modelServices) && raw.modelServices.length > 0;
+	const modelServices = hasModelServices
 		? cloneModelServices(raw?.modelServices)
 		: migrateLegacyModels(raw?.models);
 	return {
 		...DEFAULT_CONFIG,
 		...(raw || {}),
 		modelServices,
-		models: hasModelServices ? [] : cloneLegacyModels(raw?.models),
+		models: [],
 	};
 }
 
