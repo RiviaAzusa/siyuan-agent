@@ -725,13 +725,6 @@ export class ChatPanel {
 
 		this.abortCtrl = new AbortController();
 
-		let curTextEl: HTMLElement | null = null;
-		let curBuffer = "";
-		let reasoningEl: HTMLElement | null = null;
-		let reasoningBuffer = "";
-		const pendingToolEls: HTMLElement[] = [];
-		const existingToolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
-
 		/* Lazy-migrate old sessions before merging */
 		if (!s.state) s.state = {};
 		ensureMessagesUi(s.state);
@@ -748,6 +741,26 @@ export class ChatPanel {
 		if (!Array.isArray(input.messagesUi)) input.messagesUi = [];
 		input.messagesUi.push(humanMsgDict);
 
+		await this.streamToShell(assistantShell, input, config, sessionModelId, s, extraSystemPrompt, activeModel, reasoningEffort);
+	}
+
+	/**
+	 * Core streaming engine shared by send() and handleRegenerate().
+	 * Creates the agent, streams the response into `shell`, and handles
+	 * the full lifecycle (UI events, error display, state persistence).
+	 */
+	private async streamToShell(
+		shell: AssistantMessageShell,
+		input: any,
+		config: any,
+		sessionModelId: string | undefined,
+		s: SessionData,
+		extraSystemPrompt: string | null,
+		activeModel: ModelConfig,
+		reasoningEffort: ReasoningEffort,
+	): Promise<void> {
+		const existingToolUIEvents: ToolUIEvent[] = Array.isArray(s.state?.toolUIEvents) ? [...s.state.toolUIEvents] : [];
+
 		let latestState: AgentState = {
 			...s.state,
 			messages: input.messages,
@@ -755,6 +768,12 @@ export class ChatPanel {
 			compaction: input.compaction,
 			toolUIEvents: existingToolUIEvents,
 		};
+
+		let curTextEl: HTMLElement | null = null;
+		let curBuffer = "";
+		let reasoningEl: HTMLElement | null = null;
+		let reasoningBuffer = "";
+		const pendingToolEls: HTMLElement[] = [];
 
 		const removePending = (): void => {
 			if (this.pendingEl) {
@@ -767,10 +786,10 @@ export class ChatPanel {
 			if (curTextEl) return curTextEl;
 			removePending();
 			curBuffer = "";
-			this.compactCompletedActivityBlocks(assistantShell, "lookup");
+			this.compactCompletedActivityBlocks(shell, "lookup");
 			curTextEl = document.createElement("div");
 			curTextEl.className = "chat-msg__text";
-			assistantShell.stackEl.appendChild(curTextEl);
+			shell.stackEl.appendChild(curTextEl);
 			return curTextEl;
 		};
 
@@ -782,21 +801,15 @@ export class ChatPanel {
 
 			const msg = localizeErrorMessage(error, this.i18n);
 			errorEl.textContent = this.t("chat.error.prefix", { message: msg });
-			// Add a retry button for recoverable errors
 			const retryBtn = document.createElement("button");
 			retryBtn.className = "chat-msg__retry-btn b3-button b3-button--outline";
 			retryBtn.textContent = this.t("chat.retry");
 			retryBtn.addEventListener("click", () => {
 				errorEl.remove();
-				// Re-send the last user message
-				if (this.textareaEl && !this.textareaEl.value.trim()) {
-					this.textareaEl.value = text;
-					this.resizeComposer();
-				}
-				this.send();
+				this.handleRegenerate(shell);
 			});
-			assistantShell.stackEl.appendChild(errorEl);
-			assistantShell.stackEl.appendChild(retryBtn);
+			shell.stackEl.appendChild(errorEl);
+			shell.stackEl.appendChild(retryBtn);
 			this.scrollToBottom();
 		};
 
@@ -818,7 +831,7 @@ export class ChatPanel {
 							reasoningEl.className = "chat-msg__reasoning";
 							reasoningEl.open = true;
 							reasoningEl.innerHTML = `<summary class="chat-msg__reasoning-summary"><span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.reasoning.process"))}</span></summary><div class="chat-msg__reasoning-content"></div>`;
-							assistantShell.stackEl.appendChild(reasoningEl);
+							shell.stackEl.appendChild(reasoningEl);
 						}
 						reasoningBuffer = event.text;
 						const contentEl = reasoningEl.querySelector(".chat-msg__reasoning-content")!;
@@ -828,7 +841,6 @@ export class ChatPanel {
 					}
 
 					if (event.type === "text_delta") {
-						// When text starts, close the reasoning section
 						if (reasoningEl) {
 							reasoningEl.open = false;
 							const summary = reasoningEl.querySelector(".chat-msg__reasoning-summary");
@@ -851,7 +863,7 @@ export class ChatPanel {
 							event.toolCallIndex,
 							event.toolCallId,
 						);
-						this.attachToolElementToShell(assistantShell, el);
+						this.attachToolElementToShell(shell, el);
 						pendingToolEls.push(el);
 						this.scrollToBottom();
 						return;
@@ -874,7 +886,7 @@ export class ChatPanel {
 						return;
 					}
 
-					const toolEl = this.findToolElementForEvent(assistantShell, event.event, pendingToolEls);
+					const toolEl = this.findToolElementForEvent(shell, event.event, pendingToolEls);
 					if (toolEl && event.event.toolCallIndex >= 0) {
 						event.event.toolCallIndex = Number(toolEl.dataset.toolCallIndex || event.event.toolCallIndex);
 						event.event.toolName = event.event.toolName || toolEl.dataset.toolName;
@@ -891,15 +903,19 @@ export class ChatPanel {
 			showStreamError(err);
 		} finally {
 			removePending();
-			/* If aborted and assistant shell is empty, remove it */
-			if (this.abortCtrl?.signal.aborted && assistantShell.stackEl.children.length === 0) {
-				assistantShell.el.remove();
+			if (this.abortCtrl?.signal.aborted && shell.stackEl.children.length === 0) {
+				shell.el.remove();
 			}
-			this.compactCompletedActivityBlocks(assistantShell, "lookup");
+			this.compactCompletedActivityBlocks(shell, "lookup");
+
+			/* Append action bar for completed messages */
+			if (shell.el.isConnected && shell.stackEl.children.length > 0) {
+				const lastAi = (latestState.messagesUi || []).filter((m: any) => msgType(m) === "ai").pop();
+				this.appendActionBar(shell, lastAi ? getMessageContent(lastAi) : "");
+			}
 
 			s.state = latestState;
 
-			/* Auto-compact if context grew too large */
 			if (!this.abortCtrl?.signal.aborted && shouldCompact(latestState)) {
 				try {
 					const compactModel = createChatModel(activeModel, { temperature: 0 });
@@ -921,6 +937,72 @@ export class ChatPanel {
 			this.abortCtrl = null;
 			this.setLoading(false);
 		}
+	}
+
+	private async handleRegenerate(shell: AssistantMessageShell): Promise<void> {
+		if (this.abortCtrl) return;
+
+		const s = this.activeSession;
+		if (!s.state?.messagesUi?.length) return;
+
+		/* 1. Trim state: remove trailing AI/Tool messages */
+		const ui: UiMessage[] = s.state.messagesUi;
+		let lastHumanIdx = -1;
+		for (let i = ui.length - 1; i >= 0; i--) {
+			if (msgType(ui[i]) === "human" || msgType(ui[i]) === "user") {
+				lastHumanIdx = i;
+				break;
+			}
+		}
+		if (lastHumanIdx < 0) return;
+		ui.length = lastHumanIdx + 1;
+
+		const msgs = s.state.messages;
+		if (Array.isArray(msgs)) {
+			let lastHumanMsgIdx = -1;
+			for (let i = msgs.length - 1; i >= 0; i--) {
+				if (msgType(msgs[i]) === "human" || msgType(msgs[i]) === "user") {
+					lastHumanMsgIdx = i;
+					break;
+				}
+			}
+			if (lastHumanMsgIdx >= 0) msgs.length = lastHumanMsgIdx + 1;
+		}
+
+		/* 2. Remove DOM */
+		const listEl = shell.el.parentElement;
+		if (!listEl) return;
+		listEl.querySelectorAll(".chat-msg--assistant").forEach(el => el.remove());
+
+		/* 3. Re-stream */
+		const config = await this.getConfig();
+		const sessionModelId = s.modelId;
+		const activeModel = resolveModelConfig(config, sessionModelId);
+		const reasoningEffort = this.normalizeReasoningEffort(s.reasoningEffort);
+		if (!activeModel.apiKey) {
+			showMessage(this.t("chat.error.apiKeyMissing"));
+			return;
+		}
+
+		this.setLoading(true);
+
+		const newShell = this.createAssistantMessageShell();
+		listEl.appendChild(newShell.el);
+
+		this.pendingEl = document.createElement("div");
+		this.pendingEl.className = "chat-msg__pending";
+		this.pendingEl.innerHTML = `<span class="chat-msg__pending-spinner"></span><span class="chat-msg__pending-text">${escapeHtml(this.t("chat.pending"))}</span>`;
+		newShell.stackEl.appendChild(this.pendingEl);
+		this.scrollToBottom();
+
+		this.abortCtrl = new AbortController();
+
+		if (!s.state) s.state = {};
+		ensureMessagesUi(s.state);
+
+		const input = mergeState(s.state ?? null) as any;
+
+		await this.streamToShell(newShell, input, config, sessionModelId, s, null, activeModel, reasoningEffort);
 	}
 
 	/* --- /compact --- */
@@ -1069,6 +1151,7 @@ export class ChatPanel {
 		const pendingToolEls: HTMLElement[] = [];
 		let currentListEl: HTMLElement | null = null;
 		let currentAssistantShell: AssistantMessageShell | null = null;
+		let lastAiContent = "";
 
 		for (const msg of messages) {
 			const type = msgType(msg);
@@ -1077,12 +1160,16 @@ export class ChatPanel {
 			const toolName = msg.kwargs?.name ?? msg.name;
 
 			if (type === "human" || type === "user") {
+				if (currentAssistantShell && lastAiContent) {
+					this.appendActionBar(currentAssistantShell, lastAiContent);
+				}
 				const { listEl } = this.createConversationTurn(
 					typeof content === "string" ? content : JSON.stringify(content),
 					targetEl,
 				);
 				currentListEl = listEl;
 				currentAssistantShell = null;
+				lastAiContent = "";
 				pendingToolEls.length = 0;
 				continue;
 			}
@@ -1096,6 +1183,7 @@ export class ChatPanel {
 					currentAssistantShell = this.createAssistantMessageShell();
 					currentListEl.appendChild(currentAssistantShell.el);
 				}
+				if (typeof content === "string" && content) lastAiContent = content;
 				const { toolCallIndex: nextToolCallIndex, toolEls } = this.appendAssistantSegment(
 					currentAssistantShell,
 					typeof content === "string" ? content : "",
@@ -1125,8 +1213,10 @@ export class ChatPanel {
 			}
 		}
 
-		if (currentAssistantShell)
+		if (currentAssistantShell) {
 			this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
+			if (lastAiContent) this.appendActionBar(currentAssistantShell, lastAiContent);
+		}
 	}
 
 	/**
@@ -1143,6 +1233,7 @@ export class ChatPanel {
 	private renderConversationMessagesUi(messagesUi: UiMessage[], targetEl?: HTMLElement): void {
 		let currentListEl: HTMLElement | null = null;
 		let currentAssistantShell: AssistantMessageShell | null = null;
+		let lastAiContent = "";
 
 		/* Build toolCallId → args map from AI messages */
 		const toolCallArgsMap = new Map<string, unknown>();
@@ -1197,12 +1288,16 @@ export class ChatPanel {
 			const toolCalls = getMessageToolCalls(m);
 
 			if (type === "human" || type === "user") {
+				if (currentAssistantShell && lastAiContent) {
+					this.appendActionBar(currentAssistantShell, lastAiContent);
+				}
 				const { listEl } = this.createConversationTurn(
 					typeof content === "string" ? content : JSON.stringify(content),
 					targetEl,
 				);
 				currentListEl = listEl;
 				currentAssistantShell = null;
+				lastAiContent = "";
 				continue;
 			}
 
@@ -1222,6 +1317,7 @@ export class ChatPanel {
 					currentAssistantShell.stackEl.appendChild(reasoningEl);
 				}
 				if (content) {
+					lastAiContent = content;
 					this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
 					const textEl = document.createElement("div");
 					textEl.className = "chat-msg__text";
@@ -1237,8 +1333,10 @@ export class ChatPanel {
 			/* Unknown message type — skip */
 		}
 
-		if (currentAssistantShell)
+		if (currentAssistantShell) {
 			this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
+			if (lastAiContent) this.appendActionBar(currentAssistantShell, lastAiContent);
+		}
 	}
 
 	private appendStaticMessage(
@@ -1355,6 +1453,40 @@ export class ChatPanel {
 		};
 		(el as any).__assistantShell = refs;
 		return refs;
+	}
+
+	private appendActionBar(shell: AssistantMessageShell, rawContent: string): void {
+		if (!shell.stackEl.querySelector(".chat-msg__text")) return;
+
+		const bar = document.createElement("div");
+		bar.className = "chat-msg__action-bar";
+
+		/* Copy button */
+		const copyBtn = document.createElement("button");
+		copyBtn.className = "chat-msg__action-btn";
+		copyBtn.dataset.action = "copy";
+		copyBtn.title = this.t("chat.actionBar.copy");
+		copyBtn.innerHTML = `<svg class="chat-msg__action-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.75" y="8.25" width="11.5" height="11.5" rx="3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.25 5.25h5.1c2.2 0 3.4 1.2 3.4 3.4v5.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+		copyBtn.addEventListener("click", () => {
+			navigator.clipboard.writeText(rawContent).then(() => {
+				copyBtn.title = this.t("chat.actionBar.copied");
+				setTimeout(() => { copyBtn.title = this.t("chat.actionBar.copy"); }, 1500);
+			});
+		});
+
+		/* Regenerate button */
+		const regenBtn = document.createElement("button");
+		regenBtn.className = "chat-msg__action-btn";
+		regenBtn.dataset.action = "regenerate";
+		regenBtn.title = this.t("chat.actionBar.regenerate");
+		regenBtn.innerHTML = `<svg class="chat-msg__action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 7.2A6.7 6.7 0 006.3 9.4" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.8 4.8v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.3 16.8a6.7 6.7 0 0011.4-2.2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.2 19.2V16h3.2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+		regenBtn.addEventListener("click", () => this.handleRegenerate(shell));
+
+		bar.appendChild(copyBtn);
+		bar.appendChild(regenBtn);
+		shell.contentEl.appendChild(bar);
 	}
 
 	private appendAssistantSegment(
