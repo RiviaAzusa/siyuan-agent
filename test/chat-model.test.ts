@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ChatDeepSeek } from "@langchain/deepseek";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
-import { createChatModel, getDeepSeekModelKwargs, injectDeepSeekReasoningContent } from "../src/core/chat-model";
+import {
+	createChatModel,
+	getDeepSeekModelKwargs,
+	getOpenAICompatibleModelKwargs,
+	injectReasoningContent,
+} from "../src/core/chat-model";
 import type { ModelConfig } from "../src/types";
 
 function makeModel(overrides: Partial<ModelConfig> = {}): ModelConfig {
@@ -37,6 +42,17 @@ describe("createChatModel", () => {
 	it("creates ChatOpenAI for OpenAI-compatible providers", () => {
 		const model = createChatModel(makeModel());
 		expect(model).toBeInstanceOf(ChatOpenAI);
+		expect((model as any).modelKwargs).not.toHaveProperty("thinking");
+	});
+
+	it("passes OpenAI-compatible thinking settings through modelKwargs", () => {
+		const offModel = createChatModel(makeModel(), { reasoningEffort: "off" });
+		const highModel = createChatModel(makeModel(), { reasoningEffort: "high" });
+		const xhighModel = createChatModel(makeModel(), { reasoningEffort: "xhigh" });
+
+		expect((offModel as any).modelKwargs).toEqual({ thinking: { type: "disabled" } });
+		expect((highModel as any).modelKwargs).toEqual({ thinking: { type: "enabled" } });
+		expect((xhighModel as any).modelKwargs).toEqual({ thinking: { type: "enabled" } });
 	});
 });
 
@@ -55,7 +71,16 @@ describe("getDeepSeekModelKwargs", () => {
 	});
 });
 
-describe("injectDeepSeekReasoningContent", () => {
+describe("getOpenAICompatibleModelKwargs", () => {
+	it("maps reasoning effort to OpenAI-compatible thinking fields", () => {
+		expect(getOpenAICompatibleModelKwargs("default")).toEqual({});
+		expect(getOpenAICompatibleModelKwargs("off")).toEqual({ thinking: { type: "disabled" } });
+		expect(getOpenAICompatibleModelKwargs("high")).toEqual({ thinking: { type: "enabled" } });
+		expect(getOpenAICompatibleModelKwargs("xhigh")).toEqual({ thinking: { type: "enabled" } });
+	});
+});
+
+describe("injectReasoningContent", () => {
 	it("copies stored assistant reasoning_content into OpenAI request messages", () => {
 		const sourceMessages = [
 			new HumanMessage({ content: "search foo" }),
@@ -77,12 +102,91 @@ describe("injectDeepSeekReasoningContent", () => {
 			],
 		};
 
-		const injected = injectDeepSeekReasoningContent(request, sourceMessages);
+		const injected = injectReasoningContent(request, sourceMessages);
 
 		expect(injected.messages[1]).toMatchObject({
 			role: "assistant",
 			reasoning_content: "Need to search first.",
 		});
 		expect(request.messages[1]).not.toHaveProperty("reasoning_content");
+	});
+
+	it("is reused by OpenAI-compatible completion requests", async () => {
+		const sourceMessages = [
+			new HumanMessage({ content: "search foo" }),
+			new AIMessage({
+				content: "",
+				additional_kwargs: { reasoning_content: "Need to search first." },
+				tool_calls: [{ name: "search_fulltext", args: { query: "foo" }, id: "call-1" }],
+			}),
+		];
+		const model = createChatModel(makeModel()) as any;
+		const request = {
+			model: "mimo-v2.5-pro",
+			messages: [
+				{ role: "user", content: "search foo" },
+				{ role: "assistant", content: "", tool_calls: [{ id: "call-1" }] },
+			],
+		};
+		let capturedRequest: any = null;
+		const originalCompletionWithRetry = Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry;
+		Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = async (_request: any) => {
+			capturedRequest = _request;
+			return { choices: [{ message: { role: "assistant", content: "ok" } }] };
+		};
+
+		try {
+			model.sourceMessagesForRequest = sourceMessages;
+			await model.completionWithRetry(request);
+		} finally {
+			Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = originalCompletionWithRetry;
+		}
+
+		expect(capturedRequest.messages[1]).toMatchObject({
+			role: "assistant",
+			reasoning_content: "Need to search first.",
+		});
+	});
+
+	it("is reused by DeepSeek completion requests", async () => {
+		const sourceMessages = [
+			new HumanMessage({ content: "search foo" }),
+			new AIMessage({
+				content: "",
+				additional_kwargs: { reasoning_content: "Need to search first." },
+				tool_calls: [{ name: "search_fulltext", args: { query: "foo" }, id: "call-1" }],
+			}),
+		];
+		const model = createChatModel(makeModel({
+			provider: "DeepSeek",
+			providerType: "deepseek",
+			model: "deepseek-v4-pro",
+			apiBaseURL: "https://api.deepseek.com",
+		})) as any;
+		const request = {
+			model: "deepseek-v4-pro",
+			messages: [
+				{ role: "user", content: "search foo" },
+				{ role: "assistant", content: "", tool_calls: [{ id: "call-1" }] },
+			],
+		};
+		let capturedRequest: any = null;
+		const originalCompletionWithRetry = Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry;
+		Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = async (_request: any) => {
+			capturedRequest = _request;
+			return { choices: [{ message: { role: "assistant", content: "ok" } }] };
+		};
+
+		try {
+			model.sourceMessagesForRequest = sourceMessages;
+			await model.completionWithRetry(request);
+		} finally {
+			Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = originalCompletionWithRetry;
+		}
+
+		expect(capturedRequest.messages[1]).toMatchObject({
+			role: "assistant",
+			reasoning_content: "Need to search first.",
+		});
 	});
 });

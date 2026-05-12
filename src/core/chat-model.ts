@@ -31,6 +31,20 @@ export function getDeepSeekModelKwargs(reasoningEffort: ReasoningEffort = "defau
 	return {};
 }
 
+export function getOpenAICompatibleModelKwargs(reasoningEffort: ReasoningEffort = "default"): Record<string, any> {
+	if (reasoningEffort === "off") {
+		return {
+			thinking: { type: "disabled" },
+		};
+	}
+	if (reasoningEffort === "high" || reasoningEffort === "xhigh") {
+		return {
+			thinking: { type: "enabled" },
+		};
+	}
+	return {};
+}
+
 function getMessageType(message: BaseMessage): string {
 	return typeof (message as any)?._getType === "function"
 		? (message as any)._getType()
@@ -43,7 +57,7 @@ function getReasoningContent(message: BaseMessage): string {
 	return typeof reasoning === "string" ? reasoning : "";
 }
 
-export function injectDeepSeekReasoningContent<T extends { messages?: any[] }>(
+export function injectReasoningContent<T extends { messages?: any[] }>(
 	request: T,
 	sourceMessages: BaseMessage[] | null | undefined,
 ): T {
@@ -65,6 +79,37 @@ export function injectDeepSeekReasoningContent<T extends { messages?: any[] }>(
 		...request,
 		messages: nextMessages,
 	};
+}
+
+export const injectDeepSeekReasoningContent = injectReasoningContent;
+
+class SiYuanChatOpenAI extends ChatOpenAI {
+	private sourceMessagesForRequest: BaseMessage[] | null = null;
+
+	async _generate(messages: BaseMessage[], options: this["ParsedCallOptions"], runManager?: any): Promise<any> {
+		this.sourceMessagesForRequest = messages;
+		try {
+			return await super._generate(messages, options, runManager);
+		} finally {
+			this.sourceMessagesForRequest = null;
+		}
+	}
+
+	async *_streamResponseChunks(messages: BaseMessage[], options: this["ParsedCallOptions"], runManager?: any): AsyncGenerator<any> {
+		this.sourceMessagesForRequest = messages;
+		try {
+			yield* super._streamResponseChunks(messages, options, runManager);
+		} finally {
+			this.sourceMessagesForRequest = null;
+		}
+	}
+
+	completionWithRetry(request: any, requestOptions?: any): Promise<any> {
+		return super.completionWithRetry(
+			injectReasoningContent(request, this.sourceMessagesForRequest),
+			requestOptions,
+		);
+	}
 }
 
 class SiYuanChatDeepSeek extends ChatDeepSeek {
@@ -90,7 +135,7 @@ class SiYuanChatDeepSeek extends ChatDeepSeek {
 
 	completionWithRetry(request: any, requestOptions?: any): Promise<any> {
 		return super.completionWithRetry(
-			injectDeepSeekReasoningContent(request, this.sourceMessagesForRequest),
+			injectReasoningContent(request, this.sourceMessagesForRequest),
 			requestOptions,
 		);
 	}
@@ -115,11 +160,12 @@ export function createChatModel(
 			},
 		}) as BaseChatModel;
 	}
-	return new ChatOpenAI({
+	return new SiYuanChatOpenAI({
 		model: config.model,
 		temperature,
 		streaming,
 		apiKey: config.apiKey,
+		modelKwargs: getOpenAICompatibleModelKwargs(options.reasoningEffort),
 		configuration: {
 			dangerouslyAllowBrowser: true,
 			baseURL: config.apiBaseURL,
