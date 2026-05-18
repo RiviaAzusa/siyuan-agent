@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getDefaultTools, getLookupTools } from "../src/core/tools";
+import { createEditBlocksTool } from "../src/core/tools/edit-tools";
 
 vi.mock("siyuan", () => ({
 	fetchPost: vi.fn(),
@@ -9,6 +10,10 @@ vi.mock("siyuan", () => ({
 // Intercept global fetch for siyuanFetch calls
 const mockFetchResponse = (data: any, code = 0) => ({
 	json: () => Promise.resolve({ code, data, msg: code !== 0 ? "error" : "" }),
+});
+
+beforeEach(() => {
+	vi.restoreAllMocks();
 });
 
 describe("tool definitions", () => {
@@ -127,6 +132,102 @@ describe("SQL escape in tool definitions", () => {
 		expect(tools.find(t => t.name === "search_todos")).toBeUndefined();
 		expect(tools.find(t => t.name === "toggle_todo")).toBeUndefined();
 		expect(tools.find(t => t.name === "get_todo_stats")).toBeUndefined();
+	});
+});
+
+describe("edit_blocks tool", () => {
+	it("returns replacement IDs when editing after a previous sibling", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+			const body = JSON.parse(String(init?.body || "{}"));
+			if (url === "/api/block/getBlockKramdowns") {
+				expect(body.ids).toEqual(["old-block"]);
+				return mockFetchResponse({ "old-block": "original" }) as any;
+			}
+			if (url === "/api/block/getBlockTreeInfos") {
+				return mockFetchResponse({
+					"old-block": {
+						rootID: "root-doc",
+						previousID: "prev-block",
+						parentID: "parent-block",
+					},
+				}) as any;
+			}
+			if (url === "/api/block/insertBlock") {
+				expect(body.previousID).toBe("prev-block");
+				return mockFetchResponse([
+					{ doOperations: [{ id: "new-block-1" }, { id: "new-block-2" }] },
+				]) as any;
+			}
+			if (url === "/api/block/deleteBlock") {
+				expect(body.id).toBe("old-block");
+				return mockFetchResponse(null) as any;
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+
+		const tool = createEditBlocksTool();
+		const raw = await (tool as any).invoke({
+			blocks: [{ id: "old-block", content: "updated" }],
+		});
+
+		expect(fetchMock).toHaveBeenCalledWith("/api/block/deleteBlock", expect.anything());
+		expect(JSON.parse(raw)).toEqual({
+			__tool_type: "edit_blocks",
+			results: [{
+				oldId: "old-block",
+				newIds: ["new-block-1", "new-block-2"],
+				rootDocId: "root-doc",
+				status: "ok",
+				original: "original",
+				updated: "updated",
+			}],
+		});
+	});
+
+	it("returns replacement IDs when prepending without a previous sibling", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+			const body = JSON.parse(String(init?.body || "{}"));
+			if (url === "/api/block/getBlockKramdowns") {
+				return mockFetchResponse({ "old-first": "original first" }) as any;
+			}
+			if (url === "/api/block/getBlockTreeInfos") {
+				return mockFetchResponse({
+					"old-first": {
+						rootID: "root-doc",
+						previousID: "",
+						parentID: "parent-block",
+					},
+				}) as any;
+			}
+			if (url === "/api/block/prependBlock") {
+				expect(body.parentID).toBe("parent-block");
+				return mockFetchResponse([
+					{ doOperations: [{ id: "new-first" }] },
+				]) as any;
+			}
+			if (url === "/api/block/deleteBlock") {
+				expect(body.id).toBe("old-first");
+				return mockFetchResponse(null) as any;
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+
+		const tool = createEditBlocksTool();
+		const raw = await (tool as any).invoke({
+			blocks: [{ id: "old-first", content: "updated first" }],
+		});
+
+		expect(JSON.parse(raw)).toEqual({
+			__tool_type: "edit_blocks",
+			results: [{
+				oldId: "old-first",
+				newIds: ["new-first"],
+				rootDocId: "root-doc",
+				status: "ok",
+				original: "original first",
+				updated: "updated first",
+			}],
+		});
 	});
 });
 

@@ -4,6 +4,20 @@ import { openTab } from "siyuan";
 import { siyuanFetch, emitActivity, sqlEscape } from "./siyuan-api";
 import { defaultTranslator, type Translator } from "../../i18n";
 
+function extractOperationBlockIds(data: any): string[] {
+	if (!Array.isArray(data)) return [];
+	const ids: string[] = [];
+	for (const item of data) {
+		const operations = Array.isArray(item?.doOperations) ? item.doOperations : [];
+		for (const operation of operations) {
+			if (typeof operation?.id === "string" && operation.id) {
+				ids.push(operation.id);
+			}
+		}
+	}
+	return ids;
+}
+
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 return tool(
 	async ({ blocks }, runtime: ToolRuntime) => {
@@ -15,9 +29,12 @@ return tool(
 
 		for (const block of blocks) {
 			const original = originals[block.id];
+			const info = treeInfos[block.id];
+			const rootDocId: string | undefined = typeof info?.rootID === "string" && info.rootID ? info.rootID : undefined;
 			if (original === undefined) {
 				results.push({
-					id: block.id,
+					oldId: block.id,
+					rootDocId,
 					status: "error",
 					error: i18n.t("tool.error.blockNotFound", { id: block.id }),
 				});
@@ -33,33 +50,37 @@ return tool(
 				// nextID has a bug in siyuan's doInsert: it only inserts FirstChild.
 				// So we must use previousID. When the block has no previous sibling,
 				// fall back to prependBlock (insert as first child of parent).
-				const info = treeInfos[block.id];
 				const previousID: string = info?.previousID ?? "";
 				const parentID: string = info?.parentID ?? "";
+				let insertResult: any;
 
 				if (previousID) {
-					await siyuanFetch("/api/block/insertBlock", {
+					insertResult = await siyuanFetch("/api/block/insertBlock", {
 						data: block.content,
 						dataType: "markdown",
 						previousID,
 					});
 				} else {
-					await siyuanFetch("/api/block/prependBlock", {
+					insertResult = await siyuanFetch("/api/block/prependBlock", {
 						data: block.content,
 						dataType: "markdown",
 						parentID,
 					});
 				}
+				const newIds = extractOperationBlockIds(insertResult);
 				await siyuanFetch("/api/block/deleteBlock", { id: block.id });
 				results.push({
-					id: block.id,
+					oldId: block.id,
+					newIds,
+					rootDocId,
 					status: "ok",
 					original,
 					updated: block.content,
 				});
 			} catch (err: any) {
 				results.push({
-					id: block.id,
+					oldId: block.id,
+					rootDocId,
 					status: "error",
 					error: err.message,
 					original,
@@ -95,7 +116,7 @@ return tool(
 	},
 	{
 		name: "edit_blocks",
-		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. Changes are applied immediately. The tool returns a diff showing what changed for each block, and users can undo from the chat panel. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
+		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. Changes are applied immediately by inserting replacement blocks and deleting the old blocks, so the original block IDs become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
 		schema: z.object({
 			blocks: z.array(z.object({
 				id: z.string().describe("Block ID to edit (from get_document_blocks)"),
