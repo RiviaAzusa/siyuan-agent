@@ -15,7 +15,7 @@ function escapeHtml(text: string): string {
 export function renderMarkdown(src: string): string {
 	/* Extract fenced code blocks first to protect them from inline processing */
 	const codeBlocks: string[] = [];
-	let text = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+	const text = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
 		const idx = codeBlocks.length;
 		const escaped = escapeHtml(code.replace(/\n$/, ""));
 		const cls = lang ? ` class="language-${escapeHtml(lang)}"` : "";
@@ -31,7 +31,7 @@ export function renderMarkdown(src: string): string {
 	let inBlockquote = false;
 
 	for (let i = 0; i < lines.length; i++) {
-		let line = lines[i];
+		const line = lines[i];
 
 		/* Code block placeholder — pass through */
 		if (/\x00CODEBLOCK\d+\x00/.test(line)) {

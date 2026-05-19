@@ -1,8 +1,10 @@
-import { ChatDeepSeek } from "@langchain/deepseek";
 import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { BaseMessage } from "@langchain/core/messages";
 import type { ModelConfig, ReasoningEffort } from "../types";
+import { ChatDeepSeek } from "../llms/deepseek";
+import { injectReasoningContent } from "../llms/reasoning";
+
+export { injectReasoningContent };
 
 export interface CreateChatModelOptions {
 	streaming?: boolean;
@@ -45,102 +47,6 @@ export function getOpenAICompatibleModelKwargs(reasoningEffort: ReasoningEffort 
 	return {};
 }
 
-function getMessageType(message: BaseMessage): string {
-	return typeof (message as any)?._getType === "function"
-		? (message as any)._getType()
-		: String((message as any)?.type || "");
-}
-
-function getReasoningContent(message: BaseMessage): string {
-	const reasoning = (message as any)?.additional_kwargs?.reasoning_content
-		?? (message as any)?.kwargs?.additional_kwargs?.reasoning_content;
-	return typeof reasoning === "string" ? reasoning : "";
-}
-
-export function injectReasoningContent<T extends { messages?: any[] }>(
-	request: T,
-	sourceMessages: BaseMessage[] | null | undefined,
-): T {
-	if (!Array.isArray(request.messages) || !Array.isArray(sourceMessages)) return request;
-	const nextMessages = request.messages.map((message) => ({ ...message }));
-	let requestIndex = 0;
-	for (const sourceMessage of sourceMessages) {
-		const requestMessage = nextMessages[requestIndex];
-		requestIndex += 1;
-		if (!requestMessage || requestMessage.role !== "assistant") continue;
-		const sourceType = getMessageType(sourceMessage);
-		if (sourceType !== "ai" && sourceType !== "AIMessageChunk") continue;
-		const reasoningContent = getReasoningContent(sourceMessage);
-		if (reasoningContent) {
-			requestMessage.reasoning_content = reasoningContent;
-		}
-	}
-	return {
-		...request,
-		messages: nextMessages,
-	};
-}
-
-export const injectDeepSeekReasoningContent = injectReasoningContent;
-
-class SiYuanChatOpenAI extends ChatOpenAI {
-	private sourceMessagesForRequest: BaseMessage[] | null = null;
-
-	async _generate(messages: BaseMessage[], options: this["ParsedCallOptions"], runManager?: any): Promise<any> {
-		this.sourceMessagesForRequest = messages;
-		try {
-			return await super._generate(messages, options, runManager);
-		} finally {
-			this.sourceMessagesForRequest = null;
-		}
-	}
-
-	async *_streamResponseChunks(messages: BaseMessage[], options: this["ParsedCallOptions"], runManager?: any): AsyncGenerator<any> {
-		this.sourceMessagesForRequest = messages;
-		try {
-			yield* super._streamResponseChunks(messages, options, runManager);
-		} finally {
-			this.sourceMessagesForRequest = null;
-		}
-	}
-
-	completionWithRetry(request: any, requestOptions?: any): Promise<any> {
-		return super.completionWithRetry(
-			injectReasoningContent(request, this.sourceMessagesForRequest),
-			requestOptions,
-		);
-	}
-}
-
-class SiYuanChatDeepSeek extends ChatDeepSeek {
-	private sourceMessagesForRequest: BaseMessage[] | null = null;
-
-	async _generate(messages: BaseMessage[], options: this["ParsedCallOptions"], runManager?: any): Promise<any> {
-		this.sourceMessagesForRequest = messages;
-		try {
-			return await super._generate(messages, options, runManager);
-		} finally {
-			this.sourceMessagesForRequest = null;
-		}
-	}
-
-	async *_streamResponseChunks(messages: BaseMessage[], options: this["ParsedCallOptions"], runManager?: any): AsyncGenerator<any> {
-		this.sourceMessagesForRequest = messages;
-		try {
-			yield* super._streamResponseChunks(messages, options, runManager);
-		} finally {
-			this.sourceMessagesForRequest = null;
-		}
-	}
-
-	completionWithRetry(request: any, requestOptions?: any): Promise<any> {
-		return super.completionWithRetry(
-			injectReasoningContent(request, this.sourceMessagesForRequest),
-			requestOptions,
-		);
-	}
-}
-
 export function createChatModel(
 	config: ModelConfig,
 	options: CreateChatModelOptions = {},
@@ -148,7 +54,7 @@ export function createChatModel(
 	const temperature = options.temperature ?? config.temperature ?? 0;
 	const streaming = options.streaming ?? false;
 	if (config.providerType === "deepseek") {
-		return new SiYuanChatDeepSeek({
+		return new ChatDeepSeek({
 			model: config.model,
 			temperature,
 			streaming,
@@ -158,9 +64,9 @@ export function createChatModel(
 				dangerouslyAllowBrowser: true,
 				baseURL: config.apiBaseURL || "https://api.deepseek.com",
 			},
-		}) as BaseChatModel;
+		}) as unknown as BaseChatModel;
 	}
-	return new SiYuanChatOpenAI({
+	return new ChatOpenAI({
 		model: config.model,
 		temperature,
 		streaming,
@@ -170,5 +76,5 @@ export function createChatModel(
 			dangerouslyAllowBrowser: true,
 			baseURL: config.apiBaseURL,
 		},
-	}) as BaseChatModel;
+	});
 }

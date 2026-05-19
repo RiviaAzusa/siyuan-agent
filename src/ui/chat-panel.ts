@@ -1466,7 +1466,7 @@ export class ChatPanel {
 		copyBtn.className = "chat-msg__action-btn";
 		copyBtn.dataset.action = "copy";
 		copyBtn.title = this.t("chat.actionBar.copy");
-		copyBtn.innerHTML = `<svg class="chat-msg__action-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.75" y="8.25" width="11.5" height="11.5" rx="3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.25 5.25h5.1c2.2 0 3.4 1.2 3.4 3.4v5.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+		copyBtn.innerHTML = "<svg class=\"chat-msg__action-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"4.75\" y=\"8.25\" width=\"11.5\" height=\"11.5\" rx=\"3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M10.25 5.25h5.1c2.2 0 3.4 1.2 3.4 3.4v5.1\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
 
 		copyBtn.addEventListener("click", () => {
 			navigator.clipboard.writeText(rawContent).then(() => {
@@ -1480,7 +1480,7 @@ export class ChatPanel {
 		regenBtn.className = "chat-msg__action-btn";
 		regenBtn.dataset.action = "regenerate";
 		regenBtn.title = this.t("chat.actionBar.regenerate");
-		regenBtn.innerHTML = `<svg class="chat-msg__action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 7.2A6.7 6.7 0 006.3 9.4" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.8 4.8v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.3 16.8a6.7 6.7 0 0011.4-2.2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.2 19.2V16h3.2" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+		regenBtn.innerHTML = "<svg class=\"chat-msg__action-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M17.7 7.2A6.7 6.7 0 006.3 9.4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.65\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M17.8 4.8v3.2h-3.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.65\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M6.3 16.8a6.7 6.7 0 0011.4-2.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.65\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M6.2 19.2V16h3.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.65\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>";
 
 		regenBtn.addEventListener("click", () => this.handleRegenerate(shell));
 

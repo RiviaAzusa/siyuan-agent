@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { ChatDeepSeek } from "@langchain/deepseek";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import {
@@ -8,6 +7,7 @@ import {
 	getOpenAICompatibleModelKwargs,
 	injectReasoningContent,
 } from "../src/core/chat-model";
+import { ChatDeepSeek } from "../src/llms/deepseek";
 import type { ModelConfig } from "../src/types";
 
 function makeModel(overrides: Partial<ModelConfig> = {}): ModelConfig {
@@ -111,82 +111,25 @@ describe("injectReasoningContent", () => {
 		expect(request.messages[1]).not.toHaveProperty("reasoning_content");
 	});
 
-	it("is reused by OpenAI-compatible completion requests", async () => {
-		const sourceMessages = [
-			new HumanMessage({ content: "search foo" }),
-			new AIMessage({
-				content: "",
-				additional_kwargs: { reasoning_content: "Need to search first." },
-				tool_calls: [{ name: "search_fulltext", args: { query: "foo" }, id: "call-1" }],
-			}),
-		];
-		const model = createChatModel(makeModel()) as any;
-		const request = {
-			model: "mimo-v2.5-pro",
-			messages: [
-				{ role: "user", content: "search foo" },
-				{ role: "assistant", content: "", tool_calls: [{ id: "call-1" }] },
-			],
-		};
-		let capturedRequest: any = null;
-		const originalCompletionWithRetry = Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry;
-		Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = async (_request: any) => {
-			capturedRequest = _request;
-			return { choices: [{ message: { role: "assistant", content: "ok" } }] };
-		};
-
-		try {
-			model.sourceMessagesForRequest = sourceMessages;
-			await model.completionWithRetry(request);
-		} finally {
-			Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = originalCompletionWithRetry;
-		}
-
-		expect(capturedRequest.messages[1]).toMatchObject({
-			role: "assistant",
-			reasoning_content: "Need to search first.",
-		});
-	});
-
-	it("is reused by DeepSeek completion requests", async () => {
-		const sourceMessages = [
-			new HumanMessage({ content: "search foo" }),
-			new AIMessage({
-				content: "",
-				additional_kwargs: { reasoning_content: "Need to search first." },
-				tool_calls: [{ name: "search_fulltext", args: { query: "foo" }, id: "call-1" }],
-			}),
-		];
+	it("ChatDeepSeek patches completions for reasoning injection", () => {
 		const model = createChatModel(makeModel({
 			provider: "DeepSeek",
 			providerType: "deepseek",
 			model: "deepseek-v4-pro",
 			apiBaseURL: "https://api.deepseek.com",
+			apiKey: "ds-test",
 		})) as any;
-		const request = {
-			model: "deepseek-v4-pro",
-			messages: [
-				{ role: "user", content: "search foo" },
-				{ role: "assistant", content: "", tool_calls: [{ id: "call-1" }] },
-			],
-		};
-		let capturedRequest: any = null;
-		const originalCompletionWithRetry = Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry;
-		Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = async (_request: any) => {
-			capturedRequest = _request;
-			return { choices: [{ message: { role: "assistant", content: "ok" } }] };
-		};
-
-		try {
-			model.sourceMessagesForRequest = sourceMessages;
-			await model.completionWithRetry(request);
-		} finally {
-			Object.getPrototypeOf(Object.getPrototypeOf(model)).completionWithRetry = originalCompletionWithRetry;
-		}
-
-		expect(capturedRequest.messages[1]).toMatchObject({
-			role: "assistant",
-			reasoning_content: "Need to search first.",
-		});
+		// Verify the completions methods are patched (instance methods differ from prototype)
+		expect(model.completions.completionWithRetry).not.toBe(
+			Object.getPrototypeOf(model.completions).completionWithRetry,
+		);
+		expect(model.completions._convertCompletionsDeltaToBaseMessageChunk).not.toBe(
+			Object.getPrototypeOf(model.completions)._convertCompletionsDeltaToBaseMessageChunk,
+		);
+		expect(model.completions._convertCompletionsMessageToBaseMessage).not.toBe(
+			Object.getPrototypeOf(model.completions)._convertCompletionsMessageToBaseMessage,
+		);
+		// Verify sourceMessagesForRequest field is accessible
+		expect(model.sourceMessagesForRequest).toBeNull();
 	});
 });

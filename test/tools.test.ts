@@ -239,7 +239,7 @@ describe("stream-runtime error detection", () => {
 
 		expect(isError("Error: Block not found")).toBe(true);
 		expect(isError("[子智能体执行失败] API rate limit")).toBe(true);
-		expect(isError('ToolError: invalid param')).toBe(true);
+		expect(isError("ToolError: invalid param")).toBe(true);
 		expect(isError('{"error": "something went wrong"}')).toBe(true);
 		expect(isError("成功完成操作")).toBe(false);
 		expect(isError('{"status": "ok"}')).toBe(false);
