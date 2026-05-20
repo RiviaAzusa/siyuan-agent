@@ -12,34 +12,13 @@ export interface CreateChatModelOptions {
 	reasoningEffort?: ReasoningEffort;
 }
 
-export function getDeepSeekModelKwargs(reasoningEffort: ReasoningEffort = "default"): Record<string, any> {
-	if (reasoningEffort === "off") {
-		return {
-			thinking: { type: "disabled" },
-		};
-	}
-	if (reasoningEffort === "high") {
-		return {
-			reasoning_effort: "high",
-			thinking: { type: "enabled" },
-		};
-	}
-	if (reasoningEffort === "xhigh") {
-		return {
-			reasoning_effort: "max",
-			thinking: { type: "enabled" },
-		};
-	}
-	return {};
-}
-
 export function getOpenAICompatibleModelKwargs(reasoningEffort: ReasoningEffort = "default"): Record<string, any> {
 	if (reasoningEffort === "off") {
 		return {
 			thinking: { type: "disabled" },
 		};
 	}
-	if (reasoningEffort === "high" || reasoningEffort === "xhigh") {
+	if (reasoningEffort === "low" || reasoningEffort === "high") {
 		return {
 			thinking: { type: "enabled" },
 		};
@@ -59,7 +38,7 @@ export function createChatModel(
 			temperature,
 			streaming,
 			apiKey: config.apiKey,
-			modelKwargs: getDeepSeekModelKwargs(options.reasoningEffort),
+			modelKwargs: ChatDeepSeek.getModelKwargs(options.reasoningEffort),
 			configuration: {
 				dangerouslyAllowBrowser: true,
 				baseURL: config.apiBaseURL || "https://api.deepseek.com",

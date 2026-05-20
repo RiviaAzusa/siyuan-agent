@@ -126,7 +126,7 @@ export class ChatPanel {
 	}
 
 	private normalizeReasoningEffort(value: string | undefined): ReasoningEffort {
-		return value === "off" || value === "high" || value === "xhigh" ? value : "default";
+		return value === "off" || value === "low" || value === "high" ? value : "default";
 	}
 
 	private syncReasoningControl(): void {
@@ -395,8 +395,8 @@ export class ChatPanel {
 		return [
 			{ value: "default", label: this.t("chat.reasoning.default") },
 			{ value: "off", label: this.t("chat.reasoning.off") },
+			{ value: "low", label: this.t("chat.reasoning.low") },
 			{ value: "high", label: this.t("chat.reasoning.high") },
-			{ value: "xhigh", label: this.t("chat.reasoning.xhigh") },
 		];
 	}
 

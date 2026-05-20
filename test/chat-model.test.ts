@@ -3,7 +3,6 @@ import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import {
 	createChatModel,
-	getDeepSeekModelKwargs,
 	getOpenAICompatibleModelKwargs,
 	injectReasoningContent,
 } from "../src/core/chat-model";
@@ -34,7 +33,7 @@ describe("createChatModel", () => {
 		}), { streaming: true, reasoningEffort: "high" });
 		expect(model).toBeInstanceOf(ChatDeepSeek);
 		expect((model as any).modelKwargs).toMatchObject({
-			reasoning_effort: "high",
+			reasoning_effort: "max",
 			thinking: { type: "enabled" },
 		});
 	});
@@ -47,25 +46,25 @@ describe("createChatModel", () => {
 
 	it("passes OpenAI-compatible thinking settings through modelKwargs", () => {
 		const offModel = createChatModel(makeModel(), { reasoningEffort: "off" });
+		const lowModel = createChatModel(makeModel(), { reasoningEffort: "low" });
 		const highModel = createChatModel(makeModel(), { reasoningEffort: "high" });
-		const xhighModel = createChatModel(makeModel(), { reasoningEffort: "xhigh" });
 
 		expect((offModel as any).modelKwargs).toEqual({ thinking: { type: "disabled" } });
+		expect((lowModel as any).modelKwargs).toEqual({ thinking: { type: "enabled" } });
 		expect((highModel as any).modelKwargs).toEqual({ thinking: { type: "enabled" } });
-		expect((xhighModel as any).modelKwargs).toEqual({ thinking: { type: "enabled" } });
 	});
 });
 
-describe("getDeepSeekModelKwargs", () => {
+describe("ChatDeepSeek.getModelKwargs", () => {
 	it("maps reasoning effort to DeepSeek request fields", () => {
-		expect(getDeepSeekModelKwargs("default")).toEqual({});
-		expect(getDeepSeekModelKwargs("off")).toEqual({ thinking: { type: "disabled" } });
-		expect(getDeepSeekModelKwargs("high")).toEqual({
-			reasoning_effort: "high",
+		expect(ChatDeepSeek.getModelKwargs("default")).toEqual({});
+		expect(ChatDeepSeek.getModelKwargs("off")).toEqual({ thinking: { type: "disabled" } });
+		expect(ChatDeepSeek.getModelKwargs("high")).toEqual({
+			reasoning_effort: "max",
 			thinking: { type: "enabled" },
 		});
-		expect(getDeepSeekModelKwargs("xhigh")).toEqual({
-			reasoning_effort: "max",
+		expect(ChatDeepSeek.getModelKwargs("low")).toEqual({
+			reasoning_effort: "high",
 			thinking: { type: "enabled" },
 		});
 	});
@@ -76,7 +75,7 @@ describe("getOpenAICompatibleModelKwargs", () => {
 		expect(getOpenAICompatibleModelKwargs("default")).toEqual({});
 		expect(getOpenAICompatibleModelKwargs("off")).toEqual({ thinking: { type: "disabled" } });
 		expect(getOpenAICompatibleModelKwargs("high")).toEqual({ thinking: { type: "enabled" } });
-		expect(getOpenAICompatibleModelKwargs("xhigh")).toEqual({ thinking: { type: "enabled" } });
+		expect(getOpenAICompatibleModelKwargs("low")).toEqual({ thinking: { type: "enabled" } });
 	});
 });
 
@@ -119,7 +118,6 @@ describe("injectReasoningContent", () => {
 			apiBaseURL: "https://api.deepseek.com",
 			apiKey: "ds-test",
 		})) as any;
-		// Verify the completions methods are patched (instance methods differ from prototype)
 		expect(model.completions.completionWithRetry).not.toBe(
 			Object.getPrototypeOf(model.completions).completionWithRetry,
 		);
@@ -129,7 +127,6 @@ describe("injectReasoningContent", () => {
 		expect(model.completions._convertCompletionsMessageToBaseMessage).not.toBe(
 			Object.getPrototypeOf(model.completions)._convertCompletionsMessageToBaseMessage,
 		);
-		// Verify sourceMessagesForRequest field is accessible
 		expect(model.sourceMessagesForRequest).toBeNull();
 	});
 });

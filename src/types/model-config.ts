@@ -36,7 +36,7 @@ export interface ModelServiceConfig {
 
 export type ModelProviderType = "openai-compatible" | "deepseek";
 
-export type ReasoningEffort = "default" | "off" | "high" | "xhigh";
+export type ReasoningEffort = "default" | "off" | "low" | "high";
 
 export const DEEPSEEK_API_BASE_URL = "https://api.deepseek.com";
 

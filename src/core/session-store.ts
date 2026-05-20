@@ -189,8 +189,8 @@ function normalizeSessionData(raw: any, fallbackId?: string, fallbackEntry?: Ses
 		state: raw?.state && typeof raw.state === "object" ? raw.state : {},
 		modelId: typeof raw?.modelId === "string" ? raw.modelId : undefined,
 		reasoningEffort: raw?.reasoningEffort === "off"
+			|| raw?.reasoningEffort === "low"
 			|| raw?.reasoningEffort === "high"
-			|| raw?.reasoningEffort === "xhigh"
 			|| raw?.reasoningEffort === "default"
 			? raw.reasoningEffort
 			: "default",

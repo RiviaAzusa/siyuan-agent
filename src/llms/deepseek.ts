@@ -2,6 +2,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { AIMessageChunk } from "@langchain/core/messages";
 import { ChatGenerationChunk } from "@langchain/core/outputs";
 import type { BaseMessage } from "@langchain/core/messages";
+import type { ReasoningEffort } from "../types";
 import type { ModelProfile } from "./reasoning";
 import { injectReasoningContent, DEEPSEEK_PROFILES } from "./reasoning";
 
@@ -18,6 +19,13 @@ export interface ChatDeepSeekInput {
 }
 
 export class ChatDeepSeek extends ChatOpenAI {
+	static getModelKwargs(effort: ReasoningEffort = "default"): Record<string, any> {
+		if (effort === "off") return { thinking: { type: "disabled" } };
+		if (effort === "low") return { reasoning_effort: "high", thinking: { type: "enabled" } };
+		if (effort === "high") return { reasoning_effort: "max", thinking: { type: "enabled" } };
+		return {};
+	}
+
 	/** @internal */
 	sourceMessagesForRequest: BaseMessage[] | null = null;
 
