@@ -64,6 +64,8 @@ module.exports = (env, argv) => {
         externals: {
             siyuan: "siyuan",
             "node:async_hooks": "commonjs2 node:async_hooks",
+            "node:fs": "commonjs2 node:fs",
+            "node:path": "commonjs2 node:path",
         },
         entry,
         optimization: {

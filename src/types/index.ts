@@ -7,6 +7,7 @@ export {
 	type McpServerConfig,
 	type AgentConfig,
 	DEEPSEEK_API_BASE_URL,
+	ANTHROPIC_API_BASE_URL,
 	DEFAULT_CONFIG,
 	cloneModelServices,
 	normalizeAgentConfig,

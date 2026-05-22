@@ -1,10 +1,7 @@
-import { createAgent, summarizationMiddleware } from "langchain";
-import { LangChainTracer } from "@langchain/core/tracers/tracer_langchain";
-import { Client } from "langsmith";
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import type { Tool } from "@ai-sdk/provider-utils";
 import { buildSystemPrompt, resolveModelConfig, type AgentConfig, type ModelConfig, type ReasoningEffort } from "../types";
 import { defaultTranslator, type Translator } from "../i18n";
-import { createChatModel } from "./chat-model";
+import { createModel, buildProviderOptions } from "../llms/ai-sdk-provider";
 
 async function fetchGuideDoc(docId: string): Promise<string> {
 	try {
@@ -21,16 +18,23 @@ async function fetchGuideDoc(docId: string): Promise<string> {
 	}
 }
 
-export async function makeAgent(
+export interface AgentSetup {
+	model: ReturnType<typeof createModel>;
+	tools: Record<string, Tool<any, string>>;
+	systemPrompt: string;
+	providerOptions?: Record<string, Record<string, unknown>>;
+}
+
+export async function prepareAgent(
 	config: AgentConfig,
-	tools: StructuredToolInterface[],
+	tools: Tool<any, string>[],
 	extraSystemPrompt?: string | null,
 	modelOverride?: ModelConfig | null,
 	i18n: Translator = defaultTranslator,
 	reasoningEffort: ReasoningEffort = "default",
-) {
+): Promise<AgentSetup> {
 	const mc = modelOverride || resolveModelConfig(config);
-	const model = createChatModel(mc, { streaming: true, reasoningEffort });
+	const model = createModel(mc, { reasoningEffort });
 
 	let systemPrompt = buildSystemPrompt(i18n);
 	if (config.guideDoc?.id) {
@@ -54,32 +58,13 @@ export async function makeAgent(
 		systemPrompt += `\n\n${extraSystemPrompt}`;
 	}
 
-	const middleware = [
-		summarizationMiddleware({
-			model,
-			trigger: { messages: 30 },
-			keep: { messages: 12 },
-		}),
-	] as const;
+	// Build tools map
+	const toolsMap: Record<string, Tool<any, string>> = {};
+	for (const t of tools) {
+		if ((t as any).name) toolsMap[(t as any).name] = t;
+	}
 
-	return createAgent({
-		model,
-		tools,
-		systemPrompt,
-		middleware,
-	});
-}
+	const providerOptions = buildProviderOptions(mc.providerType || "openai-compatible", reasoningEffort);
 
-export function makeTracer(config: AgentConfig): LangChainTracer | null {
-	if (!config.langSmithEnabled || !config.langSmithApiKey) return null;
-
-	const client = new Client({
-		apiKey: config.langSmithApiKey,
-		apiUrl: config.langSmithEndpoint || "https://api.smith.langchain.com",
-	});
-
-	return new LangChainTracer({
-		projectName: config.langSmithProject || "SiYuan-Agent",
-		client,
-	});
+	return { model, tools: toolsMap, systemPrompt, providerOptions };
 }

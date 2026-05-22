@@ -1,5 +1,5 @@
-import { HumanMessage } from "@langchain/core/messages";
-import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { generateText } from "ai";
+import type { LanguageModelV1 } from "@ai-sdk/provider";
 import type { AgentState, CompactionState } from "../types";
 
 const COMPACT_SUMMARY_PROMPT = `You are a conversation summariser for a note-taking AI assistant.
@@ -37,6 +37,10 @@ function msgType(m: any): string {
 		if (cls === "SystemMessage") return "system";
 		if (cls === "ToolMessage") return "tool";
 	}
+	if (m?.role === "user") return "human";
+	if (m?.role === "assistant") return "ai";
+	if (m?.role === "system") return "system";
+	if (m?.role === "tool") return "tool";
 	return m?.type ?? m?.role ?? "";
 }
 
@@ -50,7 +54,7 @@ function charCount(messages: any[]): number {
 	let total = 0;
 	for (const m of messages) {
 		total += getContent(m).length;
-		const tc = m?.kwargs?.tool_calls ?? m?.tool_calls;
+		const tc = m?.kwargs?.tool_calls ?? m?.tool_calls ?? m?.toolCalls;
 		if (Array.isArray(tc)) {
 			total += JSON.stringify(tc).length;
 		}
@@ -86,7 +90,7 @@ function turnsToText(turns: any[][]): string {
 			if (t === "human" || t === "user") {
 				lines.push(`User: ${c}`);
 			} else if (t === "ai") {
-				const tc = m?.kwargs?.tool_calls ?? m?.tool_calls;
+				const tc = m?.kwargs?.tool_calls ?? m?.tool_calls ?? m?.toolCalls;
 				if (Array.isArray(tc) && tc.length > 0) {
 					const names = tc.map((t: any) => t.name || "?").join(", ");
 					lines.push(`Assistant: ${c || "(tool calls)"} [tools: ${names}]`);
@@ -101,8 +105,8 @@ function turnsToText(turns: any[][]): string {
 }
 
 export interface CompactOptions {
-	/** The LLM used for summarisation. */
-	model: BaseChatModel;
+	/** The LLM used for summarisation (AI SDK model). */
+	model: LanguageModelV1;
 	/** How many recent turns to keep verbatim. */
 	keepRecentTurns?: number;
 	/** Extra requirement text from `/compact [text]`. */
@@ -149,10 +153,11 @@ export async function compactMessages(
 		prompt += `\n\nAdditional user instruction for this summary: ${options.requirement}`;
 	}
 
-	const result = await options.model.invoke([new HumanMessage(prompt)]);
-	const summary = typeof result.content === "string"
-		? result.content
-		: JSON.stringify(result.content);
+	const result = await generateText({
+		model: options.model,
+		messages: [{ role: "user", content: prompt }],
+	});
+	const summary = result.text || "";
 
 	/* Rebuild state.messages: keep only recent turns */
 	state.messages = recentTurns.flat();

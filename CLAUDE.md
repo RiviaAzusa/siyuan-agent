@@ -17,18 +17,22 @@ Single test file: `npx vitest run test/markdown.test.ts`
 
 ## Architecture
 
-SiYuan Agent — AI assistant plugin for the SiYuan note-taking app. LangChain agent with streaming, tool calling, and MCP support.
+SiYuan Agent — AI assistant plugin for the SiYuan note-taking app. Vercel AI SDK agent with streaming, tool calling, and MCP support.
 
 ### Entry & Lifecycle
 - `src/index.ts`: Plugin class → creates Dock (mobile) / Tab (desktop), registers `editorCallback` (`⌥⌘L`) for send-to-chat, right-click context menu. Lifecycle: `onload` → `onLayoutReady` → `onunload` → `uninstall`
 
 ### Core (`src/core/`)
-- **`agent.ts`**: `makeAgent()` — LangChain `createAgent()` with customizable system prompt (guide doc, default notebook, custom instructions). Auto-compacts after 30 messages via `summarizationMiddleware`
-- **`stream-runtime.ts`**: Core streaming engine (~590 lines). Processes `agent.stream()` with three modes: `messages` (token deltas), `values` (state snapshots), `custom` (tool UI events). Handles abort, idle timeout (120s), reasoning content (DeepSeek thinking), tool call dedup
-- **`chat-model.ts`**: LLM factory — `ChatOpenAI` or custom `SiYuanChatDeepSeek` (injects `reasoning_content`). Supports `ReasoningEffort`: `default`, `off`, `high`, `xhigh`
-- **`compaction.ts`**: Splits messages into turns, summarizes older turns, preserves todo plans
+- **`agent.ts`**: `prepareAgent()` — creates model + tools + system prompt for AI SDK. Supports guide doc, default notebook, custom instructions, reasoning effort
+- **`stream-runtime.ts`**: Core streaming engine. Manual agent loop using AI SDK `streamText()` with `maxSteps: 1` per iteration. Processes `fullStream` chunks (text-delta, reasoning, tool-call, tool-result). Tool UI events collected via `experimental_context` writer. Handles abort, idle timeout (120s)
+- **`tool-types.ts`**: `createTool()` wrapper bridging AI SDK's `tool()` with custom `ToolContext` (writer for UI events)
+- **`compaction.ts`**: Splits messages into turns, summarizes older turns via AI SDK `generateText()`, preserves todo plans
 - **`session-store.ts`**: Uses native `fetch` (not SDK's `fetchPost` which has a hanging-Promise bug)
-- **`sub-agent.ts`**: `explore_notes` — sub-agent with its own recursive tool loop (12 steps max)
+- **`sub-agent.ts`**: `explore_notes` — sub-agent using AI SDK `generateText()` with its own recursive tool loop (12 steps max)
+- **`mcp-client.ts`**: MCP (Model Context Protocol) client with Streamable HTTP transport. `mcpToolsToAiSdk()` converts MCP tools to AI SDK format
+
+### LLM Providers (`src/llms/`)
+- **`ai-sdk-provider.ts`**: Model factory for AI SDK. Supports OpenAI-compatible, Anthropic (`@ai-sdk/anthropic`), DeepSeek (`@ai-sdk/deepseek`). `buildProviderOptions()` maps reasoning effort to provider-specific options
 
 ### Tools (`src/core/tools/`)
 19 tools, all Zod-schema validated, all use `siyuanFetch` (native fetch wrapper):
@@ -45,7 +49,7 @@ SiYuan Agent — AI assistant plugin for the SiYuan note-taking app. LangChain a
 
 ### UI (`src/ui/`)
 - **`chat-panel.ts`** (74KB): Main orchestrator, delegate pattern → `SettingsView`, `TasksView`, `Autocomplete`
-- **`settings-view.ts`** (39KB): Model service management, MCP config, guide doc, LangSmith tracing
+- **`settings-view.ts`** (39KB): Model service management, MCP config, guide doc
 - **`markdown.ts`**: Zero-dependency MD→HTML renderer
 - **`chat-helpers.ts`**: Pure functions for message type detection, HTML escaping, tool display
 
@@ -63,8 +67,8 @@ SCSS with `@use` partials. Uses SiYuan CSS variables (`--b3-theme-*`).
 
 - **Native fetch over SDK**: `siyuanFetch` uses `fetch()` directly; SDK's `fetchPost` has a hanging-Promise bug
 - **Auto-apply + Diff + Undo**: Edit tools apply changes automatically, return diff info for git-style UI with undo
-- **Tool events via writer**: Tools emit structured JSON through `runtime.writer()`, parsed into typed `ToolUIEvent` objects
-- **Streaming with state recovery**: `stream-runtime.ts` builds recoverable state incrementally
+- **Tool events via writer**: Tools emit structured JSON through `experimental_context.writer` (AI SDK context passing), collected per-step and parsed into typed `ToolUIEvent` objects
+- **Manual agent loop**: `stream-runtime.ts` uses `streamText()` with `maxSteps: 1` per iteration for fine-grained control over tool execution, UI events, and abort handling. Enables future tool approval checkpoints
 - **Document tree via filetree API**: Prefer SiYuan native `filetree` API over SQL enumeration; `recent_documents` uses restricted SQL only for IDs, then reads individually
 - **`edit_blocks` diff**: `stripIAL()` filters kramdown `{: ...}` markers before comparison; LCS line-level diff algorithm, no external deps
 
@@ -76,6 +80,18 @@ SCSS with `@use` partials. Uses SiYuan CSS variables (`--b3-theme-*`).
 - `deleteSession()` picks next session by `updated` descending
 - `title`/`updated` only written after stream completes (prevents stale reads)
 - `switchSession()` saves current session first
+
+## Message Format
+
+Messages use a simple flat JSON format (not LangChain serialized dicts):
+```json
+{ "role": "user", "content": "..." }
+{ "role": "assistant", "content": "...", "reasoning": "...", "toolCalls": [{ "id": "...", "name": "...", "args": {...} }] }
+{ "role": "system", "content": "..." }
+{ "role": "tool", "toolCallId": "...", "toolName": "...", "result": "..." }
+```
+
+Legacy `lc:1` LangChain format is auto-converted on read via `mergeState()` (lazy migration). Old sessions are migrated on first load.
 
 ## SiYuan Plugin API Gotchas
 

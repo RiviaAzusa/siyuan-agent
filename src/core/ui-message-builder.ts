@@ -19,6 +19,10 @@ function msgType(m: any): string {
 		if (cls === "SystemMessage") return "system";
 		if (cls === "ToolMessage") return "tool";
 	}
+	if (m?.role === "user") return "human";
+	if (m?.role === "assistant") return "ai";
+	if (m?.role === "system") return "system";
+	if (m?.role === "tool") return "tool";
 	return m?.type ?? m?.role ?? "";
 }
 
@@ -28,7 +32,7 @@ function getMessageContent(m: any): string {
 }
 
 function getMessageToolCalls(m: any): any[] {
-	const tc = m?.kwargs?.tool_calls ?? m?.tool_calls;
+	const tc = m?.kwargs?.tool_calls ?? m?.tool_calls ?? m?.toolCalls;
 	return Array.isArray(tc) ? tc : [];
 }
 

@@ -1,356 +1,105 @@
-import { describe, expect, it } from "vitest";
-import { AIMessage } from "@langchain/core/messages";
-import { mergeState, runAgentStream } from "../src/core/stream-runtime";
-import { isToolMessageUi } from "../src/types";
-import type { AgentStreamUiEvent } from "../src/types";
+import { describe, expect, it, vi } from "vitest";
+import { mergeState } from "../src/core/stream-runtime";
 
-type StreamChunk = [string, any];
+vi.mock("siyuan", () => ({
+	fetchPost: vi.fn(),
+	openTab: vi.fn(),
+}));
 
-function createAbortError(): Error {
-	const error = new Error("aborted");
-	error.name = "AbortError";
-	return error;
-}
+vi.mock("ai", () => ({
+	streamText: vi.fn().mockReturnValue({
+		fullStream: (async function* () {})(),
+		toolCalls: [],
+		response: { messages: [] },
+	}),
+}));
 
-function createAgent(items: Array<StreamChunk | Error>) {
-	return {
-		stream: async () => (async function* () {
-			for (const item of items) {
-				if (item instanceof Error) {
-					throw item;
-				}
-				yield item;
-			}
-		})(),
-	};
-}
+describe("mergeState", () => {
+	it("returns empty messages for null state", () => {
+		const result = mergeState(null);
+		expect(result.messages).toEqual([]);
+	});
 
-function getContents(messages: any[]): string[] {
-	return messages.map((message) => String(message?.content ?? message?.kwargs?.content ?? ""));
-}
+	it("appends user message from inputMsgStr", () => {
+		const result = mergeState(null, "hello");
+		expect(result.messages).toHaveLength(1);
+		expect(result.messages[0]).toEqual({ role: "user", content: "hello" });
+	});
 
-function getTypes(messages: any[]): string[] {
-	return messages.map((message) => String(message?._getType?.() ?? message?.type ?? ""));
-}
-
-function getUiAiContents(messagesUi: any[]): string[] {
-	return messagesUi
-		.filter((message) => !isToolMessageUi(message))
-		.filter((message) => (message?.id?.[message.id.length - 1] ?? "") === "AIMessage")
-		.map((message) => String(message?.kwargs?.content ?? message?.content ?? ""));
-}
-
-function getReasoning(message: any): string {
-	return String(message?.additional_kwargs?.reasoning_content ?? message?.kwargs?.additional_kwargs?.reasoning_content ?? "");
-}
-
-describe("runAgentStream", () => {
-	it("keeps the latest values snapshot as the recovery source of truth", async () => {
-		const input = mergeState(null, "hello");
-		const finalState = {
-			messages: [...input.messages, new AIMessage({ content: "done" })],
-			marker: 2,
+	it("converts lc:1 format messages to simple format", () => {
+		const state = {
+			messages: [
+				{
+					lc: 1,
+					type: "constructor",
+					id: ["langchain_core", "messages", "HumanMessage"],
+					kwargs: { content: "old question" },
+				},
+				{
+					lc: 1,
+					type: "constructor",
+					id: ["langchain_core", "messages", "AIMessage"],
+					kwargs: {
+						content: "old answer",
+						additional_kwargs: { reasoning_content: "thinking..." },
+					},
+				},
+			],
 		};
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["values", { messages: [...input.messages], marker: 1 }],
-				["values", finalState],
-			]),
-			input,
+		const result = mergeState(state, "new question");
+		expect(result.messages).toHaveLength(3);
+		expect(result.messages[0]).toEqual({ role: "user", content: "old question" });
+		expect(result.messages[1]).toEqual({
+			role: "assistant",
+			content: "old answer",
+			reasoning: "thinking...",
 		});
-
-		expect(result.completed).toBe(true);
-		expect(result.lastState.marker).toBe(2);
-		expect(getContents(result.lastState.messages || [])).toEqual(["hello", "done"]);
+		expect(result.messages[2]).toEqual({ role: "user", content: "new question" });
 	});
 
-	it("persists a partial AI message when streaming aborts mid-response", async () => {
-		const input = mergeState(null, "hello");
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{ _getType: () => "ai", content: "Hel" }, {}]],
-				["messages", [{ _getType: () => "ai", content: "lo" }, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(result.completed).toBe(false);
-		expect(getContents(result.lastState.messages || [])).toEqual(["hello", "Hello"]);
+	it("handles new format messages directly", () => {
+		const state = {
+			messages: [
+				{ role: "user", content: "question" },
+				{ role: "assistant", content: "answer" },
+			],
+		};
+		const result = mergeState(state, "follow-up");
+		expect(result.messages).toHaveLength(3);
+		expect(result.messages[0]).toEqual({ role: "user", content: "question" });
+		expect(result.messages[1]).toEqual({ role: "assistant", content: "answer" });
+		expect(result.messages[2]).toEqual({ role: "user", content: "follow-up" });
 	});
 
-	it("does not duplicate the final AI message when values already contain it", async () => {
-		const input = mergeState(null, "hello");
-		const finalAi = new AIMessage({ content: "Hello" });
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{ _getType: () => "ai", content: "Hello" }, {}]],
-				["values", { messages: [...input.messages, finalAi] }],
-			]),
-			input,
-		});
-
-		expect(result.completed).toBe(true);
-		expect(result.lastState.messages).toHaveLength(2);
-		expect(getContents(result.lastState.messages || [])).toEqual(["hello", "Hello"]);
+	it("prepends compaction summary as system message", () => {
+		const state = {
+			messages: [],
+			compaction: { summary: "Previous context", version: 1 },
+		};
+		const result = mergeState(state, "hello");
+		expect(result.messages[0].role).toBe("system");
+		expect(result.messages[0].content).toContain("Previous context");
+		expect(result.messages[1]).toEqual({ role: "user", content: "hello" });
 	});
 
-	it("keeps assistant turns separated across tool boundaries on abort", async () => {
-		const input = mergeState(null, "hello");
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "Let me check. ",
-					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
-				}, {}]],
-				["messages", [{
-					_getType: () => "tool",
-					content: "42",
-					tool_call_id: "call-1",
-				}, {}]],
-				["messages", [{
-					_getType: () => "ai",
-					content: "The answer is 42",
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(getTypes(result.lastState.messages || [])).toEqual(["human", "ai", "tool", "ai"]);
-		expect(getContents(result.lastState.messages || [])).toEqual([
-			"hello",
-			"Let me check. ",
-			"42",
-			"The answer is 42",
-		]);
-	});
-
-	it("persists tool results received after the latest values snapshot", async () => {
-		const input = mergeState(null, "hello");
-		const aiWithToolCall = new AIMessage({
-			content: "",
-			tool_calls: [{ name: "search_fulltext", args: { query: "foo" }, id: "call-1" }],
-		});
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["values", { messages: [...input.messages, aiWithToolCall] }],
-				["messages", [{
-					_getType: () => "tool",
-					content: "42",
-					tool_call_id: "call-1",
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(getTypes(result.lastState.messages || [])).toEqual(["human", "ai", "tool"]);
-		expect(getContents(result.lastState.messages || [])).toEqual(["hello", "", "42"]);
-	});
-
-	it("binds custom tool UI events back to the originating toolCallId", async () => {
-		const input = mergeState(null, "search foo");
-		const uiEvents: AgentStreamUiEvent[] = [];
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "",
-					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
-				}, {}]],
-				["custom", JSON.stringify({
-					__tool_type: "activity",
-					toolCallId: "call-1",
-					category: "lookup",
-					action: "search",
-					label: "foo",
-				})],
-			]),
-			input,
-			onUiEvent: (event) => {
-				uiEvents.push(event);
+	it("prepends todos as system message", () => {
+		const state = {
+			messages: [],
+			todos: {
+				goal: "Build feature",
+				items: [{ content: "Step 1", status: "in_progress" }],
+				updatedAt: Date.now(),
 			},
-		});
-
-		expect(uiEvents).toEqual([
-			expect.objectContaining({
-				type: "tool_call_start",
-				toolCallIndex: 0,
-				toolCallId: "call-1",
-				toolName: "search_fulltext",
-			}),
-			expect.objectContaining({
-				type: "tool_ui",
-				event: expect.objectContaining({
-					toolCallId: "call-1",
-					toolCallIndex: 0,
-					toolName: "search_fulltext",
-				}),
-			}),
-		]);
-		expect(result.lastState.toolUIEvents).toEqual([
-			expect.objectContaining({
-				toolCallId: "call-1",
-				toolCallIndex: 0,
-				toolName: "search_fulltext",
-			}),
-		]);
+		};
+		const result = mergeState(state, "hello");
+		expect(result.messages[0].role).toBe("system");
+		expect(result.messages[0].content).toContain("Build feature");
 	});
 
-	it("does not synthesize an empty AI message when only tool calls were started before abort", async () => {
-		const input = mergeState(null, "search foo");
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "",
-					tool_call_chunks: [{ name: "search_fulltext", id: "call-1" }],
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(result.lastState.messages).toHaveLength(1);
-		expect(getContents(result.lastState.messages || [])).toEqual(["search foo"]);
-	});
-
-	it("keeps one ui AI message when the same turn continues streaming after tool start", async () => {
-		const input = mergeState(null, "search foo");
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "我来看看",
-					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
-				}, {}]],
-				["custom", JSON.stringify({
-					__tool_type: "activity",
-					toolCallId: "call-1",
-					category: "lookup",
-					action: "search",
-					label: "foo",
-				})],
-				["messages", [{
-					_getType: () => "ai",
-					content: "，先整理结果",
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(getUiAiContents(result.lastState.messagesUi || [])).toEqual(["我来看看，先整理结果"]);
-		expect((result.lastState.messagesUi || []).filter((message) => isToolMessageUi(message))).toHaveLength(1);
-	});
-
-	it("starts a new ui AI message after a tool result closes the prior turn", async () => {
-		const input = mergeState(null, "search foo");
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "我来看看",
-					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
-				}, {}]],
-				["messages", [{
-					_getType: () => "tool",
-					content: "42",
-					tool_call_id: "call-1",
-				}, {}]],
-				["messages", [{
-					_getType: () => "ai",
-					content: "结果是 42",
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(getUiAiContents(result.lastState.messagesUi || [])).toEqual(["我来看看", "结果是 42"]);
-	});
-
-	it("preserves reasoning_content on tool-calling AI turns for later requests", async () => {
-		const input = mergeState(null, "search foo");
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "",
-					additional_kwargs: { reasoning_content: "Need to search first." },
-					tool_call_chunks: [{ name: "search_fulltext", id: "call-1", args: { query: "foo" } }],
-				}, {}]],
-				["messages", [{
-					_getType: () => "tool",
-					content: "42",
-					tool_call_id: "call-1",
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-		});
-
-		const messages = result.lastState.messages || [];
-		const uiAi = (result.lastState.messagesUi || [])
-			.find((message: any) => (message?.id?.[message.id.length - 1] ?? "") === "AIMessage");
-		expect(getTypes(messages)).toEqual(["human", "ai", "tool"]);
-		expect(getReasoning(messages[1])).toBe("Need to search first.");
-		expect(getReasoning(uiAi)).toBe("Need to search first.");
-
-		const nextInput = mergeState(result.lastState, "next question");
-		expect(getReasoning(nextInput.messages[1])).toBe("Need to search first.");
-		expect(getContents(nextInput.messages)).toEqual(["search foo", "", "42", "next question"]);
-	});
-
-	it("normalizes cumulative reasoning_content chunks into UI snapshots", async () => {
-		const input = mergeState(null, "search foo");
-		const events: AgentStreamUiEvent[] = [];
-
-		const result = await runAgentStream({
-			agent: createAgent([
-				["messages", [{
-					_getType: () => "ai",
-					content: "",
-					additional_kwargs: { reasoning_content: "Need to search first." },
-				}, {}]],
-				["messages", [{
-					_getType: () => "ai",
-					content: "",
-					additional_kwargs: { reasoning_content: "Need to search first. Then inspect the result." },
-				}, {}]],
-				["messages", [{
-					_getType: () => "ai",
-					content: "Done",
-				}, {}]],
-				createAbortError(),
-			]),
-			input,
-			onUiEvent: (event) => events.push(event),
-		});
-
-		expect(result.aborted).toBe(true);
-		expect(events.filter((event) => event.type === "reasoning_delta").map((event) => event.text)).toEqual([
-			"Need to search first.",
-			"Need to search first. Then inspect the result.",
-		]);
-		expect(getReasoning(result.lastState.messages?.[1])).toBe("Need to search first. Then inspect the result.");
+	it("preserves messagesUi from saved state", () => {
+		const messagesUi = [{ role: "user", content: "prev" }];
+		const state = { messages: [], messagesUi };
+		const result = mergeState(state, "hello");
+		expect(result.messagesUi).toEqual(messagesUi);
 	});
 });

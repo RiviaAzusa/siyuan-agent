@@ -4,6 +4,7 @@
 import { Plugin, showMessage } from "siyuan";
 import {
 	AgentConfig,
+	ANTHROPIC_API_BASE_URL,
 	DEEPSEEK_API_BASE_URL,
 	DEFAULT_CONFIG,
 	cloneModelServices,
@@ -354,7 +355,7 @@ export class SettingsView {
 	}
 
 	private renderModelService(service: ModelServiceConfig): string {
-		const providerLabel = service.providerType === "deepseek" ? "DeepSeek" : "OpenAI Compatible";
+		const providerLabel = service.providerType === "deepseek" ? "DeepSeek" : service.providerType === "anthropic" ? "Anthropic" : "OpenAI Compatible";
 		const serviceAttrs = `data-service-id="${escapeHtml(service.id)}"`;
 		const serviceForm = this.editingModelServiceId === service.id ? this.renderServiceInlineForm(service) : "";
 		const modelFormAtEnd = this.editingServiceModelTarget?.serviceId === service.id && !this.editingServiceModelTarget.modelId
@@ -416,8 +417,9 @@ export class SettingsView {
 					<label class="settings-panel__field">
 						<span>${escapeHtml(this.t("settings.editor.providerType"))}</span>
 						<select class="b3-select" data-field="providerType" data-is-new="${service ? "false" : "true"}">
-							<option value="openai-compatible"${providerType !== "deepseek" ? " selected" : ""}>OpenAI Compatible</option>
+							<option value="openai-compatible"${providerType === "openai-compatible" ? " selected" : ""}>OpenAI Compatible</option>
 							<option value="deepseek"${providerType === "deepseek" ? " selected" : ""}>DeepSeek</option>
+							<option value="anthropic"${providerType === "anthropic" ? " selected" : ""}>Anthropic</option>
 						</select>
 					</label>
 					<label class="settings-panel__field">
@@ -449,10 +451,6 @@ export class SettingsView {
 					<label class="settings-panel__field">
 						<span>${escapeHtml(this.t("settings.editor.modelId"))}</span>
 						<input class="b3-text-field" data-field="model" value="${escapeHtml(model?.model || "")}" placeholder="gpt-4o" />
-					</label>
-					<label class="settings-panel__field">
-						<span>${escapeHtml(this.t("settings.editor.temperatureOptional"))}</span>
-						<input class="b3-text-field" type="number" step="0.1" min="0" max="2" data-field="temperature" value="${model?.temperature ?? ""}" placeholder="0" />
 					</label>
 				</div>
 				<div class="agent-model-inline-form__actions">
@@ -582,12 +580,19 @@ export class SettingsView {
 		this.ctx.settingsViewEl.querySelectorAll<HTMLSelectElement>(".agent-model-inline-form [data-field='providerType']").forEach((select) => {
 			select.addEventListener("change", () => {
 				const form = select.closest<HTMLElement>(".agent-model-inline-form");
-				if (!form || select.dataset.isNew !== "true" || select.value !== "deepseek") return;
+				if (!form || select.dataset.isNew !== "true") return;
 				const nameField = form.querySelector<HTMLInputElement>("[data-field='name']");
 				const baseUrlField = form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
-				if (nameField && !nameField.value.trim()) nameField.value = "DeepSeek";
-				if (baseUrlField && (!baseUrlField.value.trim() || baseUrlField.value.trim() === DEFAULT_CONFIG.apiBaseURL)) {
-					baseUrlField.value = DEEPSEEK_API_BASE_URL;
+				if (select.value === "deepseek") {
+					if (nameField && !nameField.value.trim()) nameField.value = "DeepSeek";
+					if (baseUrlField && (!baseUrlField.value.trim() || baseUrlField.value.trim() === DEFAULT_CONFIG.apiBaseURL)) {
+						baseUrlField.value = DEEPSEEK_API_BASE_URL;
+					}
+				} else if (select.value === "anthropic") {
+					if (nameField && !nameField.value.trim()) nameField.value = "Anthropic";
+					if (baseUrlField && (!baseUrlField.value.trim() || baseUrlField.value.trim() === DEFAULT_CONFIG.apiBaseURL)) {
+						baseUrlField.value = ANTHROPIC_API_BASE_URL;
+					}
 				}
 			});
 		});
@@ -620,14 +625,13 @@ export class SettingsView {
 		this.syncDraftFromForm();
 		const serviceId = form.dataset.serviceId || "";
 		const existing = this.draft.modelServices.find((item) => item.id === serviceId) || null;
-		const providerType = form.querySelector<HTMLSelectElement>("[data-field='providerType']")?.value === "deepseek"
-			? "deepseek"
-			: "openai-compatible";
+		const rawProvider = form.querySelector<HTMLSelectElement>("[data-field='providerType']")?.value || "openai-compatible";
+		const providerType: ModelProviderType = rawProvider === "deepseek" || rawProvider === "anthropic" ? rawProvider : "openai-compatible";
 		const nextService: ModelServiceConfig = {
 			id: existing?.id || genModelServiceId(),
-			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || (providerType === "deepseek" ? "DeepSeek" : "Unnamed Service"),
+			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || (providerType === "deepseek" ? "DeepSeek" : providerType === "anthropic" ? "Anthropic" : "Unnamed Service"),
 			providerType: providerType as ModelProviderType,
-			apiBaseURL: form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']")?.value.trim() || (providerType === "deepseek" ? DEEPSEEK_API_BASE_URL : DEFAULT_CONFIG.apiBaseURL),
+			apiBaseURL: form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']")?.value.trim() || (providerType === "deepseek" ? DEEPSEEK_API_BASE_URL : providerType === "anthropic" ? ANTHROPIC_API_BASE_URL : DEFAULT_CONFIG.apiBaseURL),
 			apiKey: form.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
 			models: existing?.models.map((item) => ({ ...item })) || [],
 		};
@@ -643,6 +647,12 @@ export class SettingsView {
 			nextService.models = [
 				{ id: genModelId(), name: "DeepSeek V4 Pro", model: "deepseek-v4-pro" },
 				{ id: genModelId(), name: "DeepSeek V4 Flash", model: "deepseek-v4-flash" },
+			];
+		}
+		if (!existing && nextService.providerType === "anthropic" && nextService.models.length === 0) {
+			nextService.models = [
+				{ id: genModelId(), name: "Claude Sonnet 4", model: "claude-sonnet-4-20250514" },
+				{ id: genModelId(), name: "Claude Haiku 3.5", model: "claude-3-5-haiku-20241022" },
 			];
 		}
 		const existingIndex = this.draft.modelServices.findIndex((item) => item.id === nextService.id);
@@ -672,8 +682,6 @@ export class SettingsView {
 			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || modelValue || "Unnamed Model",
 			model: modelValue,
 		};
-		const temperature = form.querySelector<HTMLInputElement>("[data-field='temperature']")?.value.trim() || "";
-		nextModel.temperature = temperature ? Number(temperature) : undefined;
 		if (!nextModel.model) {
 			showMessage(this.t("settings.editor.modelIdRequired"));
 			return;

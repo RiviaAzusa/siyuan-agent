@@ -34,11 +34,12 @@ export interface ModelServiceConfig {
 	models: ModelServiceModelConfig[];
 }
 
-export type ModelProviderType = "openai-compatible" | "deepseek";
+export type ModelProviderType = "openai-compatible" | "deepseek" | "anthropic";
 
 export type ReasoningEffort = "default" | "off" | "low" | "high";
 
 export const DEEPSEEK_API_BASE_URL = "https://api.deepseek.com";
+export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 
 /* ── MCP (Model Context Protocol) ────────────────────────────────────── */
 
@@ -108,10 +109,12 @@ function cloneLegacyModels(models?: ModelConfig[]): ModelConfig[] {
 
 function inferProviderType(service: Pick<ModelServiceConfig, "name" | "apiBaseURL" | "providerType">): ModelProviderType {
 	if (service.providerType === "deepseek") return "deepseek";
+	if (service.providerType === "anthropic") return "anthropic";
 	if (service.providerType === "openai-compatible") return "openai-compatible";
 	const name = String(service.name || "").toLowerCase();
 	const baseURL = String(service.apiBaseURL || "").toLowerCase();
 	if (name.includes("deepseek") || baseURL.includes("api.deepseek.com")) return "deepseek";
+	if (name.includes("anthropic") || name.includes("claude") || baseURL.includes("api.anthropic.com")) return "anthropic";
 	return "openai-compatible";
 }
 

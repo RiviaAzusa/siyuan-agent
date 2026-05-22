@@ -1,4 +1,4 @@
-import { ToolRuntime } from "@langchain/core/tools";
+import { getWriter, type SiyuanToolOptions } from "../tool-types";
 
 /** Call a SiYuan kernel API and return `resp.data` on success.
  *
@@ -18,15 +18,15 @@ export async function siyuanFetch(url: string, data: any): Promise<any> {
 	return json.data;
 }
 
-export function emitToolEvent(runtime: ToolRuntime, payload: Record<string, unknown>): void {
-	runtime.writer?.(JSON.stringify({
+export function emitToolEvent(options: SiyuanToolOptions, payload: Record<string, unknown>): void {
+	getWriter(options)?.(JSON.stringify({
 		...payload,
-		toolCallId: runtime.toolCallId,
+		toolCallId: options.toolCallId,
 	}));
 }
 
 export function emitActivity(
-	runtime: ToolRuntime,
+	options: SiyuanToolOptions,
 	payload: {
 		category: "lookup" | "change" | "other";
 		action: "list" | "read" | "search" | "create" | "append" | "edit" | "move" | "rename" | "delete" | "other";
@@ -37,7 +37,7 @@ export function emitActivity(
 		open?: boolean;
 	},
 ): void {
-	emitToolEvent(runtime, {
+	emitToolEvent(options, {
 		__tool_type: "activity",
 		...payload,
 	});

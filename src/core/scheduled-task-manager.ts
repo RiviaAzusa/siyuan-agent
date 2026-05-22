@@ -1,6 +1,6 @@
 import { showMessage } from "siyuan";
 import { CronExpressionParser } from "cron-parser";
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import type { Tool } from "@ai-sdk/provider-utils";
 import type {
 	AgentConfig,
 	AgentState,
@@ -11,7 +11,7 @@ import type {
 	SessionIndexEntry,
 } from "../types";
 import { resolveModelConfig } from "../types";
-import { makeAgent, makeTracer } from "./agent";
+import { prepareAgent } from "./agent";
 import { mergeState, runAgentStream } from "./stream-runtime";
 import { SessionStore } from "./session-store";
 import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
@@ -41,7 +41,7 @@ export interface ScheduledTaskUpdateInput {
 interface ScheduledTaskManagerOptions {
 	store: SessionStore;
 	getConfig: () => AgentConfig | Promise<AgentConfig>;
-	getTools: () => StructuredToolInterface[];
+	getTools: () => Tool<any, string>[];
 	i18n?: Translator;
 }
 
@@ -418,21 +418,14 @@ export class ScheduledTaskManager {
 			if (!modelConfig.apiKey) {
 				throw new Error(i18n.t("chat.error.apiKeyMissing"));
 			}
-			const agent = await makeAgent(config, this.options.getTools(), null, null, i18n);
-			const tracer = makeTracer(config);
+			const setup = await prepareAgent(config, this.options.getTools(), null, null, i18n);
 			const input = mergeState(null, buildScheduledTaskRunPrompt(task, startedAt, i18n));
 			/* Ensure the human message also appears in messagesUi */
 			const promptContent = buildScheduledTaskRunPrompt(task, startedAt, i18n);
-			input.messagesUi = [{
-				lc: 1,
-				type: "constructor",
-				id: ["langchain_core", "messages", "HumanMessage"],
-				kwargs: { content: promptContent },
-			}];
+			input.messagesUi = [{ role: "user", content: promptContent }];
 			const result = await runAgentStream({
-				agent,
+				setup,
 				input,
-				callbacks: tracer ? [tracer] : undefined,
 			});
 			latestState = result.lastState;
 			if (result.error) {
@@ -444,12 +437,7 @@ export class ScheduledTaskManager {
 			const errorContent = `${i18n.t("scheduled.error.marker")}\n\n${lastError}`;
 			const errorState = mergeState(null, errorContent) as AgentState;
 			/* Ensure the error human message also appears in messagesUi */
-			errorState.messagesUi = [{
-				lc: 1,
-				type: "constructor",
-				id: ["langchain_core", "messages", "HumanMessage"],
-				kwargs: { content: errorContent },
-			}];
+			errorState.messagesUi = [{ role: "user", content: errorContent }];
 			latestState = appendTaskRunState(undefined, errorState);
 		}
 

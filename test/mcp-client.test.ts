@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { McpClient, McpManager, mcpToolsToLangChain } from "../src/core/mcp-client";
+import { McpClient, McpManager, mcpToolsToAiSdk } from "../src/core/mcp-client";
 import type { McpServerConfig } from "../src/types";
 
 describe("McpClient", () => {
@@ -23,8 +23,8 @@ describe("McpClient", () => {
 	});
 });
 
-describe("mcpToolsToLangChain", () => {
-	it("creates LangChain tools from MCP tool definitions", () => {
+describe("mcpToolsToAiSdk", () => {
+	it("creates AI SDK tools from MCP tool definitions", () => {
 		const client = new McpClient({
 			id: "srv1",
 			name: "Test",
@@ -51,7 +51,7 @@ describe("mcpToolsToLangChain", () => {
 			},
 		];
 
-		const tools = mcpToolsToLangChain(client, toolDefs);
+		const tools = mcpToolsToAiSdk(client, toolDefs);
 		expect(tools).toHaveLength(2);
 		expect(tools[0].name).toBe("mcp_srv1_search_web");
 		expect(tools[0].description).toContain("[MCP: Test]");
@@ -67,7 +67,7 @@ describe("mcpToolsToLangChain", () => {
 			enabled: true,
 		});
 
-		const tools = mcpToolsToLangChain(client, [{ name: "ping" }]);
+		const tools = mcpToolsToAiSdk(client, [{ name: "ping" }]);
 		expect(tools).toHaveLength(1);
 		expect(tools[0].name).toBe("mcp_srv1_ping");
 	});

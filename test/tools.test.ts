@@ -107,7 +107,7 @@ describe("SQL escape in tool definitions", () => {
 		}));
 		const searchDoc = tools.find(t => t.name === "search_documents");
 		expect(searchDoc).toBeDefined();
-		expect(searchDoc!.schema).toBeDefined();
+		expect((searchDoc as any).inputSchema).toBeDefined();
 	});
 
 	it("write_todos tool has correct schema", () => {
@@ -166,7 +166,7 @@ describe("edit_blocks tool", () => {
 		});
 
 		const tool = createEditBlocksTool();
-		const raw = await (tool as any).invoke({
+		const raw = await (tool as any).execute({
 			blocks: [{ id: "old-block", content: "updated" }],
 		});
 
@@ -213,7 +213,7 @@ describe("edit_blocks tool", () => {
 		});
 
 		const tool = createEditBlocksTool();
-		const raw = await (tool as any).invoke({
+		const raw = await (tool as any).execute({
 			blocks: [{ id: "old-first", content: "updated first" }],
 		});
 

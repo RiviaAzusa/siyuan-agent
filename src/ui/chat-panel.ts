@@ -1,5 +1,4 @@
 import { Plugin, showMessage, openTab } from "siyuan";
-import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
 	AgentConfig,
 	AgentState,
@@ -26,15 +25,15 @@ import {
 	type ReasoningEffort,
 } from "../types";
 import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
-import { makeAgent, makeTracer } from "../core/agent";
+import { prepareAgent } from "../core/agent";
 import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
 import { UiMessageBuilder, ensureMessagesUi } from "../core/ui-message-builder";
 import { compactMessages, shouldCompact } from "../core/compaction";
-import { createChatModel } from "../core/chat-model";
-import { getDefaultTools } from "../core/tools";
+import { createModel } from "../llms/ai-sdk-provider";
+import { getDefaultTools, type SiyuanTool } from "../core/tools";
 import { SettingsView, type SettingsViewContext } from "./settings-view";
 import { TasksView, type TasksViewContext } from "./tasks-view";
 import { Autocomplete } from "./autocomplete";
@@ -53,7 +52,7 @@ const INIT_DOC_PATH = `/${INIT_DOC_TITLE}`;
 export class ChatPanel {
 	private container: HTMLElement;
 	private plugin: Plugin;
-	private tools: StructuredToolInterface[];
+	private tools: SiyuanTool[];
 	private store: SessionStore;
 	private taskManager: ScheduledTaskManager;
 	private panelEl: HTMLElement;
@@ -99,7 +98,7 @@ export class ChatPanel {
 	constructor(
 		element: HTMLElement,
 		plugin: Plugin,
-		tools: StructuredToolInterface[],
+		tools: SiyuanTool[],
 		store: SessionStore,
 		taskManager: ScheduledTaskManager,
 		i18n: Translator = defaultTranslator,
@@ -732,12 +731,7 @@ export class ChatPanel {
 		const input = mergeState(s.state ?? null, content) as any;
 
 		/* Push the human message into the carried-over messagesUi */
-		const humanMsgDict = {
-			lc: 1,
-			type: "constructor",
-			id: ["langchain_core", "messages", "HumanMessage"],
-			kwargs: { content },
-		};
+		const humanMsgDict = { role: "user", content };
 		if (!Array.isArray(input.messagesUi)) input.messagesUi = [];
 		input.messagesUi.push(humanMsgDict);
 
@@ -815,12 +809,10 @@ export class ChatPanel {
 
 		try {
 			const modelOverride = sessionModelId ? activeModel : null;
-			const agent = await makeAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n, reasoningEffort);
-			const tracer = makeTracer(config);
+			const setup = await prepareAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n, reasoningEffort);
 			const result = await runAgentStream({
-				agent,
+				setup,
 				input,
-				callbacks: tracer ? [tracer] : undefined,
 				signal: this.abortCtrl?.signal,
 				existingToolUIEvents,
 				onUiEvent: (event) => {
@@ -918,7 +910,7 @@ export class ChatPanel {
 
 			if (!this.abortCtrl?.signal.aborted && shouldCompact(latestState)) {
 				try {
-					const compactModel = createChatModel(activeModel, { temperature: 0 });
+					const compactModel = createModel(activeModel);
 					await compactMessages(s.state, { model: compactModel, source: "auto" });
 				} catch (_) { /* best-effort, don't block save */ }
 			}
@@ -1016,7 +1008,7 @@ export class ChatPanel {
 
 		this.setLoading(true);
 		try {
-			const model = createChatModel(config, { temperature: 0 });
+			const model = createModel(config);
 			const summary = await compactMessages(s.state, {
 				model,
 				keepRecentTurns: 4,
@@ -2142,7 +2134,7 @@ export class ChatPanel {
 
 	private async handleConfigSaved(nextConfig: AgentConfig): Promise<void> {
 		const pluginAny = this.plugin as Plugin & {
-			mcpManager?: { connectAll?: (servers: McpServerConfig[]) => Promise<unknown>; getAllTools?: () => StructuredToolInterface[] };
+			mcpManager?: { connectAll?: (servers: McpServerConfig[]) => Promise<unknown>; getAllTools?: () => SiyuanTool[] };
 		};
 		await pluginAny.mcpManager?.connectAll?.((nextConfig.mcpServers || []).filter((item) => item.enabled));
 		this.tools = [

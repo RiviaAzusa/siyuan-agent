@@ -68,6 +68,11 @@ export function msgType(m: any): string {
 		if (cls === "SystemMessage") return "system";
 		if (cls === "ToolMessage") return "tool";
 	}
+	// New simple format
+	if (m.role === "user") return "human";
+	if (m.role === "assistant") return "ai";
+	if (m.role === "system") return "system";
+	if (m.role === "tool") return "tool";
 	// Legacy plain-object
 	return m.type ?? m.role ?? "";
 }
@@ -85,10 +90,10 @@ export function sessionTitle(state: AgentState): string {
 }
 
 export function cloneMessage(raw: Record<string, any>): Record<string, any> {
-	return {
-		...raw,
-		kwargs: raw.kwargs ? { ...raw.kwargs } : raw.kwargs,
-	};
+	const clone: Record<string, any> = { ...raw };
+	if (raw.kwargs) clone.kwargs = { ...raw.kwargs };
+	if (raw.toolCalls) clone.toolCalls = [...raw.toolCalls];
+	return clone;
 }
 
 export function getMessageContent(raw: Record<string, any>): string {
@@ -100,12 +105,13 @@ export function getMessageReasoning(raw: Record<string, any>): string {
 	const reasoning = raw.kwargs?.additional_kwargs?.reasoning_content
 		?? raw.additional_kwargs?.reasoning_content
 		?? raw.kwargs?.lc_kwargs?.additional_kwargs?.reasoning_content
-		?? raw.lc_kwargs?.additional_kwargs?.reasoning_content;
+		?? raw.lc_kwargs?.additional_kwargs?.reasoning_content
+		?? raw.reasoning;
 	return typeof reasoning === "string" ? reasoning : "";
 }
 
 export function getMessageToolCalls(raw: Record<string, any>): any[] {
-	const toolCalls = raw.kwargs?.tool_calls ?? raw.tool_calls;
+	const toolCalls = raw.kwargs?.tool_calls ?? raw.tool_calls ?? raw.toolCalls;
 	return Array.isArray(toolCalls) ? toolCalls : [];
 }
 
@@ -131,6 +137,8 @@ export function setMessageToolCalls(raw: Record<string, any>, toolCalls: any[]):
 	if (raw.kwargs && ("tool_calls" in raw.kwargs || raw.lc === 1)) {
 		raw.kwargs = raw.kwargs || {};
 		raw.kwargs.tool_calls = toolCalls;
+	} else if ("toolCalls" in raw) {
+		raw.toolCalls = toolCalls;
 	} else {
 		raw.tool_calls = toolCalls;
 	}

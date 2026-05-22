@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import type { SessionIndexEntry } from "../src/types";
 import {
 	appendTaskRunState,
@@ -63,8 +62,8 @@ describe("scheduled task helpers", () => {
 
 	it("appends each execution run as a new message batch", () => {
 		const merged = appendTaskRunState(
-			{ messages: [new HumanMessage({ content: "old" })], toolUIEvents: [{ id: "1" }] as any },
-			{ messages: [new AIMessage({ content: "new" })], toolUIEvents: [{ id: "2" }] as any },
+			{ messages: [{ role: "user", content: "old" }], toolUIEvents: [{ id: "1" }] as any },
+			{ messages: [{ role: "assistant", content: "new" }], toolUIEvents: [{ id: "2" }] as any },
 		);
 
 		expect(merged.messages).toHaveLength(2);

@@ -50,10 +50,11 @@
     "zip-webpack-plugin": "^4.0.1"
   },
   "dependencies": {
-    "@langchain/core": "^1.1.22",
-    "@langchain/openai": "^1.2.7",
+    "@ai-sdk/anthropic": "^3.0.78",
+    "@ai-sdk/deepseek": "^2.0.35",
+    "@ai-sdk/openai": "^3.0.65",
+    "ai": "^6.0.190",
     "cron-parser": "^5.5.0",
-    "langchain": "^1.2.21",
     "zod": "^4.3.6"
   }
 }
