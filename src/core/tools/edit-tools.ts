@@ -1,7 +1,7 @@
-import { createTool, getWriter } from "../tool-types";
+import { createTool } from "../tool-types";
 import { z } from "zod";
 import { openTab } from "siyuan";
-import { siyuanFetch, emitActivity, sqlEscape } from "./siyuan-api";
+import { siyuanFetch } from "./siyuan-api";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 function extractOperationBlockIds(data: any): string[] {
@@ -28,7 +28,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 				content: z.string().min(1).describe("New markdown content for this block"),
 			})).describe("Array of blocks to edit"),
 		}),
-		async execute({ blocks }, options) {
+		async execute({ blocks }) {
 			const ids = blocks.map((b: { id: string }) => b.id);
 			const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
 			const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids });
@@ -96,30 +96,6 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 				}
 			}
 
-			if (getWriter(options)) {
-				const rootIDs = [...new Set(
-					ids
-						.map((id) => treeInfos[id]?.rootID)
-						.filter((rootID: unknown): rootID is string => typeof rootID === "string" && rootID.length > 0)
-				)];
-				let path = "";
-				if (rootIDs.length > 0) {
-					const rootDoc = await siyuanFetch("/api/query/sql", {
-						stmt: `SELECT id, hpath FROM blocks WHERE id='${sqlEscape(rootIDs[0])}' LIMIT 1`,
-					});
-					path = rootDoc?.[0]?.hpath || "";
-				}
-				emitActivity(options, {
-					category: "change",
-					action: "edit",
-					id: rootIDs[0],
-					path,
-					label: path || rootIDs[0],
-					meta: i18n.t("tool.editBlocks.meta", { count: results.filter((item) => item.status === "ok").length }),
-					open: true,
-				});
-			}
-
 			return JSON.stringify({ __tool_type: "edit_blocks", results });
 		},
 	});
@@ -133,26 +109,11 @@ export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
 			parentID: z.string().describe("The parent block ID to append content to. Usually a document ID from list_documents or search results."),
 			markdown: z.string().describe("Markdown content to append"),
 		}),
-		async execute({ parentID, markdown }, options) {
+		async execute({ parentID, markdown }) {
 			const data = await siyuanFetch("/api/block/appendBlock", {
 				data: markdown,
 				dataType: "markdown",
 				parentID,
-			});
-			const docInfo = await siyuanFetch("/api/query/sql", {
-				stmt: `SELECT id, hpath FROM blocks WHERE id='${sqlEscape(parentID)}' LIMIT 1`,
-			});
-			const blockIDs = Array.isArray(data)
-				? data.map((item: any) => item?.doOperations?.[0]?.id).filter(Boolean)
-				: [];
-			emitActivity(options, {
-				category: "change",
-				action: "append",
-				id: parentID,
-				path: docInfo?.[0]?.hpath || "",
-				label: docInfo?.[0]?.hpath || parentID,
-				meta: i18n.t("tool.appendBlock.meta", { count: blockIDs.length || 0 }),
-				open: true,
 			});
 			return JSON.stringify(data, null, 2);
 		},
@@ -168,22 +129,13 @@ export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
 			path: z.string().describe("Human-readable path for the new document, e.g. '/Daily Notes/2024-01-01' or '/Project/Meeting Notes'"),
 			markdown: z.string().optional().describe("Initial Markdown content for the document. Defaults to empty."),
 		}),
-		async execute({ notebook, path, markdown }, options) {
+		async execute({ notebook, path, markdown }) {
 			const id = await siyuanFetch("/api/filetree/createDocWithMd", {
 				notebook,
 				path,
 				markdown: markdown || "",
 			});
 			openTab({ app: (globalThis as any).siyuanApp, doc: { id } });
-			emitActivity(options, {
-				category: "change",
-				action: "create",
-				id,
-				path,
-				label: path,
-				meta: i18n.t("tool.createDocument.meta"),
-				open: true,
-			});
 			return JSON.stringify({ id, notebook, path });
 		},
 	});
@@ -197,15 +149,8 @@ export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
 			fromIDs: z.array(z.string()).describe("Array of document IDs to move"),
 			toID: z.string().describe("Target notebook ID or parent document ID"),
 		}),
-		async execute({ fromIDs, toID }, options) {
+		async execute({ fromIDs, toID }) {
 			await siyuanFetch("/api/filetree/moveDocsByID", { fromIDs, toID });
-			emitActivity(options, {
-				category: "change",
-				action: "move",
-				id: fromIDs[0],
-				label: fromIDs.length > 1 ? i18n.t("tool.moveDocument.labelMultiple", { first: fromIDs[0], count: fromIDs.length }) : fromIDs[0],
-				meta: i18n.t("tool.moveDocument.meta", { target: toID }),
-			});
 			return JSON.stringify({ ok: true, fromIDs, toID });
 		},
 	});
@@ -219,16 +164,8 @@ export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
 			id: z.string().describe("Document ID to rename"),
 			title: z.string().describe("New title for the document"),
 		}),
-		async execute({ id, title }, options) {
+		async execute({ id, title }) {
 			await siyuanFetch("/api/filetree/renameDocByID", { id, title });
-			emitActivity(options, {
-				category: "change",
-				action: "rename",
-				id,
-				label: title,
-				meta: i18n.t("tool.renameDocument.meta"),
-				open: true,
-			});
 			return JSON.stringify({ ok: true, id, title });
 		},
 	});

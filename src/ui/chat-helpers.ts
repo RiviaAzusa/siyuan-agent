@@ -3,7 +3,7 @@
  * Extracted from chat-panel.ts for maintainability.
  */
 
-import type { AgentState, ToolUIEvent, ToolUIEventPayload, UiMessage, ToolMessageUi } from "../types";
+import type { AgentState, UiMessage, ToolMessageUi } from "../types";
 import { isToolMessageUi } from "../types";
 import type { ModelServiceConfig, McpServerConfig } from "../types";
 import { defaultTranslator, type Translator } from "../i18n";
@@ -209,16 +209,12 @@ export function escapeHtml(text: string): string {
 
 /* ── Tool display helpers ────────────────────────────────────────────── */
 
-export function getToolCategory(toolName?: string, payload?: ToolUIEventPayload): "lookup" | "change" {
-	if (payload && "category" in payload) {
-		return payload.category === "change" ? "change" : "lookup";
-	}
+export function getToolCategory(toolName?: string): "lookup" | "change" {
 	const changeTools = ["edit_blocks", "append_block", "create_document", "move_document", "rename_document", "delete_document", "toggle_todo", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task"];
 	return changeTools.includes(toolName || "") ? "change" : "lookup";
 }
 
-export function getToolAction(toolName?: string, payload?: ToolUIEventPayload): string {
-	if (payload && "action" in payload) return (payload as any).action;
+export function getToolAction(toolName?: string): string {
 	const map: Record<string, string> = {
 		list_notebooks: "list",
 		list_documents: "list",

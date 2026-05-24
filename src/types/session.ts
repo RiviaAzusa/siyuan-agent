@@ -1,4 +1,4 @@
-import type { ToolUIEvent, UiMessage } from "./tool-events";
+import type { AgentRunMeta } from "./tool-events";
 import type { ReasoningEffort } from "./model-config";
 
 /* ── TodoList (agent plan management) ────────────────────────────────── */
@@ -31,12 +31,9 @@ export interface CompactionState {
 
 export type AgentState = Record<string, any> & {
 	messages?: any[];
-	/** @deprecated read-only legacy display cache; new saves must use messages */
-	messagesUi?: UiMessage[];
 	compaction?: CompactionState;
 	todos?: TodoList;
-	/** @deprecated kept for lazy migration only */
-	toolUIEvents?: ToolUIEvent[];
+	runMeta?: AgentRunMeta[];
 };
 
 /* ── Session types ──────────────────────────────────────────────────── */

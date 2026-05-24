@@ -123,12 +123,6 @@ describe("mergeState", () => {
 		expect(result.messages[0].content).toContain("Build feature");
 	});
 
-	it("does not carry messagesUi into merged runtime input", () => {
-		const messagesUi = [{ role: "user", content: "prev" }];
-		const state = { messages: [], messagesUi };
-		const result = mergeState(state, "hello");
-		expect((result as any).messagesUi).toBeUndefined();
-	});
 });
 
 describe("runAgentStream", () => {
@@ -151,7 +145,11 @@ describe("runAgentStream", () => {
 			{ role: "user", content: "hello" },
 			{ role: "assistant", content: [{ type: "text", text: "answer" }] },
 		]);
-		expect(result.lastState.messagesUi).toBeUndefined();
+		expect(result.lastState.runMeta).toHaveLength(1);
+		expect(result.lastState.runMeta?.[0]).toMatchObject({
+			userMessageIndex: 0,
+			status: "success",
+		});
 		expect(buildMessagesView(result.lastState).map((m: any) => m.role)).toEqual(["user", "assistant"]);
 	});
 
@@ -175,7 +173,6 @@ describe("runAgentStream", () => {
 			{ role: "user", content: "hello" },
 			{ role: "assistant", content: [{ type: "text", text: "answer" }] },
 		]);
-		expect(result.lastState.messagesUi).toBeUndefined();
 		expect(buildMessagesView(result.lastState).map((m: any) => m.role)).toEqual(["user", "assistant"]);
 	});
 
@@ -206,7 +203,7 @@ describe("runAgentStream", () => {
 		]);
 	});
 
-	it("persists tool calls, tool results, final answer, args, and writer events", async () => {
+	it("persists tool calls, tool results, final answer, and args", async () => {
 		const { streamText } = await import("ai");
 		const firstMessages = [
 			{
@@ -222,23 +219,16 @@ describe("runAgentStream", () => {
 			{ role: "assistant", content: [{ type: "text", text: "I found it." }] },
 		];
 		(streamText as any)
-			.mockImplementationOnce((opts: any) => {
-				opts.experimental_context.writer(JSON.stringify({
-					__tool_type: "activity",
-					category: "lookup",
-					action: "search",
-					label: "docs",
-					toolCallId: "call-1",
-				}));
-				return makeResult(
+			.mockReturnValueOnce(
+				makeResult(
 					[
 						{ type: "tool-call", toolCallId: "call-1", toolName: "search_documents", input: { query: "docs" } },
 						{ type: "tool-result", toolCallId: "call-1", output: "found" },
 					],
 					firstMessages,
 					[{ toolCallId: "call-1", toolName: "search_documents" }],
-				);
-			})
+				)
+			)
 			.mockReturnValueOnce(makeResult(
 				[{ type: "text-delta", text: "I found it." }],
 				finalMessages,
@@ -255,22 +245,24 @@ describe("runAgentStream", () => {
 			{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-1", toolName: "search_documents", output: { type: "text", value: "found" } }] },
 			{ role: "assistant", content: [{ type: "text", text: "I found it." }] },
 		]);
-		expect(result.lastState.messagesUi).toBeUndefined();
-		expect(result.lastState.toolUIEvents).toBeUndefined();
 		const ui = buildMessagesView(result.lastState);
 		expect(ui.filter((m: any) => m.role === "user")).toHaveLength(1);
 		expect(ui[1]).toMatchObject({
+			type: "processing_summary_ui",
+			status: "done",
+		});
+		expect((ui[1] as any).details[0]).toMatchObject({
 			role: "assistant",
 			content: [{ type: "tool-call", toolCallId: "call-1", toolName: "search_documents", input: { query: "docs" } }],
 		});
-		expect(ui[2]).toMatchObject({
+		expect((ui[1] as any).details[1]).toMatchObject({
 			type: "tool_message_ui",
 			toolCallId: "call-1",
 			toolName: "search_documents",
 			status: "done",
 			result: "found",
 		});
-		expect(ui[3]).toEqual({ role: "assistant", content: [{ type: "text", text: "I found it." }] });
+		expect(ui[2]).toEqual({ role: "assistant", content: [{ type: "text", text: "I found it." }] });
 	});
 
 	it("does not copy previous step tool calls onto the final assistant UI message", async () => {
@@ -304,9 +296,38 @@ describe("runAgentStream", () => {
 		});
 
 		const assistantUi = buildMessagesView(result.lastState).filter((m: any) => m.role === "assistant");
-		expect(assistantUi).toHaveLength(2);
-		expect(assistantUi[0].content.filter((part: any) => part.type === "tool-call")).toHaveLength(1);
-		expect(assistantUi[1]).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
+		expect(assistantUi).toHaveLength(1);
+		expect(assistantUi[0]).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
+		const processing = buildMessagesView(result.lastState).find((m: any) => m.type === "processing_summary_ui") as any;
+		expect(processing.details[0].content.filter((part: any) => part.type === "tool-call")).toHaveLength(1);
+	});
+
+	it("updates state.todos through the tool runtime context", async () => {
+		const { streamText } = await import("ai");
+		const todos = {
+			goal: "Cleanup",
+			items: [{ content: "Remove writer", status: "completed" }],
+			updatedAt: 123,
+		};
+		(streamText as any).mockImplementationOnce((opts: any) => {
+			opts.experimental_context.setTodos(todos);
+			return makeResult(
+				[{ type: "text-delta", text: "done" }],
+				[{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+			);
+		});
+
+		const seen: any[] = [];
+		const result = await runAgentStream({
+			setup: makeSetup(),
+			input: mergeState(null, "plan"),
+			onUiEvent: (event) => {
+				if (event.type === "todos_update") seen.push(event.todos);
+			},
+		});
+
+		expect(result.lastState.todos).toEqual(todos);
+		expect(seen).toEqual([todos]);
 	});
 
 	it("returns partial UI state and incomplete status when streaming fails", async () => {
@@ -329,13 +350,12 @@ describe("runAgentStream", () => {
 			{ role: "user", content: "hello" },
 			{ role: "assistant", content: [{ type: "text", text: "partial" }] },
 		]);
-		expect(result.lastState.messagesUi).toBeUndefined();
 		expect(buildMessagesView(result.lastState).map((m: any) => m.role)).toEqual(["user", "assistant"]);
 	});
 });
 
 describe("buildMessagesView", () => {
-	it("builds tool cards from canonical messages and tool events", () => {
+	it("builds tool cards from canonical messages", () => {
 		const state = {
 			messages: [
 				{ role: "user", content: "find docs" },
@@ -343,41 +363,46 @@ describe("buildMessagesView", () => {
 				{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-1", toolName: "search_documents", output: { type: "text", value: "found" } }] },
 				{ role: "assistant", content: [{ type: "text", text: "done" }] },
 			],
-			toolUIEvents: [
-				{
-					id: "ev-1",
-					source: "writer" as const,
-					toolCallIndex: 0,
-					toolCallId: "call-1",
-					toolName: "search_documents",
-					payload: { type: "text" as const, text: "searching" },
-				},
-			],
 		};
 
 		const view = buildMessagesView(state);
-		expect(view).toHaveLength(4);
-		expect(view[2]).toMatchObject({
+		expect(view).toHaveLength(3);
+		expect(view[1]).toMatchObject({
+			type: "processing_summary_ui",
+			status: "done",
+		});
+		expect((view[1] as any).details[1]).toMatchObject({
 			type: "tool_message_ui",
 			toolCallId: "call-1",
 			toolName: "search_documents",
 			status: "done",
 			result: "found",
 		});
+		expect(view[2]).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
 	});
 
-	it("uses legacy messagesUi only to recover a partial assistant after the same trailing user", () => {
+	it("adds a change summary for edit tools but not lookup tools", () => {
+		const editResult = JSON.stringify({
+			__tool_type: "edit_blocks",
+			results: [{ oldId: "b1", newIds: ["b2"], rootDocId: "doc1", status: "ok" }],
+		});
 		const state = {
-			messages: [{ role: "user", content: "hello" }],
-			messagesUi: [
-				{ role: "user", content: "hello" },
-				{ role: "assistant", content: "partial" },
+			messages: [
+				{ role: "user", content: "edit this" },
+				{ role: "assistant", content: [{ type: "tool-call", toolCallId: "call-1", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "new" }] } }] },
+				{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-1", toolName: "edit_blocks", output: { type: "text", value: editResult } }] },
+				{ role: "assistant", content: [{ type: "tool-call", toolCallId: "call-2", toolName: "search_documents", input: { query: "x" } }] },
+				{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-2", toolName: "search_documents", output: { type: "text", value: "found" } }] },
+				{ role: "assistant", content: [{ type: "text", text: "done" }] },
 			],
 		};
 
-		expect(buildMessagesView(state)).toEqual([
-			{ role: "user", content: "hello" },
-			{ role: "assistant", content: "partial" },
-		]);
+		const summary = buildMessagesView(state).find((m: any) => m.type === "run_change_summary_ui") as any;
+		expect(summary).toMatchObject({
+			type: "run_change_summary_ui",
+			total: 1,
+			items: [{ action: "edit", toolName: "edit_blocks", id: "doc1", status: "ok" }],
+		});
 	});
+
 });

@@ -1,14 +1,12 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
-import { emitToolEvent } from "./siyuan-api";
 import type { TodoList, TodoStatus } from "../../types";
 
 /**
  * `write_todos` tool — creates or replaces the agent's task execution plan.
  *
- * The tool emits a custom event `{ __tool_type: "write_todos", todos }` via
- * `options.writer`, which the stream runtime picks up to persist into
- * `AgentState.todos` and the UI can render as a progress checklist.
+ * The tool updates AgentState.todos through the runtime context and returns
+ * a normal ToolResult that remains part of the message history.
  */
 export const writeTodosTool = createTool({
 	name: "write_todos",
@@ -37,8 +35,7 @@ export const writeTodosTool = createTool({
 			updatedAt: now,
 		};
 
-		// Emit structured event so stream-runtime can persist todos into AgentState
-		emitToolEvent(options, { __tool_type: "write_todos", todos: todoList });
+		options.experimental_context?.setTodos?.(todoList);
 
 		const completed = todoList.items.filter((i) => i.status === "completed").length;
 		const inProgress = todoList.items.filter((i) => i.status === "in_progress").length;
@@ -47,6 +44,7 @@ export const writeTodosTool = createTool({
 		return JSON.stringify({
 			status: "ok",
 			goal: todoList.goal,
+			todos: todoList,
 			total: todoList.items.length,
 			completed,
 			inProgress,

@@ -1,10 +1,11 @@
 import { tool } from "@ai-sdk/provider-utils";
 import type { Tool, ToolExecutionOptions } from "@ai-sdk/provider-utils";
 import type { z } from "zod";
+import type { TodoList } from "../types";
 
 // Context passed to tools via experimental_context
 export interface ToolContext {
-    writer?: (data: string) => void;
+    setTodos?: (todos: TodoList) => void;
 }
 
 // Extended options with our custom context
@@ -39,9 +40,4 @@ export function createTool<INPUT>(config: SiyuanToolConfig<INPUT>): Tool<INPUT, 
         (t as any).name = config.name;
     }
     return t as Tool<INPUT, string> & { name?: string };
-}
-
-// Extract writer from tool execution options
-export function getWriter(options?: SiyuanToolOptions): ((data: string) => void) | undefined {
-    return options?.experimental_context?.writer;
 }

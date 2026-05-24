@@ -1,14 +1,5 @@
 import type { AgentState, TodoList } from "./session";
 
-/* ── Tool UI event types ─────────────────────────────────────────────── */
-
-export interface ToolUIEventText {
-	type: "text";
-	text: string;
-}
-
-export type ToolActivityCategory = "lookup" | "change" | "other";
-
 export type ToolActivityAction =
 	| "list"
 	| "read"
@@ -21,89 +12,10 @@ export type ToolActivityAction =
 	| "delete"
 	| "other";
 
-export interface ToolUIEventActivity {
-	type: "activity";
-	category: ToolActivityCategory;
-	action: ToolActivityAction;
-	id?: string;
-	path?: string;
-	label?: string;
-	meta?: string;
-	open?: boolean;
-}
-
-export interface ToolUIEventCreatedDocument {
-	type: "created_document";
-	id: string;
-	path?: string;
-}
-
-export interface ToolUIEventDocumentLink {
-	type: "document_link";
-	id: string;
-	path?: string;
-	label?: string;
-	open?: boolean;
-}
-
-export interface ToolUIEventDocumentBlocks {
-	type: "document_blocks";
-	id: string;
-	path?: string;
-	blockCount: number;
-	open?: boolean;
-}
-
-export interface ToolUIEventAppendBlock {
-	type: "append_block";
-	parentID: string;
-	path?: string;
-	blockIDs: string[];
-	open?: boolean;
-}
-
-export interface ToolUIEventEditBlocks {
-	type: "edit_blocks";
-	documentIDs: string[];
-	primaryDocumentID?: string;
-	path?: string;
-	editedCount: number;
-	open?: boolean;
-}
-
-export interface ToolUIEventUnknownStructured {
-	type: "unknown_structured";
-	raw: string;
-	payload?: Record<string, any>;
-}
-
-export type ToolUIEventPayload =
-	| ToolUIEventText
-	| ToolUIEventActivity
-	| ToolUIEventCreatedDocument
-	| ToolUIEventDocumentLink
-	| ToolUIEventDocumentBlocks
-	| ToolUIEventAppendBlock
-	| ToolUIEventEditBlocks
-	| ToolUIEventUnknownStructured;
-
-export interface ToolUIEvent {
-	id: string;
-	source: "writer";
-	toolCallIndex: number;
-	toolCallId?: string;
-	toolName?: string;
-	payload: ToolUIEventPayload;
-}
-
 export interface ChunkParserState {
 	inputState: AgentState;
-	currentState: AgentState | null;
 	contentBuffer: string;
 	reasoningBuffer: string;
-	pendingMessages: any[];
-	pendingToolCalls: any[];
-	toolUIEvents: ToolUIEvent[];
 	lastToolCallIndex: number;
 	toolCallMap: Record<string, { index: number; name?: string }>;
 	seenToolCallKeys: string[];
@@ -128,11 +40,8 @@ export type AgentStreamUiEvent =
 	| {
 		type: "tool_result";
 		toolCallId?: string;
+		toolName?: string;
 		result: string;
-	}
-	| {
-		type: "tool_ui";
-		event: ToolUIEvent;
 	}
 	| {
 		type: "todos_update";
@@ -146,7 +55,15 @@ export interface RunAgentStreamResult {
 	error?: unknown;
 }
 
-/* ── ToolMessageUi: render-only projection for tool cards ────────────── */
+export interface AgentRunMeta {
+	userMessageIndex: number;
+	startedAt: number;
+	finishedAt?: number;
+	durationMs?: number;
+	status: "running" | "success" | "error" | "aborted";
+}
+
+/* ── Render-only message projections ───────────────────────────────── */
 
 export interface ToolMessageUi {
 	type: "tool_message_ui";
@@ -155,17 +72,58 @@ export interface ToolMessageUi {
 	status: "running" | "done" | "error";
 	summary?: string;
 	result?: string;
-	events: ToolUIEvent[];
+	activity?: {
+		category: "lookup" | "change";
+		action: ToolActivityAction;
+		id?: string;
+		path?: string;
+		label?: string;
+		meta?: string;
+		open?: boolean;
+	};
 	startedAt: number;
 	finishedAt?: number;
 }
 
+export interface ProcessingSummaryUi {
+	type: "processing_summary_ui";
+	status: "done" | "running" | "error";
+	durationMs?: number;
+	details: UiMessage[];
+}
+
+export interface RunChangeSummaryItemUi {
+	action: ToolActivityAction;
+	toolName: string;
+	label: string;
+	id?: string;
+	path?: string;
+	status: "ok" | "error";
+	added?: number;
+	removed?: number;
+	meta?: string;
+}
+
+export interface RunChangeSummaryUi {
+	type: "run_change_summary_ui";
+	items: RunChangeSummaryItemUi[];
+	total: number;
+}
+
 /**
- * A render-only message view element. This should be derived from
- * AgentState.messages and not persisted by new code.
+ * A render-only message view element. This is derived from AgentState.messages
+ * and must not be persisted as session state.
  */
-export type UiMessage = Record<string, any> | ToolMessageUi;
+export type UiMessage = Record<string, any> | ToolMessageUi | ProcessingSummaryUi | RunChangeSummaryUi;
 
 export function isToolMessageUi(m: UiMessage): m is ToolMessageUi {
 	return (m as any).type === "tool_message_ui";
+}
+
+export function isProcessingSummaryUi(m: UiMessage): m is ProcessingSummaryUi {
+	return (m as any).type === "processing_summary_ui";
+}
+
+export function isRunChangeSummaryUi(m: UiMessage): m is RunChangeSummaryUi {
+	return (m as any).type === "run_change_summary_ui";
 }

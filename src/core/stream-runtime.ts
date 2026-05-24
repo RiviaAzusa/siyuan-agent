@@ -1,20 +1,15 @@
 import { streamText } from "ai";
 import type { ModelMessage } from "ai";
 import type {
+	AgentRunMeta,
 	AgentState,
 	AgentStreamUiEvent,
 	ChunkParserState,
 	RunAgentStreamResult,
 	TodoList,
-	ToolUIEvent,
-	ToolUIEventPayload,
 } from "../types";
 import type { ToolContext } from "./tool-types";
 import type { AgentSetup } from "./agent";
-
-function genId(): string {
-	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
 
 function normalizeReasoningDelta(current: string, incoming: string): string {
 	if (!incoming) return "";
@@ -24,100 +19,16 @@ function normalizeReasoningDelta(current: string, incoming: string): string {
 	return incoming;
 }
 
-function normalizeToolUIEvent(raw: string, toolCallIndex: number, toolName?: string): ToolUIEvent {
-	let parsed: any = null;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		/* plain string */
-	}
-
-	let payload: ToolUIEventPayload;
-	if (parsed?.__tool_type === "activity") {
-		payload = {
-			type: "activity",
-			category: parsed.category === "change" || parsed.category === "other" ? parsed.category : "lookup",
-			action: typeof parsed.action === "string" ? parsed.action : "other",
-			id: parsed.id ? String(parsed.id) : undefined,
-			path: parsed.path ? String(parsed.path) : undefined,
-			label: parsed.label ? String(parsed.label) : undefined,
-			meta: parsed.meta ? String(parsed.meta) : undefined,
-			open: parsed.open === undefined ? undefined : Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "created_document" && parsed.id) {
-		payload = {
-			type: "created_document",
-			id: String(parsed.id),
-			path: parsed.path ? String(parsed.path) : undefined,
-		};
-	} else if (parsed?.__tool_type === "document_link" && parsed.id) {
-		payload = {
-			type: "document_link",
-			id: String(parsed.id),
-			path: parsed.path ? String(parsed.path) : undefined,
-			label: parsed.label ? String(parsed.label) : undefined,
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "document_blocks" && parsed.id) {
-		payload = {
-			type: "document_blocks",
-			id: String(parsed.id),
-			path: parsed.path ? String(parsed.path) : undefined,
-			blockCount: Number(parsed.blockCount) || 0,
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "append_block" && parsed.parentID) {
-		payload = {
-			type: "append_block",
-			parentID: String(parsed.parentID),
-			path: parsed.path ? String(parsed.path) : undefined,
-			blockIDs: Array.isArray(parsed.blockIDs) ? parsed.blockIDs.map(String) : [],
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed?.__tool_type === "edit_blocks") {
-		payload = {
-			type: "edit_blocks",
-			documentIDs: Array.isArray(parsed.documentIDs) ? parsed.documentIDs.map(String) : [],
-			primaryDocumentID: parsed.primaryDocumentID ? String(parsed.primaryDocumentID) : undefined,
-			path: parsed.path ? String(parsed.path) : undefined,
-			editedCount: Number(parsed.editedCount) || 0,
-			open: Boolean(parsed.open),
-		};
-	} else if (parsed && typeof parsed === "object") {
-		payload = {
-			type: "unknown_structured",
-			raw,
-			payload: parsed,
-		};
-	} else {
-		payload = { type: "text", text: raw };
-	}
-
-	return {
-		id: genId(),
-		source: "writer",
-		toolCallIndex,
-		toolCallId: parsed?.toolCallId ? String(parsed.toolCallId) : undefined,
-		toolName: typeof parsed?.toolName === "string" ? parsed.toolName : toolName,
-		payload,
-	};
-}
-
-function createParserState(inputState: AgentState, existingToolUIEvents: ToolUIEvent[] = []): ChunkParserState {
+function createParserState(inputState: AgentState): ChunkParserState {
 	return {
 		inputState: {
 			...inputState,
 			messages: Array.isArray(inputState.messages) ? [...inputState.messages] : inputState.messages,
 			compaction: inputState.compaction ? { ...inputState.compaction } : inputState.compaction,
 			todos: inputState.todos ? { ...inputState.todos, items: [...inputState.todos.items] } : inputState.todos,
-			toolUIEvents: Array.isArray(inputState.toolUIEvents) ? [...inputState.toolUIEvents] : inputState.toolUIEvents,
 		},
-		currentState: null,
 		contentBuffer: "",
 		reasoningBuffer: "",
-		pendingMessages: [],
-		pendingToolCalls: [],
-		toolUIEvents: [...existingToolUIEvents],
 		lastToolCallIndex: -1,
 		toolCallMap: {},
 		seenToolCallKeys: [],
@@ -332,7 +243,7 @@ async function nextWithTimeout<T>(
 export function mergeState(
 	savedState: Record<string, any> | null,
 	inputMsgStr?: string,
-): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList } {
+): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[] } {
 	let messages: Record<string, any>[] = [];
 
 	const compaction = savedState?.compaction ? { ...savedState.compaction } : undefined;
@@ -356,17 +267,17 @@ export function mergeState(
 		messages.push({ role: "user", content: inputMsgStr });
 	}
 
-	return { messages, compaction, todos };
+	const runMeta = Array.isArray(savedState?.runMeta) ? [...savedState.runMeta] : undefined;
+	return { messages, compaction, todos, runMeta };
 }
 
 /* ── Agent stream ──────────────────────────────────────────────────── */
 
 interface RunAgentStreamParams {
 	setup: AgentSetup;
-	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList };
+	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[] };
 	signal?: AbortSignal;
 	recursionLimit?: number;
-	existingToolUIEvents?: ToolUIEvent[];
 	onUiEvent?: (event: AgentStreamUiEvent) => void;
 }
 
@@ -382,20 +293,22 @@ export async function runAgentStream({
 	input,
 	signal,
 	recursionLimit = 25,
-	existingToolUIEvents = [],
 	onUiEvent,
 }: RunAgentStreamParams): Promise<RunAgentStreamResult> {
-	const parserState = createParserState(input as AgentState, existingToolUIEvents);
+	const runStartedAt = Date.now();
+	const parserState = createParserState(input as AgentState);
 
 	let streamReasoningBuffer = "";
 	let aborted = false;
 	let error: unknown;
+	let runtimeTodos: TodoList | undefined = input.todos;
 	let activeAssistantParts: any[] = [];
 	let activeToolMessages: Record<string, any>[] = [];
 	let responseCompleted = false;
 	let persistedMessages: Record<string, any>[] = Array.isArray(input.messages)
 		? input.messages.filter((m) => m.role !== "system").map((m) => ({ ...m }))
 		: [];
+	const userMessageIndex = persistedMessages.filter((m) => m.role === "user").length - 1;
 
 	try {
 		// Extract system messages for system prompt, keep non-system as CoreMessages
@@ -414,12 +327,15 @@ export async function runAgentStream({
 		for (let step = 0; step < recursionLimit; step++) {
 			if (signal?.aborted) break;
 
-			const stepEventBuffer: string[] = [];
 			activeAssistantParts = [];
 			activeToolMessages = [];
 			responseCompleted = false;
 			const toolContext: ToolContext = {
-				writer: (data: string) => { stepEventBuffer.push(data); },
+				setTodos: (todos) => {
+					runtimeTodos = todos;
+					parserState.inputState.todos = todos;
+					onUiEvent?.({ type: "todos_update", todos });
+				},
 			};
 
 			const result = streamText({
@@ -498,27 +414,8 @@ export async function runAgentStream({
 							output: normalizeToolOutput(chunk.output),
 						}],
 					});
-					onUiEvent?.({ type: "tool_result", toolCallId: chunk.toolCallId, result: resultStr });
+					onUiEvent?.({ type: "tool_result", toolCallId: chunk.toolCallId, toolName: chunk.toolName ?? mapped?.name ?? "", result: resultStr });
 				}
-			}
-
-			// Process tool UI events collected via writer during tool execution
-			for (const raw of stepEventBuffer) {
-				const parsed = (() => { try { return JSON.parse(raw); } catch { return null; } })();
-				if (parsed?.__tool_type === "write_todos" && parsed.todos) {
-					parserState.inputState.todos = parsed.todos;
-					if (parserState.currentState) parserState.currentState.todos = parsed.todos;
-					onUiEvent?.({ type: "todos_update", todos: parsed.todos });
-				}
-
-				const event = normalizeToolUIEvent(raw, parserState.lastToolCallIndex);
-				if (event.toolCallId && parserState.toolCallMap[event.toolCallId]) {
-					const mapped = parserState.toolCallMap[event.toolCallId];
-					event.toolCallIndex = mapped.index;
-					event.toolName = event.toolName || mapped.name;
-				}
-				parserState.toolUIEvents.push(event);
-				onUiEvent?.({ type: "tool_ui", event });
 			}
 
 			const response = await result.response;
@@ -553,14 +450,25 @@ export async function runAgentStream({
 	}
 
 	// Build final state
+	const runFinishedAt = Date.now();
+	const runMeta: AgentRunMeta = {
+		userMessageIndex: Math.max(0, userMessageIndex),
+		startedAt: runStartedAt,
+		finishedAt: runFinishedAt,
+		durationMs: Math.max(0, runFinishedAt - runStartedAt),
+		status: aborted ? "aborted" : error ? "error" : "success",
+	};
 	const source: AgentState = {
-		...(parserState.currentState ?? parserState.inputState),
+		...parserState.inputState,
 		messages: persistedMessages,
 	};
-	delete source.messagesUi;
-	delete source.toolUIEvents;
 	source.compaction = (input as AgentState).compaction;
-	source.todos = parserState.currentState?.todos ?? parserState.inputState.todos ?? (input as AgentState).todos;
+	source.todos = runtimeTodos;
+	const previousRunMeta = Array.isArray((input as AgentState).runMeta) ? (input as AgentState).runMeta : [];
+	source.runMeta = [
+		...previousRunMeta.filter((meta) => meta?.userMessageIndex !== runMeta.userMessageIndex),
+		runMeta,
+	];
 
 	return {
 		lastState: source,

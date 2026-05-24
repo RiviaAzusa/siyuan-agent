@@ -1,5 +1,4 @@
-import type { ToolUIEvent, UiMessage } from "../types";
-import { isToolMessageUi } from "../types";
+import type { AgentRunMeta, UiMessage } from "../types";
 import { buildMessagesView } from "../core/ui-message-builder";
 
 /**
@@ -17,10 +16,9 @@ export interface TaskRunGroup {
 	taskTitle?: string;
 	/** Messages belonging to this run */
 	messages: any[];
-	/** ToolUIEvents associated with this run's tool call indices */
-	toolUIEvents: ToolUIEvent[];
-	/** UiMessages for this run (when available) */
-	messagesUi: UiMessage[];
+	/** Render projection for this run */
+	viewMessages: UiMessage[];
+	runMeta: AgentRunMeta[];
 	/** Inferred run status based on message content */
 	status: "success" | "error" | "unknown";
 }
@@ -94,12 +92,10 @@ function inferRunStatus(messages: any[]): "success" | "error" | "unknown" {
  * 
  * Each run starts with a human message whose content begins with a scheduled task run prefix.
  * If no such messages are found (legacy data), all messages are returned as a single group.
- *
- * `messagesUi` is accepted only as a legacy read fallback. Each group builds a
- * fresh render projection from its canonical messages.
  */
-export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], messagesUi?: UiMessage[]): TaskRunGroup[] {
+export function groupTaskRuns(messages: any[], runMeta?: AgentRunMeta[]): TaskRunGroup[] {
 	if (!messages || messages.length === 0) return [];
+	const allRunMeta = Array.isArray(runMeta) ? runMeta : [];
 
 	// Find run boundaries
 	const boundaries: number[] = [];
@@ -109,40 +105,16 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 		}
 	}
 
-	/* Build messagesUi run boundaries in parallel */
-	const uiBoundaries: number[] = [];
-	const uiArr = Array.isArray(messagesUi) ? messagesUi : [];
-	for (let i = 0; i < uiArr.length; i++) {
-		const m = uiArr[i];
-		if (!isToolMessageUi(m) && isScheduledRunStart(m)) {
-			uiBoundaries.push(i);
-		}
-	}
-
 	// No scheduled prefix found → legacy fallback as single group
 	if (boundaries.length === 0) {
 		return [{
 			startIndex: 0,
 			endIndex: messages.length - 1,
 			messages,
-			toolUIEvents,
-			messagesUi: buildMessagesView({ messages, toolUIEvents, messagesUi: uiArr }),
+			viewMessages: buildMessagesView({ messages, runMeta: allRunMeta }),
+			runMeta: allRunMeta,
 			status: inferRunStatus(messages),
 		}];
-	}
-
-	// Build tool call index → run mapping
-	let globalToolCallIdx = -1;
-	const toolCallRunMap = new Map<number, number>();
-	for (let i = 0; i < messages.length; i++) {
-		const runIdx = findRunBoundary(i, boundaries);
-		const toolCalls = messages[i].kwargs?.tool_calls ?? messages[i].tool_calls ?? messages[i].toolCalls;
-		if (Array.isArray(toolCalls)) {
-			for (const _tc of toolCalls) {
-				globalToolCallIdx++;
-				toolCallRunMap.set(globalToolCallIdx, runIdx);
-			}
-		}
 	}
 
 	const groups: TaskRunGroup[] = [];
@@ -151,22 +123,21 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 		const end = b + 1 < boundaries.length ? boundaries[b + 1] - 1 : messages.length - 1;
 		const runMessages = messages.slice(start, end + 1);
 		const content = getContent(messages[start]);
+		const userCountBeforeRun = messages.slice(0, start).filter((message) => {
+			const type = msgType(message);
+			return type === "human" || type === "user";
+		}).length;
+		const runUserCount = runMessages.filter((message) => {
+			const type = msgType(message);
+			return type === "human" || type === "user";
+		}).length;
+		const runMetaForView = allRunMeta
+			.filter((meta) => meta.userMessageIndex >= userCountBeforeRun && meta.userMessageIndex < userCountBeforeRun + runUserCount)
+			.map((meta) => ({ ...meta, userMessageIndex: meta.userMessageIndex - userCountBeforeRun }));
 
-		const runToolUIEvents = toolUIEvents.filter(ev => {
-			const runIdx = toolCallRunMap.get(ev.toolCallIndex);
-			return runIdx === start;
-		});
-
-		let runMessagesUi: UiMessage[] = [];
-		if (uiBoundaries.length > 0) {
-			const uiStart = uiBoundaries[b] ?? 0;
-			const uiEnd = b + 1 < uiBoundaries.length ? uiBoundaries[b + 1] : uiArr.length;
-			runMessagesUi = uiArr.slice(uiStart, uiEnd);
-		}
 		const viewMessages = buildMessagesView({
 			messages: runMessages,
-			toolUIEvents: runToolUIEvents,
-			messagesUi: runMessagesUi,
+			runMeta: runMetaForView,
 		});
 
 		groups.push({
@@ -175,20 +146,11 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 			runAt: extractRunAt(content),
 			taskTitle: extractTaskTitle(content),
 			messages: runMessages,
-			toolUIEvents: runToolUIEvents,
-			messagesUi: viewMessages,
+			runMeta: runMetaForView,
+			viewMessages,
 			status: inferRunStatus(runMessages),
 		});
 	}
 
 	return groups;
-}
-
-function findRunBoundary(msgIndex: number, boundaries: number[]): number {
-	let result = boundaries[0];
-	for (const b of boundaries) {
-		if (b <= msgIndex) result = b;
-		else break;
-	}
-	return result;
 }

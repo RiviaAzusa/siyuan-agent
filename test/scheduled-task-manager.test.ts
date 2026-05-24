@@ -62,12 +62,16 @@ describe("scheduled task helpers", () => {
 
 	it("appends each execution run as a new message batch", () => {
 		const merged = appendTaskRunState(
-			{ messages: [{ role: "user", content: "old" }], toolUIEvents: [{ id: "1" }] as any },
-			{ messages: [{ role: "assistant", content: "new" }], toolUIEvents: [{ id: "2" }] as any },
+			{ messages: [{ role: "user", content: "old" }], runMeta: [{ userMessageIndex: 0, startedAt: 1, status: "success" }] as any },
+			{ messages: [{ role: "user", content: "new run" }, { role: "assistant", content: "new" }], runMeta: [{ userMessageIndex: 0, startedAt: 2, status: "success" }] as any },
 		);
 
-		expect(merged.messages).toHaveLength(2);
-		expect(merged.toolUIEvents).toHaveLength(2);
+		expect(merged.messages).toHaveLength(3);
+		expect((merged as any).toolUIEvents).toBeUndefined();
+		expect(merged.runMeta).toMatchObject([
+			{ userMessageIndex: 0 },
+			{ userMessageIndex: 1 },
+		]);
 	});
 
 	it("builds a readable scheduled task prompt prefix", () => {

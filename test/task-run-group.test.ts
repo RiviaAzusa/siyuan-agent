@@ -28,7 +28,7 @@ describe("groupTaskRuns", () => {
 			makeLcMsg("ai", "已为您生成日报。"),
 		];
 
-		const groups = groupTaskRuns(messages, []);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(3);
 		expect(groups[0].runAt).toBe("2026/4/8 18:00:00");
 		expect(groups[0].taskTitle).toBe("日报");
@@ -48,7 +48,7 @@ describe("groupTaskRuns", () => {
 			makeLcMsg("human", "定时任务执行失败\n\nAPI Key expired"),
 		];
 
-		const groups = groupTaskRuns(messages, []);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(2);
 		expect(groups[0].status).toBe("success");
 		expect(groups[1].status).toBe("error");
@@ -62,7 +62,7 @@ describe("groupTaskRuns", () => {
 			makeLcMsg("ai", "OK"),
 		];
 
-		const groups = groupTaskRuns(messages, []);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(1);
 		expect(groups[0].runAt).toBeUndefined();
 		expect(groups[0].messages).toHaveLength(4);
@@ -70,8 +70,8 @@ describe("groupTaskRuns", () => {
 	});
 
 	it("returns empty array for empty messages", () => {
-		expect(groupTaskRuns([], [])).toHaveLength(0);
-		expect(groupTaskRuns(undefined as any, [])).toHaveLength(0);
+		expect(groupTaskRuns([])).toHaveLength(0);
+		expect(groupTaskRuns(undefined as any)).toHaveLength(0);
 	});
 
 	it("handles a single run correctly", () => {
@@ -81,7 +81,7 @@ describe("groupTaskRuns", () => {
 			makeLcMsg("tool", "搜索结果..."),
 		];
 
-		const groups = groupTaskRuns(messages, []);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(1);
 		expect(groups[0].runAt).toBe("2026/4/8 09:00:00");
 		expect(groups[0].taskTitle).toBe("早间摘要");
@@ -96,14 +96,14 @@ describe("groupTaskRuns", () => {
 			{ role: "assistant", content: "Task result" },
 		];
 
-		const groups = groupTaskRuns(messages, []);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(1);
 		expect(groups[0].runAt).toBe("2026/4/8 09:00:00");
 		expect(groups[0].taskTitle).toBe("Morning");
-		expect(groups[0].messagesUi).toEqual(messages);
+		expect(groups[0].viewMessages).toEqual(messages);
 	});
 
-	it("distributes toolUIEvents to correct run groups", () => {
+	it("builds tool cards from each run's canonical messages", () => {
 		const messages = [
 			makeLcMsg("human", "定时任务执行时间：2026/4/8 18:00:00\n\n任务名称：任务A\n\n以下是本次定时任务的用户指令，请直接执行：\nA"),
 			makeLcMsg("ai", "A result", [{ name: "search_fulltext", id: "tc1" }]),
@@ -113,17 +113,10 @@ describe("groupTaskRuns", () => {
 			makeLcMsg("tool", "result B"),
 		];
 
-		const toolUIEvents = [
-			{ id: "ev1", source: "writer" as const, toolCallIndex: 0, toolName: "search_fulltext", payload: { type: "text" as const, text: "searching" } },
-			{ id: "ev2", source: "writer" as const, toolCallIndex: 1, toolName: "get_document", payload: { type: "text" as const, text: "reading" } },
-		];
-
-		const groups = groupTaskRuns(messages, toolUIEvents);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(2);
-		expect(groups[0].toolUIEvents).toHaveLength(1);
-		expect(groups[0].toolUIEvents[0].toolName).toBe("search_fulltext");
-		expect(groups[1].toolUIEvents).toHaveLength(1);
-		expect(groups[1].toolUIEvents[0].toolName).toBe("get_document");
+		expect(groups[0].viewMessages.some((m: any) => m.type === "processing_summary_ui")).toBe(true);
+		expect(groups[1].viewMessages.some((m: any) => m.type === "processing_summary_ui")).toBe(true);
 	});
 
 	it("handles mixed success and failure across runs", () => {
@@ -136,7 +129,7 @@ describe("groupTaskRuns", () => {
 			makeLcMsg("ai", "完成"),
 		];
 
-		const groups = groupTaskRuns(messages, []);
+		const groups = groupTaskRuns(messages);
 		expect(groups).toHaveLength(3);
 		expect(groups[0].status).toBe("success");
 		expect(groups[1].status).toBe("error");

@@ -1,6 +1,6 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
-import { siyuanFetch, emitActivity, sqlEscape } from "./siyuan-api";
+import { siyuanFetch, sqlEscape } from "./siyuan-api";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 export function createGetDocumentTool(i18n: Translator = defaultTranslator) {
@@ -10,23 +10,10 @@ export function createGetDocumentTool(i18n: Translator = defaultTranslator) {
 		parameters: z.object({
 			id: z.string().describe("The Document block ID. You usually get this from list_documents or search results."),
 		}),
-		async execute({ id }, options) {
-			const docInfo = await siyuanFetch("/api/query/sql", {
-				stmt: `SELECT id, content, hpath FROM blocks WHERE id='${sqlEscape(id)}' LIMIT 1`,
-			});
+		async execute({ id }) {
 			const data = await siyuanFetch("/api/export/exportMdContent", { id });
 			const hpath = data.hPath || "";
 			const content = data.content || "";
-			const label = docInfo?.[0]?.content || hpath || id;
-			emitActivity(options, {
-				category: "lookup",
-				action: "read",
-				id,
-				path: hpath,
-				label,
-				meta: i18n.t("tool.getDocument.meta"),
-				open: true,
-			});
 			return `# ${hpath}\n\n${content}`;
 		},
 	});
@@ -39,10 +26,7 @@ export function createGetDocumentBlocksTool(i18n: Translator = defaultTranslator
 		parameters: z.object({
 			id: z.string().describe("Document block ID. Get this from list_documents or search results."),
 		}),
-		async execute({ id }, options) {
-			const docInfo = await siyuanFetch("/api/query/sql", {
-				stmt: `SELECT id, hpath FROM blocks WHERE id='${sqlEscape(id)}' LIMIT 1`,
-			});
+		async execute({ id }) {
 			const data = await siyuanFetch("/api/block/getChildBlocks", { id });
 			const blocks = (data || []).map((b: any) => ({
 				id: b.id,
@@ -50,15 +34,6 @@ export function createGetDocumentBlocksTool(i18n: Translator = defaultTranslator
 				subType: b.subType || undefined,
 				markdown: b.markdown || b.content || "",
 			}));
-			emitActivity(options, {
-				category: "lookup",
-				action: "read",
-				id,
-				path: docInfo?.[0]?.hpath || "",
-				label: docInfo?.[0]?.hpath || id,
-				meta: i18n.t("tool.getDocumentBlocks.meta", { count: blocks.length }),
-				open: true,
-			});
 			return JSON.stringify(blocks, null, 2);
 		},
 	});
@@ -71,7 +46,7 @@ export function createGetDocumentOutlineTool(i18n: Translator = defaultTranslato
 		parameters: z.object({
 			id: z.string().describe("Document ID to get outline for"),
 		}),
-		async execute({ id }, options) {
+		async execute({ id }) {
 			const stmt = `SELECT id, content, subtype, sort FROM blocks WHERE root_id='${sqlEscape(id)}' AND type='h' ORDER BY sort ASC LIMIT 200`;
 			const data = await siyuanFetch("/api/query/sql", { stmt });
 			const headings = (data || []).map((row: any) => ({
@@ -79,12 +54,6 @@ export function createGetDocumentOutlineTool(i18n: Translator = defaultTranslato
 				title: row.content,
 				level: parseInt(row.subtype?.replace("h", "") || "1", 10),
 			}));
-			emitActivity(options, {
-				category: "lookup",
-				action: "read",
-				id,
-				label: i18n.t("tool.getDocumentOutline.label", { count: headings.length }),
-			});
 			return JSON.stringify(headings, null, 2);
 		},
 	});
@@ -97,7 +66,7 @@ export function createReadBlockTool(i18n: Translator = defaultTranslator) {
 		parameters: z.object({
 			id: z.string().describe("Block ID to read"),
 		}),
-		async execute({ id }, options) {
+		async execute({ id }) {
 			const kramdowns: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids: [id] });
 			const content = kramdowns?.[id];
 			if (!content) {
@@ -107,12 +76,6 @@ export function createReadBlockTool(i18n: Translator = defaultTranslator) {
 				stmt: `SELECT id, type, subtype, root_id, parent_id, content, hpath FROM blocks WHERE id='${sqlEscape(id)}' LIMIT 1`,
 			});
 			const info = blockInfo?.[0] || {};
-			emitActivity(options, {
-				category: "lookup",
-				action: "read",
-				id,
-				label: info.content?.slice(0, 50) || id,
-			});
 			return JSON.stringify({
 				id,
 				type: info.type,
@@ -133,7 +96,7 @@ export function createSearchFulltextTool(i18n: Translator = defaultTranslator) {
 			query: z.string().describe("Search keyword or phrase"),
 			page: z.number().optional().describe("Page number, defaults to 1. Each page returns up to 10 results."),
 		}),
-		async execute({ query, page }, options) {
+		async execute({ query, page }) {
 			const data = await siyuanFetch("/api/search/fullTextSearchBlock", {
 				query,
 				page: page || 1,
@@ -150,12 +113,6 @@ export function createSearchFulltextTool(i18n: Translator = defaultTranslator) {
 				hpath: b.hPath,
 				type: b.type,
 			}));
-			emitActivity(options, {
-				category: "lookup",
-				action: "search",
-				label: query,
-				meta: i18n.t("tool.searchFulltext.meta", { count: data.matchedBlockCount || blocks.length || 0 }),
-			});
 			return JSON.stringify({
 				blocks,
 				matchedBlockCount: data.matchedBlockCount,
@@ -174,7 +131,7 @@ export function createSearchDocumentsTool(i18n: Translator = defaultTranslator) 
 			keyword: z.string().describe("Keyword to search in document titles"),
 			notebook: z.string().optional().describe("Limit search to a specific notebook ID. Omit to search all notebooks."),
 		}),
-		async execute({ keyword, notebook }, options) {
+		async execute({ keyword, notebook }) {
 			const safeKeyword = sqlEscape(keyword);
 			const stmt = notebook
 				? `SELECT id, content, hpath, box, updated FROM blocks WHERE type='d' AND box='${sqlEscape(notebook)}' AND content LIKE '%${safeKeyword}%' ORDER BY updated DESC LIMIT 50`
@@ -187,12 +144,6 @@ export function createSearchDocumentsTool(i18n: Translator = defaultTranslator) 
 				notebook: d.box,
 				updated: d.updated,
 			}));
-			emitActivity(options, {
-				category: "lookup",
-				action: "search",
-				label: keyword,
-				meta: i18n.t("tool.searchDocuments.meta", { count: docs.length }),
-			});
 			return JSON.stringify(docs, null, 2);
 		},
 	});

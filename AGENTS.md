@@ -8,7 +8,7 @@ src/
   types/                    # Type definitions and constants
     index.ts                #   Barrel re-export
     model-config.ts         #   ModelConfig, AgentConfig, DEFAULT_CONFIG, helpers
-    tool-events.ts          #   ToolUIEvent, AgentStreamUiEvent, UiMessage etc
+    tool-events.ts          #   AgentStreamUiEvent, render-only UiMessage projections
     session.ts              #   SessionData, SessionIndex, AgentState, ScheduledTaskMeta
     prompts.ts              #   BUILTIN_SYSTEM_PROMPT, INIT_PROMPT, SLASH_COMMANDS
   core/
@@ -21,7 +21,7 @@ src/
     mcp-client.ts           # MCP client
     tools/                  # Tool definitions
       index.ts              #   Barrel: getDefaultTools, getLookupTools
-      siyuan-api.ts         #   siyuanFetch, emitToolEvent, emitActivity, sqlEscape
+      siyuan-api.ts         #   siyuanFetch, sqlEscape
       notebook-tools.ts     #   list_notebooks, list_documents, recent_documents
       document-tools.ts     #   get_document, get_document_blocks, outline, search
       edit-tools.ts         #   append_block, edit_blocks, create/move/rename/delete doc
@@ -47,13 +47,13 @@ src/
     _diff.scss              # Diff view
     _model-settings.scss    # Model editor
     _extras.scss            # Misc and tasks
-test/                       # Vitest tests (94 passing)
+test/                       # Vitest tests (125 passing)
 ```
 
 ## Build and Test
 
 - **Build**: `npm run build` (Webpack 5 + esbuild-loader, output `dist/index.js` + `dist/index.css`)
-- **Test**: `npx vitest run` (94 tests passing, 4 skipped)
+- **Test**: `npx vitest run` (125 tests passing)
 - **Deploy**: `./deploy.sh` (build + copy to SiYuan plugin directory)
 
 ## Architecture Conventions
@@ -70,13 +70,23 @@ test/                       # Vitest tests (94 passing)
 
 ### Session Persistence
 - `SessionStore` uses `PluginStorage` interface (native fetch), not SDK `fetchPost` (has bug)
-- Dual message architecture: `messages` (LLM context, compressible) + `messagesUi` (user-visible, never compressed)
+- `AgentState.messages` is the single persisted message source for conversation history. It stores canonical AI SDK messages, including assistant ToolCall parts and ToolMessage ToolResult parts.
+- `AgentState.compaction`, `AgentState.todos`, and `AgentState.runMeta` are the other persisted runtime state fields. Do not add UI cache fields back into `AgentState`.
+- UI history is derived at render time by `buildMessagesView(state)` in `src/core/ui-message-builder.ts`; `UiMessage`, `ToolMessageUi`, `ProcessingSummaryUi`, and `RunChangeSummaryUi` are render-only projections and must not be persisted.
+- `messagesUi` and `toolUIEvents` are no longer supported. Historical rendering should fall back to what can be derived from `state.messages`; if a legacy session only has old UI-only data, it may degrade.
+
+### Tool Result Rendering
+- Tool UI cards and change summaries are derived only from assistant ToolCall input plus ToolMessage ToolResult output.
+- Tools should return structured, parseable JSON when the UI needs friendly rendering. Do not use side-channel UI events for persisted display data.
+- `emitActivity`, `emitToolEvent`, and writer-based tool UI events are intentionally removed.
+- `write_todos` updates `AgentState.todos` through `experimental_context.setTodos(todoList)` and also returns a normal ToolResult that remains in `messages`.
 
 ## Design Decisions
 
 - Desktop `AI Agent` uses top bar button to toggle right/bottom custom tab, does not occupy dock
 - Chat panel recent session list stays compact; shows 3 by default
 - Chat messages layered display: body / lookup tools / change tools; lookup tools collapsed by default
+- Tool cards are a presentation layer over ToolCall/ToolResult, not a separate storage model
 - Document tree tools prefer SiYuan native `filetree` API, avoid direct SQL enumeration
 - `recent_documents` only uses restricted SQL to query recent doc IDs, then reads each document individually
 - SiYuan-specific facts documented in `.ai/siyuan_facts.md`

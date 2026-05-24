@@ -1,6 +1,6 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
-import { siyuanFetch, emitActivity } from "./siyuan-api";
+import { siyuanFetch } from "./siyuan-api";
 import { listDocumentsViaApi } from "../list-documents";
 import { recentDocumentsViaApi } from "../recent-documents";
 import { defaultTranslator, type Translator } from "../../i18n";
@@ -10,7 +10,7 @@ export function createListNotebooksTool(i18n: Translator = defaultTranslator) {
 		name: "list_notebooks",
 		description: "List all notebooks in SiYuan. returns id, name, icon, and closed status for each notebook. Use this to find the notebook ID needed for other tools.",
 		parameters: z.object({}),
-		async execute(_, options) {
+		async execute() {
 			const data = await siyuanFetch("/api/notebook/lsNotebooks", {});
 			const notebooks = (data.notebooks || []).map((nb: any) => ({
 				id: nb.id,
@@ -18,12 +18,6 @@ export function createListNotebooksTool(i18n: Translator = defaultTranslator) {
 				icon: nb.icon,
 				closed: nb.closed,
 			}));
-			emitActivity(options, {
-				category: "lookup",
-				action: "list",
-				label: i18n.t("tool.listNotebooks.label"),
-				meta: i18n.t("tool.listNotebooks.meta", { count: notebooks.length }),
-			});
 			return JSON.stringify(notebooks, null, 2);
 		},
 	});
@@ -42,7 +36,7 @@ export function createListDocumentsTool(i18n: Translator = defaultTranslator) {
 			child_limit: z.number().int().min(0).max(20).optional().describe("Maximum number of direct child documents to include for each expanded node. Defaults to 5, max 20."),
 			include_summary: z.boolean().optional().describe("Whether to include a lightweight summary for each returned document. Defaults to true."),
 		}),
-		async execute({ notebook, path, depth, page, page_size, child_limit, include_summary }, options) {
+		async execute({ notebook, path, depth, page, page_size, child_limit, include_summary }) {
 			const result = await listDocumentsViaApi({
 				notebook,
 				path,
@@ -52,13 +46,6 @@ export function createListDocumentsTool(i18n: Translator = defaultTranslator) {
 				child_limit,
 				include_summary,
 			}, siyuanFetch);
-			emitActivity(options, {
-				category: "lookup",
-				action: "list",
-				path: result.path,
-				label: result.path,
-				meta: i18n.t("tool.listDocuments.meta", { count: result.items.length }),
-			});
 			return JSON.stringify(result, null, 2);
 		},
 	});
@@ -71,16 +58,10 @@ export function createRecentDocumentsTool(i18n: Translator = defaultTranslator) 
 		parameters: z.object({
 			limit: z.number().int().min(1).max(20).optional().describe("Number of documents to return. Defaults to 10."),
 		}),
-		async execute({ limit }, options) {
+		async execute({ limit }) {
 			const result = await recentDocumentsViaApi({
 				limit,
 			}, siyuanFetch);
-			emitActivity(options, {
-				category: "lookup",
-				action: "list",
-				label: i18n.t("tool.recentDocuments.label"),
-				meta: i18n.t("tool.recentDocuments.meta", { count: result.items.length }),
-			});
 			return JSON.stringify(result, null, 2);
 		},
 	});

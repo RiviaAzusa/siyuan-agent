@@ -122,6 +122,49 @@ describe("SQL escape in tool definitions", () => {
 		expect(writeTodos!.description).toContain("plan");
 	});
 
+	it("write_todos updates todos through runtime context and returns a normal tool result", async () => {
+		const tools = getDefaultTools(() => ({
+			apiBaseURL: "https://example.com/v1",
+			apiKey: "key",
+			model: "model",
+			customInstructions: "",
+		}));
+		const writeTodos = tools.find(t => t.name === "write_todos");
+		let captured: any;
+
+		const raw = await (writeTodos as any).execute({
+			goal: "Ship cleanup",
+			todos: [
+				{ content: "Remove writer", status: "completed" },
+				{ content: "Update UI", status: "in_progress" },
+			],
+		}, {
+			experimental_context: {
+				setTodos: (todos: any) => {
+					captured = todos;
+				},
+			},
+		});
+
+		const parsed = JSON.parse(raw);
+		expect(captured).toMatchObject({
+			goal: "Ship cleanup",
+			items: [
+				{ content: "Remove writer", status: "completed" },
+				{ content: "Update UI", status: "in_progress" },
+			],
+		});
+		expect(parsed).toMatchObject({
+			status: "ok",
+			goal: "Ship cleanup",
+			total: 2,
+			completed: 1,
+			inProgress: 1,
+			pending: 0,
+		});
+		expect(parsed.todos).toMatchObject(captured);
+	});
+
 	it("old todo tools are removed", () => {
 		const tools = getDefaultTools(() => ({
 			apiBaseURL: "https://example.com/v1",

@@ -93,15 +93,25 @@ export function buildScheduledTaskRunPrompt(
 }
 
 export function appendTaskRunState(existingState: AgentState | undefined, latestState: AgentState): AgentState {
+	const existingMessages = Array.isArray(existingState?.messages) ? existingState!.messages : [];
+	const existingUserCount = existingMessages.filter((message: any) => {
+		const role = message?.role ?? message?.type;
+		return role === "user" || role === "human";
+	}).length;
 	return {
 		...existingState,
 		messages: [
-			...(Array.isArray(existingState?.messages) ? existingState!.messages : []),
+			...existingMessages,
 			...(Array.isArray(latestState.messages) ? latestState.messages : []),
 		],
-		toolUIEvents: [
-			...(Array.isArray(existingState?.toolUIEvents) ? existingState!.toolUIEvents : []),
-			...(Array.isArray(latestState.toolUIEvents) ? latestState.toolUIEvents : []),
+		runMeta: [
+			...(Array.isArray(existingState?.runMeta) ? existingState!.runMeta : []),
+			...(Array.isArray(latestState.runMeta)
+				? latestState.runMeta.map((meta) => ({
+					...meta,
+					userMessageIndex: meta.userMessageIndex + existingUserCount,
+				}))
+				: []),
 		],
 	};
 }

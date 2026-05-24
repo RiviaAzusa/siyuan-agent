@@ -12,7 +12,7 @@ import { writeTodosTool } from "./plan-tools";
 import { createScheduledTaskTools } from "./scheduled-tools";
 
 export { deleteDocumentTool } from "./edit-tools";
-export { siyuanFetch, emitToolEvent, emitActivity, sqlEscape } from "./siyuan-api";
+export { siyuanFetch, sqlEscape } from "./siyuan-api";
 
 export type SiyuanTool = Tool<any, string>;
 

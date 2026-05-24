@@ -1,6 +1,5 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
-import { emitActivity } from "./siyuan-api";
 import type { ScheduledTaskManager } from "../scheduled-task-manager";
 import { defaultTranslator, type Translator } from "../../i18n";
 
@@ -28,7 +27,7 @@ export function createScheduledTaskTools(
 			timezone: z.string().optional().describe("IANA timezone name, e.g. Asia/Shanghai"),
 			enabled: z.boolean().optional().describe("Whether the task should start enabled. Defaults to true."),
 		}),
-		async execute({ title, prompt, scheduleType, cron, triggerAt, timezone, enabled }, options) {
+		async execute({ title, prompt, scheduleType, cron, triggerAt, timezone, enabled }) {
 			const session = await requireTaskManager().createTask({
 				title,
 				prompt,
@@ -38,12 +37,6 @@ export function createScheduledTaskTools(
 				timezone,
 				enabled,
 			});
-			emitActivity(options, {
-				category: "change",
-				action: "create",
-				label: session.task?.title || title,
-				meta: i18n.t("tool.scheduled.create.meta"),
-			});
 			return JSON.stringify(session.task, null, 2);
 		},
 	});
@@ -52,14 +45,8 @@ export function createScheduledTaskTools(
 		name: "list_scheduled_tasks",
 		description: "List all scheduled tasks and their current status, next run time, and last run result.",
 		parameters: z.object({}),
-		async execute(_, options) {
+		async execute() {
 			const tasks = requireTaskManager().listTaskEntries().map((entry) => entry.task);
-			emitActivity(options, {
-				category: "lookup",
-				action: "list",
-				label: i18n.t("tool.scheduled.label"),
-				meta: i18n.t("tool.scheduled.list.meta", { count: tasks.length }),
-			});
 			return JSON.stringify(tasks, null, 2);
 		},
 	});
@@ -77,7 +64,7 @@ export function createScheduledTaskTools(
 			timezone: z.string().optional().describe("Updated IANA timezone name"),
 			enabled: z.boolean().optional().describe("Whether the task should remain enabled"),
 		}),
-		async execute({ taskId, title, prompt, scheduleType, cron, triggerAt, timezone, enabled }, options) {
+		async execute({ taskId, title, prompt, scheduleType, cron, triggerAt, timezone, enabled }) {
 			const session = await requireTaskManager().updateTask(taskId, {
 				title,
 				prompt,
@@ -86,12 +73,6 @@ export function createScheduledTaskTools(
 				triggerAt,
 				timezone,
 				enabled,
-			});
-			emitActivity(options, {
-				category: "change",
-				action: "edit",
-				label: session.task?.title || taskId,
-				meta: i18n.t("tool.scheduled.update.meta"),
 			});
 			return JSON.stringify(session.task, null, 2);
 		},
@@ -103,14 +84,8 @@ export function createScheduledTaskTools(
 		parameters: z.object({
 			taskId: z.string().describe("Scheduled task ID"),
 		}),
-		async execute({ taskId }, options) {
+		async execute({ taskId }) {
 			await requireTaskManager().deleteTask(taskId);
-			emitActivity(options, {
-				category: "change",
-				action: "delete",
-				label: taskId,
-				meta: i18n.t("tool.scheduled.delete.meta"),
-			});
 			return JSON.stringify({ ok: true, taskId }, null, 2);
 		},
 	});
