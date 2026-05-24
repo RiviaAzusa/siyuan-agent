@@ -795,6 +795,15 @@ export class ChatPanel {
 			this.scrollToBottom();
 		};
 
+		const closeReasoningBlock = (): void => {
+			if (!reasoningEl) return;
+			reasoningEl.open = false;
+			const summary = reasoningEl.querySelector(".chat-msg__reasoning-summary");
+			if (summary) summary.innerHTML = `<span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.reasoning.process"))}</span>`;
+			reasoningEl = null;
+			reasoningBuffer = "";
+		};
+
 		try {
 			const modelOverride = sessionModelId ? activeModel : null;
 			const setup = await prepareAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n, reasoningEffort);
@@ -821,12 +830,7 @@ export class ChatPanel {
 					}
 
 					if (event.type === "text_delta") {
-						if (reasoningEl) {
-							reasoningEl.open = false;
-							const summary = reasoningEl.querySelector(".chat-msg__reasoning-summary");
-							if (summary) summary.innerHTML = `<span class="chat-msg__process-prefix"><span class="chat-msg__process-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.reasoning.process"))}</span>`;
-							reasoningEl = null;
-						}
+						closeReasoningBlock();
 						const el = getTextEl();
 						curBuffer += event.text;
 						el.innerHTML = renderMarkdown(curBuffer);
@@ -835,6 +839,7 @@ export class ChatPanel {
 					}
 
 					if (event.type === "tool_call_start") {
+						closeReasoningBlock();
 						removePending();
 						curTextEl = null;
 						const el = this.createToolCallElement(

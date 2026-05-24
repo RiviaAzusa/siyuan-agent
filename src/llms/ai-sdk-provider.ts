@@ -8,6 +8,30 @@ export interface CreateModelOptions {
     reasoningEffort?: ReasoningEffort;
 }
 
+function createAnthropicFetch(options: CreateModelOptions): typeof fetch | undefined {
+    if (options.reasoningEffort !== "off") return undefined;
+    return async (input, init) => {
+        let nextInit = init;
+        if (typeof init?.body === "string") {
+            try {
+                const body = JSON.parse(init.body);
+                if (body && typeof body === "object" && !Array.isArray(body) && body.thinking === undefined) {
+                    nextInit = {
+                        ...init,
+                        body: JSON.stringify({
+                            ...body,
+                            thinking: { type: "disabled" },
+                        }),
+                    };
+                }
+            } catch {
+                /* Leave non-JSON request bodies untouched. */
+            }
+        }
+        return fetch(input, nextInit);
+    };
+}
+
 export function createModel(
     config: ModelConfig,
     options: CreateModelOptions = {},
@@ -26,17 +50,18 @@ export function createModel(
         const anthropic = createAnthropic({
             apiKey: config.apiKey,
             baseURL: config.apiBaseURL || undefined,
+            fetch: createAnthropicFetch({ reasoningEffort: effort }),
         });
         return anthropic(config.model);
     }
 
-    // OpenAI-compatible (default)
+    // OpenAI-compatible gateways commonly implement /chat/completions but not /responses.
     const openai = createOpenAI({
         apiKey: config.apiKey,
         baseURL: config.apiBaseURL,
         compatibility: "compatible",
     });
-    return openai(config.model);
+    return openai.chat(config.model);
 }
 
 // Build providerOptions for reasoning/thinking support
@@ -62,7 +87,7 @@ export function buildProviderOptions(
         const budget = reasoningEffort === "high" ? 100000 : 10000;
         return {
             anthropic: {
-                thinking: { type: "enabled", budget_tokens: budget },
+                thinking: { type: "enabled", budgetTokens: budget },
             },
         };
     }
