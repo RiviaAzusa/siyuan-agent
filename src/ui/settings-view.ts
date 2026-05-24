@@ -5,6 +5,7 @@ import { Plugin, showMessage } from "siyuan";
 import {
 	AgentConfig,
 	ANTHROPIC_API_BASE_URL,
+	BUILTIN_MODEL_SERVICES,
 	DEEPSEEK_API_BASE_URL,
 	DEFAULT_CONFIG,
 	cloneModelServices,
@@ -420,6 +421,7 @@ export class SettingsView {
 							<option value="openai-compatible"${providerType === "openai-compatible" ? " selected" : ""}>OpenAI Compatible</option>
 							<option value="deepseek"${providerType === "deepseek" ? " selected" : ""}>DeepSeek</option>
 							<option value="anthropic"${providerType === "anthropic" ? " selected" : ""}>Anthropic</option>
+							${BUILTIN_MODEL_SERVICES.map((p) => `<option value="preset:${p.id}"${providerType === p.providerType && service?.apiBaseURL === p.apiBaseURL ? " selected" : ""}>${escapeHtml(p.name)}</option>`).join("")}
 						</select>
 					</label>
 					<label class="settings-panel__field">
@@ -583,7 +585,14 @@ export class SettingsView {
 				if (!form || select.dataset.isNew !== "true") return;
 				const nameField = form.querySelector<HTMLInputElement>("[data-field='name']");
 				const baseUrlField = form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']");
-				if (select.value === "deepseek") {
+				const presetId = select.value.startsWith("preset:") ? select.value.slice(7) : "";
+				const preset = presetId ? BUILTIN_MODEL_SERVICES.find((p) => p.id === presetId) : null;
+				if (preset) {
+					if (nameField && !nameField.value.trim()) nameField.value = preset.name;
+					if (baseUrlField && (!baseUrlField.value.trim() || baseUrlField.value.trim() === DEFAULT_CONFIG.apiBaseURL)) {
+						baseUrlField.value = preset.apiBaseURL;
+					}
+				} else if (select.value === "deepseek") {
 					if (nameField && !nameField.value.trim()) nameField.value = "DeepSeek";
 					if (baseUrlField && (!baseUrlField.value.trim() || baseUrlField.value.trim() === DEFAULT_CONFIG.apiBaseURL)) {
 						baseUrlField.value = DEEPSEEK_API_BASE_URL;
@@ -626,12 +635,14 @@ export class SettingsView {
 		const serviceId = form.dataset.serviceId || "";
 		const existing = this.draft.modelServices.find((item) => item.id === serviceId) || null;
 		const rawProvider = form.querySelector<HTMLSelectElement>("[data-field='providerType']")?.value || "openai-compatible";
-		const providerType: ModelProviderType = rawProvider === "deepseek" || rawProvider === "anthropic" ? rawProvider : "openai-compatible";
+		const presetId = rawProvider.startsWith("preset:") ? rawProvider.slice(7) : "";
+		const preset = presetId ? BUILTIN_MODEL_SERVICES.find((p) => p.id === presetId) : null;
+		const providerType: ModelProviderType = preset ? preset.providerType : rawProvider === "deepseek" || rawProvider === "anthropic" ? rawProvider : "openai-compatible";
 		const nextService: ModelServiceConfig = {
 			id: existing?.id || genModelServiceId(),
-			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || (providerType === "deepseek" ? "DeepSeek" : providerType === "anthropic" ? "Anthropic" : "Unnamed Service"),
-			providerType: providerType as ModelProviderType,
-			apiBaseURL: form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']")?.value.trim() || (providerType === "deepseek" ? DEEPSEEK_API_BASE_URL : providerType === "anthropic" ? ANTHROPIC_API_BASE_URL : DEFAULT_CONFIG.apiBaseURL),
+			name: form.querySelector<HTMLInputElement>("[data-field='name']")?.value.trim() || preset?.name || (providerType === "deepseek" ? "DeepSeek" : providerType === "anthropic" ? "Anthropic" : "Unnamed Service"),
+			providerType,
+			apiBaseURL: form.querySelector<HTMLInputElement>("[data-field='apiBaseURL']")?.value.trim() || preset?.apiBaseURL || (providerType === "deepseek" ? DEEPSEEK_API_BASE_URL : providerType === "anthropic" ? ANTHROPIC_API_BASE_URL : DEFAULT_CONFIG.apiBaseURL),
 			apiKey: form.querySelector<HTMLInputElement>("[data-field='apiKey']")?.value.trim() || "",
 			models: existing?.models.map((item) => ({ ...item })) || [],
 		};
@@ -643,17 +654,20 @@ export class SettingsView {
 			showMessage(this.t("settings.editor.apiBaseRequired"));
 			return;
 		}
-		if (!existing && nextService.providerType === "deepseek" && nextService.models.length === 0) {
-			nextService.models = [
-				{ id: genModelId(), name: "DeepSeek V4 Pro", model: "deepseek-v4-pro" },
-				{ id: genModelId(), name: "DeepSeek V4 Flash", model: "deepseek-v4-flash" },
-			];
-		}
-		if (!existing && nextService.providerType === "anthropic" && nextService.models.length === 0) {
-			nextService.models = [
-				{ id: genModelId(), name: "Claude Sonnet 4", model: "claude-sonnet-4-20250514" },
-				{ id: genModelId(), name: "Claude Haiku 3.5", model: "claude-3-5-haiku-20241022" },
-			];
+		if (!existing && nextService.models.length === 0) {
+			if (preset) {
+				nextService.models = preset.models.map((m) => ({ ...m, id: genModelId() }));
+			} else if (nextService.providerType === "deepseek") {
+				nextService.models = [
+					{ id: genModelId(), name: "DeepSeek V4 Pro", model: "deepseek-v4-pro" },
+					{ id: genModelId(), name: "DeepSeek V4 Flash", model: "deepseek-v4-flash" },
+				];
+			} else if (nextService.providerType === "anthropic") {
+				nextService.models = [
+					{ id: genModelId(), name: "Claude Sonnet 4", model: "claude-sonnet-4-20250514" },
+					{ id: genModelId(), name: "Claude Haiku 3.5", model: "claude-3-5-haiku-20241022" },
+				];
+			}
 		}
 		const existingIndex = this.draft.modelServices.findIndex((item) => item.id === nextService.id);
 		if (existingIndex >= 0) {

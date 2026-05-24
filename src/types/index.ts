@@ -8,6 +8,7 @@ export {
 	type AgentConfig,
 	DEEPSEEK_API_BASE_URL,
 	ANTHROPIC_API_BASE_URL,
+	BUILTIN_MODEL_SERVICES,
 	DEFAULT_CONFIG,
 	cloneModelServices,
 	normalizeAgentConfig,

@@ -101,6 +101,51 @@ export const DEFAULT_CONFIG: AgentConfig = {
 	subAgentModelId: "",
 };
 
+export const BUILTIN_MODEL_SERVICES: ModelServiceConfig[] = [
+	{
+		id: "builtin_zhipuai_anthropic",
+		name: "ZhipuAI Anthropic",
+		providerType: "anthropic",
+		apiBaseURL: "https://open.bigmodel.cn/api/anthropic/v1",
+		apiKey: "",
+		models: [
+			{ id: "builtin_glm_47", name: "GLM-4.7", model: "glm-4.7" },
+		],
+	},
+	{
+		id: "builtin_mimo",
+		name: "Mimo",
+		providerType: "anthropic",
+		apiBaseURL: "https://token-plan-cn.xiaomimimo.com/anthropic/v1",
+		apiKey: "",
+		models: [
+			{ id: "builtin_mimo_v25", name: "Mimo v2.5", model: "mimo-v2.5" },
+			{ id: "builtin_mimo_v25_pro", name: "Mimo v2.5 Pro", model: "mimo-v2.5-pro" },
+		],
+	},
+	{
+		id: "builtin_kimi",
+		name: "Kimi",
+		providerType: "anthropic",
+		apiBaseURL: "https://api.moonshot.cn/anthropic/v1",
+		apiKey: "",
+		models: [
+			{ id: "builtin_kimi_k26", name: "Kimi K2.6", model: "kimi-k2.6" },
+			{ id: "builtin_kimi_k25", name: "Kimi K2.5", model: "kimi-k2.5" },
+		],
+	},
+	{
+		id: "builtin_minimax",
+		name: "MiniMax",
+		providerType: "anthropic",
+		apiBaseURL: "https://api.minimaxi.com/anthropic/v1",
+		apiKey: "",
+		models: [
+			{ id: "builtin_minimax_m27", name: "MiniMax M2.7", model: "MiniMax-M2.7" },
+		],
+	},
+];
+
 /* ── Config helpers ──────────────────────────────────────────────────── */
 
 function cloneLegacyModels(models?: ModelConfig[]): ModelConfig[] {
@@ -166,10 +211,11 @@ export function normalizeAgentConfig(raw?: Partial<AgentConfig> | null): AgentCo
 	const modelServices = hasModelServices
 		? cloneModelServices(raw?.modelServices)
 		: migrateLegacyModels(raw?.models);
+	const finalServices = modelServices.length > 0 ? modelServices : cloneModelServices(BUILTIN_MODEL_SERVICES);
 	return {
 		...DEFAULT_CONFIG,
 		...(raw || {}),
-		modelServices,
+		modelServices: finalServices,
 		models: [],
 	};
 }

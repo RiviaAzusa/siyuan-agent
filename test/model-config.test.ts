@@ -40,13 +40,11 @@ function makeService(overrides: Partial<ModelServiceConfig> = {}): ModelServiceC
 }
 
 describe("resolveModelConfig", () => {
-	it("returns legacy fallback when no models configured", () => {
+	it("falls back to first built-in model when no user models configured", () => {
 		const config = makeConfig({ apiBaseURL: "https://api.example.com/v1", apiKey: "key", model: "gpt-4o" });
 		const result = resolveModelConfig(config);
-		expect(result.id).toBe("__legacy__");
-		expect(result.model).toBe("gpt-4o");
-		expect(result.apiKey).toBe("key");
-		expect(result.apiBaseURL).toBe("https://api.example.com/v1");
+		expect(result.id).toBe("builtin_glm_47");
+		expect(result.model).toBe("glm-4.7");
 	});
 
 	it("resolves model by ID from registry", () => {
