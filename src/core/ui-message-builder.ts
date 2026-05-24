@@ -8,6 +8,7 @@ import type {
 	UiMessage,
 } from "../types";
 import { isProcessingSummaryUi, isRunChangeSummaryUi, isToolMessageUi } from "../types";
+import { defaultTranslator, type Translator } from "../i18n";
 
 function msgType(m: any): string {
 	if (typeof m?._getType === "function") return m._getType();
@@ -146,65 +147,80 @@ function parseToolResultJson(text: string): any {
 
 type ToolActivityProjection = NonNullable<ToolMessageUi["activity"]>;
 
-function deriveToolActivity(part: any, resultText: string): ToolActivityProjection | undefined {
+function countInputBlocks(value: any): number | undefined {
+	return Array.isArray(value) ? value.length : undefined;
+}
+
+function isToolResultError(resultText: string, explicitError = false): boolean {
+	if (explicitError) return true;
+	const parsed = parseJsonValue(resultText);
+	if (!parsed || typeof parsed !== "object") return false;
+	if (parsed.ok === false || parsed.error) return true;
+	if (Array.isArray(parsed.results) && parsed.results.some((item: any) => item?.status === "error")) return true;
+	const keys = Object.keys(parsed);
+	if (typeof parsed.message === "string" && keys.every((key) => key === "message" || key === "name" || key === "stack")) return true;
+	return false;
+}
+
+function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection | undefined {
 	const toolName = part.toolName || "";
 	const input = part.input || {};
+	const resultText = typeof part.resultText === "string" ? part.resultText : "";
 	const parsed = parseJsonValue(resultText);
 	if (toolName === "list_notebooks" && Array.isArray(parsed)) {
-		return { category: "lookup", action: "list", label: "笔记本", meta: `已列出 ${parsed.length} 个笔记本` };
+		return { category: "lookup", action: "list", label: i18n.t("tool.listNotebooks.label"), meta: i18n.t("tool.listNotebooks.meta", { count: parsed.length }) };
 	}
 	if (toolName === "list_documents") {
 		const count = Array.isArray(parsed?.items) ? parsed.items.length : undefined;
-		return { category: "lookup", action: "list", path: parsed?.path, label: parsed?.path || input.path || "文档", meta: count === undefined ? undefined : `已列出 ${count} 篇文档` };
+		return { category: "lookup", action: "list", path: parsed?.path, label: parsed?.path || input.path || i18n.t("chat.tool.defaultDocument"), meta: count === undefined ? undefined : i18n.t("tool.listDocuments.meta", { count }) };
 	}
 	if (toolName === "recent_documents") {
 		const count = Array.isArray(parsed?.items) ? parsed.items.length : Array.isArray(parsed) ? parsed.length : undefined;
-		return { category: "lookup", action: "list", label: "最近文档", meta: count === undefined ? undefined : `已浏览 ${count} 篇最近文档` };
+		return { category: "lookup", action: "list", label: i18n.t("tool.recentDocuments.label"), meta: count === undefined ? undefined : i18n.t("tool.recentDocuments.meta", { count }) };
 	}
 	if (toolName === "search_documents" || toolName === "search_fulltext") {
 		const count = Array.isArray(parsed?.items) ? parsed.items.length : Array.isArray(parsed?.blocks) ? parsed.blocks.length : undefined;
-		const label = typeof input.query === "string" ? input.query : typeof input.keyword === "string" ? input.keyword : "搜索";
-		return { category: "lookup", action: "search", label, meta: count === undefined ? undefined : `命中 ${count} 条结果` };
+		const label = typeof input.query === "string" ? input.query : typeof input.keyword === "string" ? input.keyword : i18n.t("chat.action.search");
+		const key = toolName === "search_documents" ? "tool.searchDocuments.meta" : "tool.searchFulltext.meta";
+		return { category: "lookup", action: "search", label, meta: count === undefined ? undefined : i18n.t(key, { count }) };
 	}
 	if (toolName === "get_document" || toolName === "get_document_blocks" || toolName === "get_document_outline" || toolName === "read_block") {
 		const count = Array.isArray(parsed) ? parsed.length : Array.isArray(parsed?.blocks) ? parsed.blocks.length : undefined;
-		return { category: "lookup", action: "read", id: input.id, label: input.id || toolName, meta: count === undefined ? undefined : `读取 ${count} 项`, open: true };
+		return { category: "lookup", action: "read", id: input.id, label: input.id || toolName, meta: count === undefined ? undefined : i18n.t("tool.readItems.meta", { count }), open: true };
 	}
 	if (toolName === "edit_blocks") {
-		const results = Array.isArray(parsed?.results) ? parsed.results : [];
-		const ok = results.filter((item: any) => item?.status !== "error");
-		const first = ok[0] || results[0];
-		return { category: "change", action: "edit", id: first?.rootDocId || input.blocks?.[0]?.id, label: first?.rootDocId || input.blocks?.[0]?.id || toolName, meta: ok.length ? `已编辑 ${ok.length} 项` : undefined, open: true };
+		const count = countInputBlocks(input.blocks);
+		const id = input.blocks?.[0]?.id;
+		return { category: "change", action: "edit", id, label: id || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: true };
 	}
 	if (toolName === "append_block") {
-		const count = countAppendBlocks(parsed);
-		return { category: "change", action: "append", id: input.parentID, label: input.parentID || toolName, meta: count === undefined ? undefined : `已追加 ${count} 个块`, open: true };
+		return { category: "change", action: "append", id: input.parentID, label: input.parentID || toolName, meta: i18n.t("tool.appendBlock.metaSimple"), open: true };
 	}
 	if (toolName === "create_document") {
-		return { category: "change", action: "create", id: parsed?.id, path: parsed?.path || input.path, label: parsed?.path || input.path || parsed?.id || toolName, meta: "已创建文档", open: true };
+		return { category: "change", action: "create", id: input.id, path: input.path, label: input.path || input.id || toolName, meta: i18n.t("tool.createDocument.meta"), open: Boolean(input.id) };
 	}
 	if (toolName === "move_document") {
-		const count = Array.isArray(parsed?.fromIDs) ? parsed.fromIDs.length : Array.isArray(input.fromIDs) ? input.fromIDs.length : undefined;
-		return { category: "change", action: "move", id: (parsed?.fromIDs || input.fromIDs || [])[0], label: (parsed?.fromIDs || input.fromIDs || [])[0] || toolName, meta: parsed?.toID || input.toID ? `目标 ${parsed?.toID || input.toID}` : count ? `已移动 ${count} 项` : undefined };
+		const count = Array.isArray(input.fromIDs) ? input.fromIDs.length : undefined;
+		return { category: "change", action: "move", id: (input.fromIDs || [])[0], label: (input.fromIDs || [])[0] || toolName, meta: input.toID ? i18n.t("tool.moveDocument.meta", { target: input.toID }) : count ? i18n.t("tool.moveDocument.metaCount", { count }) : undefined, open: false };
 	}
 	if (toolName === "rename_document") {
-		return { category: "change", action: "rename", id: parsed?.id || input.id, label: parsed?.title || input.title || parsed?.id || input.id || toolName, meta: "已重命名", open: true };
+		return { category: "change", action: "rename", id: input.id, label: input.title || input.id || toolName, meta: i18n.t("tool.renameDocument.meta"), open: true };
 	}
 	if (toolName === "delete_document") {
-		return { category: "change", action: "delete", id: parsed?.id || input.id, label: parsed?.id || input.id || toolName, meta: "已删除" };
+		return { category: "change", action: "delete", id: input.id, label: input.id || toolName, meta: i18n.t("tool.deleteDocument.meta"), open: false };
 	}
 	if (toolName === "create_scheduled_task") {
-		return { category: "change", action: "create", id: parsed?.id, label: parsed?.title || input.title || toolName, meta: "已创建定时任务" };
+		return { category: "change", action: "create", id: parsed?.id, label: parsed?.title || input.title || toolName, meta: i18n.t("tool.scheduled.create.meta") };
 	}
 	if (toolName === "update_scheduled_task") {
-		return { category: "change", action: "edit", id: parsed?.id || input.taskId, label: parsed?.title || input.title || input.taskId || toolName, meta: "已更新定时任务" };
+		return { category: "change", action: "edit", id: parsed?.id || input.taskId, label: parsed?.title || input.title || input.taskId || toolName, meta: i18n.t("tool.scheduled.update.meta") };
 	}
 	if (toolName === "delete_scheduled_task") {
-		return { category: "change", action: "delete", id: parsed?.taskId || input.taskId, label: parsed?.taskId || input.taskId || toolName, meta: "已删除定时任务" };
+		return { category: "change", action: "delete", id: parsed?.taskId || input.taskId, label: parsed?.taskId || input.taskId || toolName, meta: i18n.t("tool.scheduled.delete.meta") };
 	}
 	if (toolName === "list_scheduled_tasks") {
 		const count = Array.isArray(parsed) ? parsed.length : undefined;
-		return { category: "lookup", action: "list", label: "定时任务", meta: count === undefined ? undefined : `已列出 ${count} 项` };
+		return { category: "lookup", action: "list", label: i18n.t("tool.scheduled.label"), meta: count === undefined ? undefined : i18n.t("tool.scheduled.list.meta", { count }) };
 	}
 	return undefined;
 }
@@ -246,17 +262,7 @@ function resultStatusFromParsed(parsed: any): "ok" | "error" {
 	return "ok";
 }
 
-function countAppendBlocks(parsed: any): number | undefined {
-	if (!Array.isArray(parsed)) return undefined;
-	let count = 0;
-	for (const item of parsed) {
-		const operations = Array.isArray(item?.doOperations) ? item.doOperations : [];
-		count += operations.filter((operation: any) => typeof operation?.id === "string").length;
-	}
-	return count || undefined;
-}
-
-function makeChangeItemFromTool(tool: ToolMessageUi, args: any): RunChangeSummaryItemUi | null {
+function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator): RunChangeSummaryItemUi | null {
 	const action = changeToolActions[tool.toolName];
 	if (!action) return null;
 	const parsed = tool.result ? parseToolResultJson(tool.result) : undefined;
@@ -273,44 +279,40 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any): RunChangeSummar
 	};
 
 	if (tool.toolName === "edit_blocks") {
-		const results = Array.isArray(parsed?.results) ? parsed.results : [];
-		const ok = results.filter((item: any) => item?.status !== "error");
-		const first = ok[0] || results[0];
+		const count = countInputBlocks(args?.blocks);
 		return {
 			...base,
-			label: base.label === tool.toolName ? (first?.rootDocId || args?.blocks?.[0]?.id || tool.toolName) : base.label,
-			id: base.id || first?.rootDocId,
-			meta: base.meta || (ok.length ? String(ok.length) : undefined),
+			label: base.label === tool.toolName ? (args?.blocks?.[0]?.id || tool.toolName) : base.label,
+			id: base.id || args?.blocks?.[0]?.id,
+			meta: base.meta || (count ? i18n.t("tool.editBlocks.meta", { count }) : undefined),
 		};
 	}
 
 	if (tool.toolName === "append_block") {
-		const count = countAppendBlocks(parsed);
 		return {
 			...base,
 			label: base.label === tool.toolName ? (args?.parentID || tool.toolName) : base.label,
 			id: base.id || args?.parentID,
-			added: count,
 		};
 	}
 
 	if (tool.toolName === "create_document") {
 		return {
 			...base,
-			label: base.label === tool.toolName ? (parsed?.path || args?.path || parsed?.id || tool.toolName) : base.label,
-			id: base.id || parsed?.id,
-			path: base.path || parsed?.path || args?.path,
+			label: base.label === tool.toolName ? (args?.path || args?.id || tool.toolName) : base.label,
+			id: base.id || args?.id,
+			path: base.path || args?.path,
 			added: 1,
 		};
 	}
 
 	if (tool.toolName === "move_document") {
-		const moved = Array.isArray(parsed?.fromIDs) ? parsed.fromIDs.length : Array.isArray(args?.fromIDs) ? args.fromIDs.length : undefined;
+		const moved = Array.isArray(args?.fromIDs) ? args.fromIDs.length : undefined;
 		return {
 			...base,
-			label: base.label === tool.toolName ? ((args?.fromIDs || parsed?.fromIDs || [])[0] || tool.toolName) : base.label,
-			id: base.id || (args?.fromIDs || parsed?.fromIDs || [])[0],
-			meta: base.meta || (args?.toID || parsed?.toID ? String(args?.toID || parsed?.toID) : undefined),
+			label: base.label === tool.toolName ? ((args?.fromIDs || [])[0] || tool.toolName) : base.label,
+			id: base.id || (args?.fromIDs || [])[0],
+			meta: base.meta || (args?.toID ? String(args.toID) : undefined),
 			added: moved,
 		};
 	}
@@ -318,16 +320,16 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any): RunChangeSummar
 	if (tool.toolName === "rename_document") {
 		return {
 			...base,
-			label: base.label === tool.toolName ? (args?.title || parsed?.title || args?.id || tool.toolName) : base.label,
-			id: base.id || args?.id || parsed?.id,
+			label: base.label === tool.toolName ? (args?.title || args?.id || tool.toolName) : base.label,
+			id: base.id || args?.id,
 		};
 	}
 
 	if (tool.toolName === "delete_document") {
 		return {
 			...base,
-			label: base.label === tool.toolName ? (args?.id || parsed?.id || tool.toolName) : base.label,
-			id: base.id || args?.id || parsed?.id,
+			label: base.label === tool.toolName ? (args?.id || tool.toolName) : base.label,
+			id: base.id || args?.id,
 			removed: 1,
 		};
 	}
@@ -335,7 +337,7 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any): RunChangeSummar
 	return base;
 }
 
-function buildChangeSummary(turnMessages: UiMessage[]): RunChangeSummaryUi | null {
+function buildChangeSummary(turnMessages: UiMessage[], i18n: Translator): RunChangeSummaryUi | null {
 	const argsByToolCallId = new Map<string, any>();
 	for (const m of turnMessages) {
 		if (isInternalUiMessage(m)) continue;
@@ -348,7 +350,7 @@ function buildChangeSummary(turnMessages: UiMessage[]): RunChangeSummaryUi | nul
 	const items: RunChangeSummaryItemUi[] = [];
 	for (const m of turnMessages) {
 		if (!isToolMessageUi(m)) continue;
-		const item = makeChangeItemFromTool(m, argsByToolCallId.get(m.toolCallId));
+		const item = makeChangeItemFromTool(m, argsByToolCallId.get(m.toolCallId), i18n);
 		if (item) items.push(item);
 	}
 	if (!items.length) return null;
@@ -359,6 +361,7 @@ function collapseTurn(
 	turnMessages: UiMessage[],
 	userMessageIndex: number,
 	runMeta: AgentRunMeta[],
+	i18n: Translator,
 ): UiMessage[] {
 	if (!turnMessages.length) return [];
 	const first = turnMessages[0];
@@ -401,12 +404,12 @@ function collapseTurn(
 		});
 	}
 	collapsed.push(finalTextMessage);
-	const changeSummary = buildChangeSummary(turnMessages);
+	const changeSummary = buildChangeSummary(turnMessages, i18n);
 	if (changeSummary) collapsed.push(changeSummary);
 	return collapsed;
 }
 
-function collapseMessagesByTurn(messages: UiMessage[], runMeta: AgentRunMeta[]): UiMessage[] {
+function collapseMessagesByTurn(messages: UiMessage[], runMeta: AgentRunMeta[], i18n: Translator): UiMessage[] {
 	const result: UiMessage[] = [];
 	let currentTurn: UiMessage[] = [];
 	let userMessageIndex = -1;
@@ -414,7 +417,7 @@ function collapseMessagesByTurn(messages: UiMessage[], runMeta: AgentRunMeta[]):
 
 	const flush = () => {
 		if (!currentTurn.length) return;
-		result.push(...collapseTurn(currentTurn, currentUserIndex, runMeta));
+		result.push(...collapseTurn(currentTurn, currentUserIndex, runMeta, i18n));
 		currentTurn = [];
 	};
 
@@ -443,6 +446,8 @@ export class UiMessageBuilder {
 	private messages: UiMessage[] = [];
 	private pendingToolMessages = new Map<string, ToolMessageUi>();
 	private currentAiIndex: number | null = null;
+
+	constructor(private readonly i18n: Translator = defaultTranslator) {}
 
 	/* ── Human ─────────────────────────────────────────────────────── */
 
@@ -496,9 +501,10 @@ export class UiMessageBuilder {
 	onToolResult(toolCallId: string, error?: boolean, result?: string, part?: any): void {
 		const tmu = this.pendingToolMessages.get(toolCallId);
 		if (tmu) {
-			tmu.status = error ? "error" : "done";
+			const hasError = part?.toolName === "call_error" || isToolResultError(result || "", Boolean(error));
+			tmu.status = hasError ? "error" : "done";
 			if (result !== undefined) tmu.result = result;
-			if (!error && part && result !== undefined) tmu.activity = deriveToolActivity(part, result);
+			if (part) tmu.activity = deriveToolActivity({ ...part, resultText: result }, this.i18n);
 			tmu.finishedAt = Date.now();
 			this.pendingToolMessages.delete(toolCallId);
 		}
@@ -573,8 +579,9 @@ export class UiMessageBuilder {
  */
 export function buildMessagesViewFromParts(
 	messages: any[],
+	i18n: Translator = defaultTranslator,
 ): UiMessage[] {
-	const builder = new UiMessageBuilder();
+	const builder = new UiMessageBuilder(i18n);
 	const toolCallsById = new Map<string, any>();
 
 	for (const msg of messages || []) {
@@ -622,8 +629,8 @@ export function buildMessagesViewFromParts(
  * Build render-only message history from an AgentState.
  *
  */
-export function buildMessagesView(state: AgentState | undefined | null): UiMessage[] {
+export function buildMessagesView(state: AgentState | undefined | null, i18n: Translator = defaultTranslator): UiMessage[] {
 	const messages = Array.isArray(state?.messages) ? state!.messages : [];
 	const runMeta = Array.isArray(state?.runMeta) ? state!.runMeta : [];
-	return collapseMessagesByTurn(buildMessagesViewFromParts(messages), runMeta);
+	return collapseMessagesByTurn(buildMessagesViewFromParts(messages, i18n), runMeta, i18n);
 }

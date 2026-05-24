@@ -126,6 +126,10 @@
 	background: color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 78%, white 22%);
 }
 
+.chat-msg__tool[data-tool-status="error"] .chat-msg__tool-dot {
+	background: var(--b3-card-error-color, #e53935);
+}
+
 .chat-msg__doc-meta {
 	margin-left: 2px;
 	font-size: 11px;

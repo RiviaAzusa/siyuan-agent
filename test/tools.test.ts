@@ -94,6 +94,18 @@ describe("tool definitions", () => {
 		expect(names).toContain("update_scheduled_task");
 		expect(names).toContain("delete_scheduled_task");
 	});
+
+	it("default tools include call_error for debug failure rendering", async () => {
+		const tools = getDefaultTools(() => ({
+			apiBaseURL: "https://example.com/v1",
+			apiKey: "key",
+			model: "model",
+			customInstructions: "",
+		}));
+		const callError = tools.find(t => t.name === "call_error");
+		expect(callError).toBeDefined();
+		await expect((callError as any).execute({ message: "debug boom" }, {})).rejects.toThrow("debug boom");
+	});
 });
 
 describe("SQL escape in tool definitions", () => {

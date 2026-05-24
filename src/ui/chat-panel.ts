@@ -155,6 +155,54 @@ export class ChatPanel {
 		return trimmed;
 	}
 
+	private isToolResultError(result: string, toolName?: string): boolean {
+		if (toolName === "call_error") return true;
+		const trimmed = result?.trim?.() || "";
+		if (!trimmed) return false;
+		try {
+			const parsed = JSON.parse(trimmed);
+			if (parsed && typeof parsed === "object") {
+				if (parsed.ok === false || parsed.error) return true;
+				if (Array.isArray(parsed.results) && parsed.results.some((item: any) => item?.status === "error")) return true;
+				const keys = Object.keys(parsed);
+				if (typeof parsed.message === "string" && keys.every((key) => key === "message" || key === "name" || key === "stack")) return true;
+			}
+		} catch {
+			/* Plain text tool result. */
+		}
+		return /^(Error|ToolError):/i.test(trimmed) || /^\[(MCP Error|MCP tool error:)/i.test(trimmed);
+	}
+
+	private getFriendlyToolActivity(
+		toolName: string,
+		input: any,
+	): { id?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
+		const args = input && typeof input === "object" ? input : {};
+		if (toolName === "edit_blocks") {
+			const count = Array.isArray(args.blocks) ? args.blocks.length : undefined;
+			const id = args.blocks?.[0]?.id;
+			return { category: "change", action: "edit", id, label: id || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
+		}
+		if (toolName === "append_block") {
+			return { category: "change", action: "append", id: args.parentID, label: args.parentID || toolName, meta: this.t("tool.appendBlock.metaSimple"), open: true };
+		}
+		if (toolName === "create_document") {
+			return { category: "change", action: "create", id: args.id, path: args.path, label: args.path || args.id || toolName, meta: this.t("tool.createDocument.meta"), open: Boolean(args.id) };
+		}
+		if (toolName === "move_document") {
+			const count = Array.isArray(args.fromIDs) ? args.fromIDs.length : undefined;
+			const id = args.fromIDs?.[0];
+			return { category: "change", action: "move", id, label: id || toolName, meta: args.toID ? this.t("tool.moveDocument.meta", { target: args.toID }) : count ? this.t("tool.moveDocument.metaCount", { count }) : undefined, open: false };
+		}
+		if (toolName === "rename_document") {
+			return { category: "change", action: "rename", id: args.id, label: args.title || args.id || toolName, meta: this.t("tool.renameDocument.meta"), open: true };
+		}
+		if (toolName === "delete_document") {
+			return { category: "change", action: "delete", id: args.id, label: args.id || toolName, meta: this.t("tool.deleteDocument.meta"), open: false };
+		}
+		return null;
+	}
+
 	private render(): void {
 		this.container.innerHTML = `
 <div class="chat-panel fn__flex-column" style="height:100%">
@@ -592,7 +640,7 @@ export class ChatPanel {
 		if (!s.state) s.state = {};
 
 		this.messagesEl.innerHTML = "";
-		const viewMessages: UiMessage[] = buildMessagesView(s.state);
+		const viewMessages: UiMessage[] = buildMessagesView(s.state, this.i18n);
 		if (viewMessages.length === 0) {
 			this.renderWelcomeScreen();
 		} else {
@@ -843,13 +891,23 @@ export class ChatPanel {
 						closeReasoningBlock();
 						removePending();
 						curTextEl = null;
+						const activity = this.getFriendlyToolActivity(event.toolName, event.args);
 						const el = this.createToolCallElement(
 							event.toolName,
-							event.args,
+							activity ? undefined : event.args,
 							event.toolCallIndex,
 							event.toolCallId,
 						);
 						this.attachToolElementToShell(shell, el);
+						if (activity) {
+							const details = el.querySelector("details");
+							if (details) {
+								el.dataset.hasEvents = "true";
+								el.dataset.toolCategory = activity.category || el.dataset.toolCategory || "change";
+								el.dataset.toolAction = activity.action || el.dataset.toolAction || "other";
+								this.renderToolActivitySummary(el, details, event.toolName, activity);
+							}
+						}
 						pendingToolEls.push(el);
 						this.scrollToBottom();
 						return;
@@ -858,7 +916,10 @@ export class ChatPanel {
 					if (event.type === "tool_result") {
 						const toolEl = this.findPendingToolElement(event.toolCallId || "", pendingToolEls);
 						if (toolEl) {
-							this.appendToolResultToElement(toolEl, event.result);
+							if (this.isToolResultError(event.result, event.toolName || toolEl.dataset.toolName)) {
+								toolEl.dataset.toolStatus = "error";
+								this.appendToolResultToElement(toolEl, event.result, true);
+							}
 							this.finalizeToolElement(toolEl);
 						}
 						curTextEl = null;
@@ -1109,7 +1170,7 @@ export class ChatPanel {
 	}
 
 	private renderConversationMessages(messages: any[], targetEl?: HTMLElement): void {
-		this.renderConversationMessagesUi(buildMessagesView({ messages }), targetEl);
+		this.renderConversationMessagesUi(buildMessagesView({ messages }, this.i18n), targetEl);
 	}
 
 	/**
@@ -1184,7 +1245,7 @@ export class ChatPanel {
 					currentListEl.appendChild(currentAssistantShell.el);
 				}
 				const args = toolCallArgsMap.get(m.toolCallId);
-				const toolEl = this.createToolCallElement(m.toolName, args, undefined, m.toolCallId);
+				const toolEl = this.createToolCallElement(m.toolName, m.activity ? undefined : args, undefined, m.toolCallId);
 				this.attachToolElementToShell(currentAssistantShell, toolEl);
 				if (m.activity) {
 					const details = toolEl.querySelector("details");
@@ -1204,8 +1265,9 @@ export class ChatPanel {
 						);
 					}
 				}
-				if (m.result) {
-					this.appendToolResultToElement(toolEl, m.result, !m.activity);
+				if (m.result && m.status === "error") {
+					if (m.status === "error") toolEl.dataset.toolStatus = "error";
+					this.appendToolResultToElement(toolEl, m.result, true);
 				}
 				if (m.status === "done" || m.status === "error") {
 					this.finalizeToolElement(toolEl);
@@ -1689,7 +1751,7 @@ export class ChatPanel {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
 
-		// Skip raw result if the tool already has rich UI events
+		// Skip raw result if the tool already has a render-only activity summary.
 		if (!force && toolEl.dataset.hasEvents === "true") return;
 
 		// Skip empty or whitespace-only results
@@ -1703,7 +1765,7 @@ export class ChatPanel {
 	}
 
 	private finalizeToolElement(toolEl: HTMLElement): void {
-		if (toolEl.dataset.toolStatus === "done")
+		if (toolEl.dataset.toolStatus === "done" || toolEl.dataset.toolStatus === "error")
 			return;
 		toolEl.dataset.toolStatus = "done";
 		const details = toolEl.querySelector("details");

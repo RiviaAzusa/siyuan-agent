@@ -177,7 +177,7 @@ export class TasksView {
 		/* Execution history: split into run groups */
 		const messages = normalizeMessagesForDisplay(selected.state?.messages || []);
 		const runMeta = Array.isArray(selected.state?.runMeta) ? selected.state.runMeta : [];
-		const runGroups = groupTaskRuns(messages, runMeta);
+		const runGroups = groupTaskRuns(messages, runMeta, this.i18n);
 		const historyHtml = this.renderRunGroupsHtml(runGroups);
 
 		/* Build detail view */

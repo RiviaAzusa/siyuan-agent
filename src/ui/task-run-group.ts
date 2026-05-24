@@ -1,5 +1,6 @@
 import type { AgentRunMeta, UiMessage } from "../types";
 import { buildMessagesView } from "../core/ui-message-builder";
+import { defaultTranslator, type Translator } from "../i18n";
 
 /**
  * Represents a single execution run within a scheduled task session.
@@ -93,7 +94,7 @@ function inferRunStatus(messages: any[]): "success" | "error" | "unknown" {
  * Each run starts with a human message whose content begins with a scheduled task run prefix.
  * If no such messages are found (legacy data), all messages are returned as a single group.
  */
-export function groupTaskRuns(messages: any[], runMeta?: AgentRunMeta[]): TaskRunGroup[] {
+export function groupTaskRuns(messages: any[], runMeta?: AgentRunMeta[], i18n: Translator = defaultTranslator): TaskRunGroup[] {
 	if (!messages || messages.length === 0) return [];
 	const allRunMeta = Array.isArray(runMeta) ? runMeta : [];
 
@@ -111,7 +112,7 @@ export function groupTaskRuns(messages: any[], runMeta?: AgentRunMeta[]): TaskRu
 			startIndex: 0,
 			endIndex: messages.length - 1,
 			messages,
-			viewMessages: buildMessagesView({ messages, runMeta: allRunMeta }),
+			viewMessages: buildMessagesView({ messages, runMeta: allRunMeta }, i18n),
 			runMeta: allRunMeta,
 			status: inferRunStatus(messages),
 		}];
@@ -138,7 +139,7 @@ export function groupTaskRuns(messages: any[], runMeta?: AgentRunMeta[]): TaskRu
 		const viewMessages = buildMessagesView({
 			messages: runMessages,
 			runMeta: runMetaForView,
-		});
+		}, i18n);
 
 		groups.push({
 			startIndex: start,

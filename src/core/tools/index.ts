@@ -10,6 +10,7 @@ import { createGetDocumentTool, createGetDocumentBlocksTool, createGetDocumentOu
 import { createEditBlocksTool, createAppendBlockTool, createCreateDocumentTool, createMoveDocumentTool, createRenameDocumentTool } from "./edit-tools";
 import { writeTodosTool } from "./plan-tools";
 import { createScheduledTaskTools } from "./scheduled-tools";
+import { callErrorTool } from "./debug-tools";
 
 export { deleteDocumentTool } from "./edit-tools";
 export { siyuanFetch, sqlEscape } from "./siyuan-api";
@@ -79,6 +80,7 @@ export function getDefaultTools(
 		scheduledTaskTools.listScheduledTasksTool,
 		scheduledTaskTools.updateScheduledTaskTool,
 		scheduledTaskTools.deleteScheduledTaskTool,
+		callErrorTool,
 		// deleteDocumentTool is intentionally excluded for safety
 	];
 	return defaultTools;

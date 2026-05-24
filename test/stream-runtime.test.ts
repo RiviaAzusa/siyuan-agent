@@ -401,8 +401,121 @@ describe("buildMessagesView", () => {
 		expect(summary).toMatchObject({
 			type: "run_change_summary_ui",
 			total: 1,
-			items: [{ action: "edit", toolName: "edit_blocks", id: "doc1", status: "ok" }],
+			items: [{ action: "edit", toolName: "edit_blocks", id: "b1", status: "ok" }],
 		});
+	});
+
+	it("derives change tool display from tool-call input instead of successful tool result", () => {
+		const state = {
+			messages: [
+				{ role: "user", content: "create doc" },
+				{
+					role: "assistant",
+					content: [{
+						type: "tool-call",
+						toolCallId: "call-1",
+						toolName: "create_document",
+						input: {
+							notebook: "20260212103518-btwmq6l",
+							path: "/Test/AI工具测试文档",
+							markdown: "# AI 工具测试文档",
+						},
+					}],
+				},
+				{
+					role: "tool",
+					content: [{
+						type: "tool-result",
+						toolCallId: "call-1",
+						toolName: "create_document",
+						output: { type: "text", value: JSON.stringify({ id: "result-doc", notebook: "nb", path: "/Wrong/Path" }) },
+					}],
+				},
+				{ role: "assistant", content: [{ type: "text", text: "done" }] },
+			],
+		};
+
+		const processing = buildMessagesView(state).find((m: any) => m.type === "processing_summary_ui") as any;
+		const tool = processing.details.find((m: any) => m.type === "tool_message_ui");
+		expect(tool).toMatchObject({
+			toolName: "create_document",
+			status: "done",
+			activity: {
+				category: "change",
+				action: "create",
+				label: "/Test/AI工具测试文档",
+				path: "/Test/AI工具测试文档",
+				meta: "Created document",
+				open: false,
+			},
+		});
+		expect(tool.activity.id).toBeUndefined();
+	});
+
+	it("uses edit_blocks input for the friendly activity and keeps failed result text", () => {
+		const state = {
+			messages: [
+				{ role: "user", content: "edit todo" },
+				{
+					role: "assistant",
+					content: [{
+						type: "tool-call",
+						toolCallId: "call-1",
+						toolName: "edit_blocks",
+						input: {
+							blocks: [{
+								id: "20260524230326-dx2xwl8",
+								content: "- [x] 完成 CRUD 功能测试\n- [ ] 编写测试报告",
+							}],
+						},
+					}],
+				},
+				{
+					role: "tool",
+					content: [{
+						type: "tool-result",
+						toolCallId: "call-1",
+						toolName: "edit_blocks",
+						output: { type: "text", value: JSON.stringify({ results: [{ status: "error", error: "boom", rootDocId: "ignored-doc" }] }) },
+					}],
+				},
+				{ role: "assistant", content: [{ type: "text", text: "failed" }] },
+			],
+		};
+
+		const processing = buildMessagesView(state).find((m: any) => m.type === "processing_summary_ui") as any;
+		const tool = processing.details.find((m: any) => m.type === "tool_message_ui");
+		expect(tool).toMatchObject({
+			toolName: "edit_blocks",
+			status: "error",
+			activity: {
+				category: "change",
+				action: "edit",
+				id: "20260524230326-dx2xwl8",
+				label: "20260524230326-dx2xwl8",
+				meta: "Edited 1 block(s)",
+			},
+		});
+		expect(tool.result).toContain("boom");
+	});
+
+	it("marks call_error tool results as failed when the result is a plain error object", () => {
+		const state = {
+			messages: [
+				{ role: "user", content: "test error" },
+				{ role: "assistant", content: [{ type: "tool-call", toolCallId: "call-1", toolName: "call_error", input: { message: "debug boom" } }] },
+				{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-1", toolName: "call_error", output: { type: "text", value: JSON.stringify({ message: "debug boom" }) } }] },
+				{ role: "assistant", content: [{ type: "text", text: "failed" }] },
+			],
+		};
+
+		const processing = buildMessagesView(state).find((m: any) => m.type === "processing_summary_ui") as any;
+		const tool = processing.details.find((m: any) => m.type === "tool_message_ui");
+		expect(tool).toMatchObject({
+			toolName: "call_error",
+			status: "error",
+		});
+		expect(tool.result).toContain("debug boom");
 	});
 
 });
