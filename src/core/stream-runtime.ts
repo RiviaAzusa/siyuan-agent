@@ -1,5 +1,5 @@
 import { streamText } from "ai";
-import type { CoreMessage } from "ai";
+import type { ModelMessage } from "ai";
 import type {
 	AgentState,
 	AgentStreamUiEvent,
@@ -8,9 +8,7 @@ import type {
 	TodoList,
 	ToolUIEvent,
 	ToolUIEventPayload,
-	UiMessage,
 } from "../types";
-import { UiMessageBuilder, ensureMessagesUi } from "./ui-message-builder";
 import type { ToolContext } from "./tool-types";
 import type { AgentSetup } from "./agent";
 
@@ -110,7 +108,6 @@ function createParserState(inputState: AgentState, existingToolUIEvents: ToolUIE
 		inputState: {
 			...inputState,
 			messages: Array.isArray(inputState.messages) ? [...inputState.messages] : inputState.messages,
-			messagesUi: Array.isArray(inputState.messagesUi) ? [...inputState.messagesUi] : inputState.messagesUi,
 			compaction: inputState.compaction ? { ...inputState.compaction } : inputState.compaction,
 			todos: inputState.todos ? { ...inputState.todos, items: [...inputState.todos.items] } : inputState.todos,
 			toolUIEvents: Array.isArray(inputState.toolUIEvents) ? [...inputState.toolUIEvents] : inputState.toolUIEvents,
@@ -139,34 +136,203 @@ function convertLcMessage(raw: Record<string, any>): Record<string, any> {
 		case "AIMessageChunk":
 			return {
 				role: "assistant",
-				content: kwargs.content ?? "",
-				...(kwargs.additional_kwargs?.reasoning_content ? { reasoning: kwargs.additional_kwargs.reasoning_content } : {}),
-				...(Array.isArray(kwargs.tool_calls) && kwargs.tool_calls.length ? { toolCalls: kwargs.tool_calls } : {}),
+				content: [
+					...(kwargs.additional_kwargs?.reasoning_content ? [{ type: "reasoning", text: kwargs.additional_kwargs.reasoning_content }] : []),
+					...(kwargs.content ? [{ type: "text", text: kwargs.content }] : []),
+					...(Array.isArray(kwargs.tool_calls) ? kwargs.tool_calls.map((tc: any) => ({
+						type: "tool-call",
+						toolCallId: tc.id ?? tc.tool_call_id ?? tc.toolCallId ?? "",
+						toolName: tc.name ?? tc.toolName ?? "",
+						input: tc.args ?? tc.input ?? {},
+					})) : []),
+				],
 				...(kwargs.usage_metadata ? { usage: kwargs.usage_metadata } : {}),
 			};
 		case "SystemMessage":
 			return { role: "system", content: kwargs.content ?? "" };
-		case "ToolMessage":
-			return { role: "tool", toolCallId: kwargs.tool_call_id ?? "", toolName: kwargs.name ?? "", result: kwargs.content ?? "" };
+		case "ToolMessage": {
+			return {
+				role: "tool",
+				content: [{
+					type: "tool-result",
+					toolCallId: kwargs.tool_call_id ?? kwargs.toolCallId ?? "",
+					toolName: kwargs.name ?? kwargs.toolName ?? "",
+					output: kwargs.content ?? "",
+				}],
+			};
+		}
 		default:
 			return { role: "user", content: JSON.stringify(raw) };
 	}
 }
 
-function normalizeToSimple(m: any): Record<string, any> {
+function normalizeToCanonical(m: any): Record<string, any> {
 	if (m?.lc === 1 && m.type === "constructor" && Array.isArray(m.id)) return convertLcMessage(m);
-	if (typeof m?.role === "string") return m;
+	if (typeof m?.role === "string") return normalizeModelMessage(m);
 	if (typeof m?.type === "string" && m.content !== undefined) {
 		const role = m.type === "human" ? "user" : m.type === "ai" ? "assistant" : m.type;
-		return { role, content: m.content, ...m };
+		return normalizeModelMessage({ ...m, role, content: m.content });
 	}
 	return { role: "user", content: JSON.stringify(m) };
+}
+
+function stringifyContentPart(part: any): string {
+	if (typeof part?.text === "string") return part.text;
+	if (typeof part?.value === "string") return part.value;
+	if (typeof part === "string") return part;
+	return "";
+}
+
+function getToolCallInput(part: any): unknown {
+	return part?.input ?? part?.args ?? {};
+}
+
+function normalizeToolOutput(output: any): unknown {
+	if (output && typeof output === "object" && typeof output.type === "string") {
+		return output;
+	}
+	if (typeof output === "string") {
+		return { type: "text", value: output };
+	}
+	return { type: "json", value: output ?? null };
+}
+
+function normalizeModelMessage(m: any): Record<string, any> {
+	if (m.role === "assistant") {
+		const content = Array.isArray(m.content) ? m.content : [
+			...(m.reasoning ? [{ type: "reasoning", text: m.reasoning }] : []),
+			...(m.content ? [{ type: "text", text: String(m.content) }] : []),
+			...(Array.isArray(m.toolCalls) ? m.toolCalls.map((tc: any) => ({
+				type: "tool-call",
+				toolCallId: tc.id ?? tc.toolCallId ?? tc.tool_call_id ?? "",
+				toolName: tc.name ?? tc.toolName ?? "",
+				input: tc.args ?? tc.input ?? {},
+			})) : []),
+		];
+		return {
+			role: "assistant",
+			content: content.map((part: any) => {
+				if (part?.type === "text") return { ...part, text: stringifyContentPart(part) };
+				if (part?.type === "reasoning") return { ...part, text: stringifyContentPart(part) };
+				if (part?.type === "tool-call") {
+					return {
+						...part,
+						toolCallId: part.toolCallId ?? part.id ?? "",
+						toolName: part.toolName ?? part.name ?? "",
+						input: getToolCallInput(part),
+					};
+				}
+				if (part?.type === "tool-result" || part?.type === "tool-error") {
+					return {
+						...part,
+						toolCallId: part.toolCallId ?? "",
+						toolName: part.toolName ?? "",
+						...(part.input !== undefined || part.args !== undefined ? { input: getToolCallInput(part) } : {}),
+						...(part.output !== undefined ? { output: normalizeToolOutput(part.output) } : {}),
+					};
+				}
+				return part;
+			}),
+		};
+	}
+	if (m.role === "tool") {
+		const content = Array.isArray(m.content)
+			? m.content
+			: [{
+				type: "tool-result",
+				toolCallId: m.toolCallId ?? m.tool_call_id ?? "",
+				toolName: m.toolName ?? m.name ?? "",
+				output: normalizeToolOutput(m.result ?? m.content ?? ""),
+			}];
+		return {
+			role: "tool",
+			content: content.map((part: any) => ({
+				...part,
+				type: part?.type ?? "tool-result",
+				toolCallId: part?.toolCallId ?? m.toolCallId ?? m.tool_call_id ?? "",
+				toolName: part?.toolName ?? m.toolName ?? m.name ?? "",
+				...(part?.input !== undefined || part?.args !== undefined ? { input: getToolCallInput(part) } : {}),
+				output: normalizeToolOutput(part?.output ?? part?.result ?? ""),
+			})),
+		};
+	}
+	return m;
+}
+
+function toStoredMessages(messages: ModelMessage[]): Record<string, any>[] {
+	return messages.map((m) => normalizeModelMessage(m));
+}
+
+function toModelMessages(msgs: Record<string, any>[]): ModelMessage[] {
+	return msgs.map((m) => {
+		if (m.role === "assistant") {
+			return normalizeModelMessage(m) as ModelMessage;
+		}
+		if (m.role === "tool") {
+			return normalizeModelMessage(m) as ModelMessage;
+		}
+		return m as ModelMessage;
+	});
+}
+
+function stableStringify(value: unknown): string {
+	if (value === undefined) return "";
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function messagesEqual(a: Record<string, any>, b: Record<string, any>): boolean {
+	return stableStringify(a) === stableStringify(b);
+}
+
+function responseIncludesHistory(
+	history: Record<string, any>[],
+	response: Record<string, any>[],
+): boolean {
+	if (response.length < history.length) return false;
+	for (let i = 0; i < history.length; i++) {
+		if (!messagesEqual(history[i], response[i])) return false;
+	}
+	return true;
+}
+
+function mergeResponseMessages(
+	historyMessages: ModelMessage[],
+	responseMessages: ModelMessage[],
+): Record<string, any>[] {
+	const history = toStoredMessages(historyMessages);
+	const response = toStoredMessages(responseMessages);
+	if (responseIncludesHistory(history, response)) return response;
+	return [...history, ...response];
+}
+
+async function nextWithTimeout<T>(
+	iterator: AsyncIterator<T>,
+	timeoutMs: number,
+): Promise<IteratorResult<T>> {
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	try {
+		return await Promise.race([
+			iterator.next(),
+			new Promise<IteratorResult<T>>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error(`Stream idle timeout: no data received for ${Math.round(timeoutMs / 1000)}s`)),
+					timeoutMs,
+				);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
 }
 
 export function mergeState(
 	savedState: Record<string, any> | null,
 	inputMsgStr?: string,
-): { messages: Record<string, any>[]; messagesUi?: UiMessage[]; compaction?: any; todos?: TodoList } {
+): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList } {
 	let messages: Record<string, any>[] = [];
 
 	const compaction = savedState?.compaction ? { ...savedState.compaction } : undefined;
@@ -183,22 +349,21 @@ export function mergeState(
 
 	if (savedState?.messages && Array.isArray(savedState.messages)) {
 		for (const m of savedState.messages) {
-			messages.push(normalizeToSimple(m));
+			messages.push(normalizeToCanonical(m));
 		}
 	}
 	if (inputMsgStr) {
 		messages.push({ role: "user", content: inputMsgStr });
 	}
 
-	const messagesUi = Array.isArray(savedState?.messagesUi) ? [...savedState!.messagesUi] : undefined;
-	return { messages, messagesUi, compaction, todos };
+	return { messages, compaction, todos };
 }
 
 /* ── Agent stream ──────────────────────────────────────────────────── */
 
 interface RunAgentStreamParams {
 	setup: AgentSetup;
-	input: { messages: Record<string, any>[]; messagesUi?: UiMessage[]; compaction?: any; todos?: TodoList };
+	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList };
 	signal?: AbortSignal;
 	recursionLimit?: number;
 	existingToolUIEvents?: ToolUIEvent[];
@@ -222,13 +387,15 @@ export async function runAgentStream({
 }: RunAgentStreamParams): Promise<RunAgentStreamResult> {
 	const parserState = createParserState(input as AgentState, existingToolUIEvents);
 
-	const uiBuilder = Array.isArray(input.messagesUi) && input.messagesUi.length > 0
-		? UiMessageBuilder.fromExisting(input.messagesUi)
-		: new UiMessageBuilder();
-
 	let streamReasoningBuffer = "";
 	let aborted = false;
 	let error: unknown;
+	let activeAssistantParts: any[] = [];
+	let activeToolMessages: Record<string, any>[] = [];
+	let responseCompleted = false;
+	let persistedMessages: Record<string, any>[] = Array.isArray(input.messages)
+		? input.messages.filter((m) => m.role !== "system").map((m) => ({ ...m }))
+		: [];
 
 	try {
 		// Extract system messages for system prompt, keep non-system as CoreMessages
@@ -239,29 +406,7 @@ export async function runAgentStream({
 			...systemMessages.map((m) => m.content as string),
 		].filter(Boolean).join("\n\n");
 
-		const toCoreMessages = (msgs: Record<string, any>[]): CoreMessage[] =>
-			msgs.map((m) => {
-				if (m.role === "assistant") {
-					const parts: any[] = [];
-					if (m.content) parts.push({ type: "text", text: m.content as string });
-					if (Array.isArray(m.toolCalls)) {
-						for (const tc of m.toolCalls) {
-							parts.push({ type: "tool-call", toolCallId: tc.id ?? "", toolName: tc.name ?? "", args: tc.args ?? {} });
-						}
-					}
-					return { role: "assistant" as const, content: parts.length ? parts : (m.content as string || "") };
-				}
-				// user, tool → pass through
-				return m as CoreMessage;
-			});
-
-		// Push human message into UI
-		const lastMsg = input.messages[input.messages.length - 1];
-		if (lastMsg?.role === "user") {
-			uiBuilder.pushHuman(lastMsg);
-		}
-
-		let messages = toCoreMessages(nonSystemMessages);
+		let messages = toModelMessages(nonSystemMessages);
 
 		const IDLE_TIMEOUT_MS = 120_000;
 
@@ -270,6 +415,9 @@ export async function runAgentStream({
 			if (signal?.aborted) break;
 
 			const stepEventBuffer: string[] = [];
+			activeAssistantParts = [];
+			activeToolMessages = [];
+			responseCompleted = false;
 			const toolContext: ToolContext = {
 				writer: (data: string) => { stepEventBuffer.push(data); },
 			};
@@ -285,27 +433,32 @@ export async function runAgentStream({
 				...(setup.providerOptions ? { providerOptions: setup.providerOptions } : {}),
 			});
 
-			// Consume fullStream with idle timeout
-			let idleTimer: ReturnType<typeof setTimeout> | null = null;
-			const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
-
-			let toolCallIndex = 0;
-
-			for await (const chunk of result.fullStream) {
-				clearIdle();
-				idleTimer = setTimeout(
-					() => { throw new Error("Stream idle timeout: no data received for 120s"); },
-					IDLE_TIMEOUT_MS,
-				);
+			const streamIterator = result.fullStream[Symbol.asyncIterator]();
+			while (true) {
+				const next = await nextWithTimeout(streamIterator, IDLE_TIMEOUT_MS);
+				if (next.done) break;
+				const chunk = next.value;
 
 				if (chunk.type === "text-delta") {
 					parserState.contentBuffer += chunk.text;
+					const last = activeAssistantParts[activeAssistantParts.length - 1];
+					if (last?.type === "text") {
+						last.text += chunk.text;
+					} else {
+						activeAssistantParts.push({ type: "text", text: chunk.text });
+					}
 					onUiEvent?.({ type: "text_delta", text: chunk.text });
 				} else if (chunk.type === "reasoning-delta") {
 					const delta = normalizeReasoningDelta(streamReasoningBuffer, chunk.text);
 					if (delta) {
 						streamReasoningBuffer += delta;
 						parserState.reasoningBuffer += delta;
+						const last = activeAssistantParts[activeAssistantParts.length - 1];
+						if (last?.type === "reasoning") {
+							last.text += delta;
+						} else {
+							activeAssistantParts.push({ type: "reasoning", text: delta });
+						}
 						onUiEvent?.({ type: "reasoning_delta", text: streamReasoningBuffer });
 					}
 				} else if (chunk.type === "tool-call") {
@@ -314,11 +467,16 @@ export async function runAgentStream({
 					parserState.seenToolCallKeys.push(dedupeKey);
 
 					parserState.lastToolCallIndex += 1;
-					toolCallIndex++;
 					parserState.toolCallMap[chunk.toolCallId] = {
 						index: parserState.lastToolCallIndex,
 						name: chunk.toolName,
 					};
+					activeAssistantParts.push({
+						type: "tool-call",
+						toolCallId: chunk.toolCallId,
+						toolName: chunk.toolName,
+						input: chunk.input ?? {},
+					});
 
 					onUiEvent?.({
 						type: "tool_call_start",
@@ -328,28 +486,21 @@ export async function runAgentStream({
 						args: chunk.input,
 					});
 
-					// Update AI message in UI
-					const aiDict: Record<string, any> = {
-						role: "assistant",
-						content: parserState.contentBuffer || "",
-					};
-					if (parserState.reasoningBuffer) aiDict.reasoning = parserState.reasoningBuffer;
-					const pendingCalls = Object.entries(parserState.toolCallMap).map(([id, m]) => ({
-						id,
-						name: (m as { name?: string }).name ?? "",
-						args: {},
-					}));
-					if (pendingCalls.length) aiDict.toolCalls = pendingCalls;
-					uiBuilder.pushOrUpdateAi(aiDict);
-					uiBuilder.onToolCallStart(chunk.toolName, chunk.toolCallId);
 				} else if (chunk.type === "tool-result") {
 					const resultStr = typeof chunk.output === "string" ? chunk.output : JSON.stringify(chunk.output);
-					const isError = /^Error:|^\[.*(?:failed|error)\]|^ToolError:|"error":/i.test(resultStr);
-					uiBuilder.onToolResult(chunk.toolCallId, isError);
+					const mapped = parserState.toolCallMap[chunk.toolCallId];
+					activeToolMessages.push({
+						role: "tool",
+						content: [{
+							type: "tool-result",
+							toolCallId: chunk.toolCallId,
+							toolName: chunk.toolName ?? mapped?.name ?? "",
+							output: normalizeToolOutput(chunk.output),
+						}],
+					});
 					onUiEvent?.({ type: "tool_result", toolCallId: chunk.toolCallId, result: resultStr });
 				}
 			}
-			clearIdle();
 
 			// Process tool UI events collected via writer during tool execution
 			for (const raw of stepEventBuffer) {
@@ -367,44 +518,24 @@ export async function runAgentStream({
 					event.toolName = event.toolName || mapped.name;
 				}
 				parserState.toolUIEvents.push(event);
-				uiBuilder.onToolUiEvent(event);
 				onUiEvent?.({ type: "tool_ui", event });
 			}
 
-			// Update AI message in UI with final content
-			if (parserState.contentBuffer || parserState.reasoningBuffer) {
-				const aiDict: Record<string, any> = {
-					role: "assistant",
-					content: parserState.contentBuffer || "",
-				};
-				if (parserState.reasoningBuffer) aiDict.reasoning = parserState.reasoningBuffer;
-				const calls = Object.entries(parserState.toolCallMap).map(([id, m]) => ({
-					id,
-					name: (m as { name?: string }).name ?? "",
-					args: {},
-				}));
-				if (calls.length) aiDict.toolCalls = calls;
-				uiBuilder.pushOrUpdateAi(aiDict);
-			}
+			const response = await result.response;
+			persistedMessages = mergeResponseMessages(messages, response.messages);
+			messages = toModelMessages(persistedMessages);
+			responseCompleted = true;
 
 			// Check if any tool calls were made — if not, agent is done
 			const toolCalls = await result.toolCalls;
 			if (toolCalls.length === 0) break;
 
-			// Build tool result messages for next iteration
-			const toolResults = await result.toolResults;
-			const toolResultMessages: CoreMessage[] = toolResults.map((tr) => ({
-				role: "tool" as const,
-				content: [{ type: "tool-result" as const, toolCallId: tr.toolCallId, toolName: tr.toolName, result: typeof tr.output === "string" ? tr.output : JSON.stringify(tr.output) }],
-			}));
-
-			const response = await result.response;
-			messages = [...response.messages, ...toolResultMessages];
-
 			// Reset per-step buffers
 			parserState.contentBuffer = "";
 			parserState.reasoningBuffer = "";
 			streamReasoningBuffer = "";
+			activeAssistantParts = [];
+			activeToolMessages = [];
 		}
 	} catch (err) {
 		aborted = isAbortError(err, signal);
@@ -413,13 +544,21 @@ export async function runAgentStream({
 		}
 	}
 
+	if (!responseCompleted && (activeAssistantParts.length || activeToolMessages.length)) {
+		persistedMessages = [
+			...persistedMessages,
+			...(activeAssistantParts.length ? [{ role: "assistant", content: activeAssistantParts }] : []),
+			...activeToolMessages,
+		];
+	}
+
 	// Build final state
 	const source: AgentState = {
 		...(parserState.currentState ?? parserState.inputState),
-		messages: Array.isArray(parserState.inputState.messages) ? [...parserState.inputState.messages] : [],
+		messages: persistedMessages,
 	};
-	source.messagesUi = uiBuilder.finalise();
-	source.toolUIEvents = [...parserState.toolUIEvents];
+	delete source.messagesUi;
+	delete source.toolUIEvents;
 	source.compaction = (input as AgentState).compaction;
 	source.todos = parserState.currentState?.todos ?? parserState.inputState.todos ?? (input as AgentState).todos;
 

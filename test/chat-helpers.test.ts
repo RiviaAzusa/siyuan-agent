@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldSendComposerOnKeydown } from "../src/ui/chat-helpers";
+import { sessionTitle, shouldSendComposerOnKeydown } from "../src/ui/chat-helpers";
 
 describe("shouldSendComposerOnKeydown", () => {
 	it("sends on plain Enter", () => {
@@ -30,5 +30,24 @@ describe("shouldSendComposerOnKeydown", () => {
 			shiftKey: false,
 			keyCode: 229,
 		})).toBe(false);
+	});
+});
+
+describe("sessionTitle", () => {
+	it("uses the first canonical user message", () => {
+		expect(sessionTitle({
+			messages: [
+				{ role: "user", content: "从1 数到100 测试." },
+				{ role: "assistant", content: "ok" },
+			],
+		})).toBe("从1 数到100 测试.");
+	});
+
+	it("does not use assistant-only state as a title", () => {
+		expect(sessionTitle({
+			messages: [
+				{ role: "assistant", content: "answer" },
+			],
+		})).toBe("New Chat");
 	});
 });

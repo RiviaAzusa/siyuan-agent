@@ -7,7 +7,6 @@ import {
 	SessionIndexEntry,
 	TodoList,
 	ToolUIEvent,
-	ToolMessageUi,
 	UiMessage,
 	DEFAULT_CONFIG,
 	buildInitPrompt,
@@ -30,7 +29,7 @@ import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
-import { UiMessageBuilder, ensureMessagesUi } from "../core/ui-message-builder";
+import { buildMessagesView } from "../core/ui-message-builder";
 import { compactMessages, shouldCompact } from "../core/compaction";
 import { createModel } from "../llms/ai-sdk-provider";
 import { getDefaultTools, type SiyuanTool } from "../core/tools";
@@ -586,13 +585,10 @@ export class ChatPanel {
 		this.syncReasoningControl();
 		void this.refreshModelSelector();
 
-	/* Lazy-migrate old sessions that lack messagesUi */
 		if (!s.state) s.state = {};
-		ensureMessagesUi(s.state);
 
-	/* Re-render messages from messagesUi */
 		this.messagesEl.innerHTML = "";
-		const messagesUi: UiMessage[] = Array.isArray(s.state?.messagesUi) ? s.state.messagesUi : [];
+		const messagesUi: UiMessage[] = buildMessagesView(s.state);
 		if (messagesUi.length === 0) {
 			this.renderWelcomeScreen();
 		} else {
@@ -724,16 +720,9 @@ export class ChatPanel {
 
 		this.abortCtrl = new AbortController();
 
-		/* Lazy-migrate old sessions before merging */
 		if (!s.state) s.state = {};
-		ensureMessagesUi(s.state);
 
 		const input = mergeState(s.state ?? null, content) as any;
-
-		/* Push the human message into the carried-over messagesUi */
-		const humanMsgDict = { role: "user", content };
-		if (!Array.isArray(input.messagesUi)) input.messagesUi = [];
-		input.messagesUi.push(humanMsgDict);
 
 		await this.streamToShell(assistantShell, input, config, sessionModelId, s, extraSystemPrompt, activeModel, reasoningEffort);
 	}
@@ -758,7 +747,6 @@ export class ChatPanel {
 		let latestState: AgentState = {
 			...s.state,
 			messages: input.messages,
-			messagesUi: input.messagesUi,
 			compaction: input.compaction,
 			toolUIEvents: existingToolUIEvents,
 		};
@@ -892,6 +880,13 @@ export class ChatPanel {
 				showStreamError(result.error);
 			}
 		} catch (err) {
+			const lastInput = input.messages?.[input.messages.length - 1];
+			if (lastInput?.role === "user") {
+				latestState = {
+					...latestState,
+					messages: Array.isArray(input.messages) ? input.messages.filter((m: any) => m.role !== "system") : [],
+				};
+			}
 			showStreamError(err);
 		} finally {
 			removePending();
@@ -902,7 +897,7 @@ export class ChatPanel {
 
 			/* Append action bar for completed messages */
 			if (shell.el.isConnected && shell.stackEl.children.length > 0) {
-				const lastAi = (latestState.messagesUi || []).filter((m: any) => msgType(m) === "ai").pop();
+				const lastAi = (latestState.messages || []).filter((m: any) => msgType(m) === "ai").pop();
 				this.appendActionBar(shell, lastAi ? getMessageContent(lastAi) : "");
 			}
 
@@ -935,31 +930,19 @@ export class ChatPanel {
 		if (this.abortCtrl) return;
 
 		const s = this.activeSession;
-		if (!s.state?.messagesUi?.length) return;
+		if (!Array.isArray(s.state?.messages) || s.state.messages.length === 0) return;
 
-		/* 1. Trim state: remove trailing AI/Tool messages */
-		const ui: UiMessage[] = s.state.messagesUi;
-		let lastHumanIdx = -1;
-		for (let i = ui.length - 1; i >= 0; i--) {
-			if (msgType(ui[i]) === "human" || msgType(ui[i]) === "user") {
-				lastHumanIdx = i;
+		const msgs = s.state.messages;
+		let lastHumanMsgIdx = -1;
+		for (let i = msgs.length - 1; i >= 0; i--) {
+			if (msgType(msgs[i]) === "human" || msgType(msgs[i]) === "user") {
+				lastHumanMsgIdx = i;
 				break;
 			}
 		}
-		if (lastHumanIdx < 0) return;
-		ui.length = lastHumanIdx + 1;
-
-		const msgs = s.state.messages;
-		if (Array.isArray(msgs)) {
-			let lastHumanMsgIdx = -1;
-			for (let i = msgs.length - 1; i >= 0; i--) {
-				if (msgType(msgs[i]) === "human" || msgType(msgs[i]) === "user") {
-					lastHumanMsgIdx = i;
-					break;
-				}
-			}
-			if (lastHumanMsgIdx >= 0) msgs.length = lastHumanMsgIdx + 1;
-		}
+		if (lastHumanMsgIdx < 0) return;
+		const retryUserContent = getMessageContent(msgs[lastHumanMsgIdx]);
+		msgs.length = lastHumanMsgIdx;
 
 		/* 2. Remove DOM */
 		const listEl = shell.el.parentElement;
@@ -990,9 +973,8 @@ export class ChatPanel {
 		this.abortCtrl = new AbortController();
 
 		if (!s.state) s.state = {};
-		ensureMessagesUi(s.state);
 
-		const input = mergeState(s.state ?? null) as any;
+		const input = mergeState(s.state ?? null, retryUserContent) as any;
 
 		await this.streamToShell(newShell, input, config, sessionModelId, s, null, activeModel, reasoningEffort);
 	}
@@ -1019,22 +1001,6 @@ export class ChatPanel {
 				showMessage(this.t("chat.compact.tooFewTurns"));
 				return;
 			}
-
-			/* Append a notice-style ToolMessageUi */
-			if (!Array.isArray(s.state.messagesUi)) s.state.messagesUi = [];
-			const notice: ToolMessageUi = {
-				type: "tool_message_ui",
-				toolCallId: `compact-${Date.now().toString(36)}`,
-				toolName: "compact",
-				status: "done",
-				summary: this.t("chat.compact.summary", {
-					requirement: requirement || this.t("chat.compact.defaultRequirement"),
-				}),
-				events: [],
-				startedAt: Date.now(),
-				finishedAt: Date.now(),
-			};
-			s.state.messagesUi.push(notice);
 
 			s.updated = Date.now();
 			await this.store.saveSession(s);
@@ -1266,6 +1232,9 @@ export class ChatPanel {
 							`<span class="chat-msg__doc-meta">${escapeHtml(m.summary)}</span>`,
 						);
 					}
+				}
+				if (m.result) {
+					this.appendToolResultToElement(toolEl, m.result, true);
 				}
 				if (m.status === "done" || m.status === "error") {
 					this.finalizeToolElement(toolEl);
@@ -1790,12 +1759,12 @@ export class ChatPanel {
 		details.appendChild(line);
 	}
 
-	private appendToolResultToElement(toolEl: HTMLElement, result: string): void {
+	private appendToolResultToElement(toolEl: HTMLElement, result: string, force = false): void {
 		const details = toolEl.querySelector("details");
 		if (!details) return;
 
 		// Skip raw result if the tool already has rich UI events
-		if (toolEl.dataset.hasEvents === "true") return;
+		if (!force && toolEl.dataset.hasEvents === "true") return;
 
 		// Skip empty or whitespace-only results
 		const trimmed = this.localizeToolResult(result);

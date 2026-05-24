@@ -90,6 +90,19 @@ describe("groupTaskRuns", () => {
 		expect(groups[0].endIndex).toBe(2);
 	});
 
+	it("builds visible history from simple-format scheduled task messages", () => {
+		const messages = [
+			{ role: "user", content: "Scheduled task run time: 2026/4/8 09:00:00\n\nTask name: Morning\n\nRun it" },
+			{ role: "assistant", content: "Task result" },
+		];
+
+		const groups = groupTaskRuns(messages, []);
+		expect(groups).toHaveLength(1);
+		expect(groups[0].runAt).toBe("2026/4/8 09:00:00");
+		expect(groups[0].taskTitle).toBe("Morning");
+		expect(groups[0].messagesUi).toEqual(messages);
+	});
+
 	it("distributes toolUIEvents to correct run groups", () => {
 		const messages = [
 			makeLcMsg("human", "定时任务执行时间：2026/4/8 18:00:00\n\n任务名称：任务A\n\n以下是本次定时任务的用户指令，请直接执行：\nA"),

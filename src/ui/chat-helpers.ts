@@ -84,8 +84,7 @@ export function sessionTitle(state: AgentState): string {
 		return t === "human" || t === "user";
 	});
 	if (!first) return "New Chat";
-	const rawContent = first.kwargs?.content ?? first.content;
-	const text = (typeof rawContent === "string" ? rawContent : "").replace(/^>.*\n\n/s, "").trim();
+	const text = getMessageContent(first).replace(/^>.*\n\n/s, "").trim();
 	return text.length > 30 ? text.slice(0, 30) + "..." : text;
 }
 
@@ -98,10 +97,23 @@ export function cloneMessage(raw: Record<string, any>): Record<string, any> {
 
 export function getMessageContent(raw: Record<string, any>): string {
 	const content = raw.kwargs?.content ?? raw.content;
+	if (Array.isArray(content)) {
+		return content
+			.filter((part: any) => part?.type === "text")
+			.map((part: any) => typeof part.text === "string" ? part.text : "")
+			.join("");
+	}
 	return typeof content === "string" ? content : "";
 }
 
 export function getMessageReasoning(raw: Record<string, any>): string {
+	const content = raw.kwargs?.content ?? raw.content;
+	if (Array.isArray(content)) {
+		return content
+			.filter((part: any) => part?.type === "reasoning")
+			.map((part: any) => typeof part.text === "string" ? part.text : "")
+			.join("");
+	}
 	const reasoning = raw.kwargs?.additional_kwargs?.reasoning_content
 		?? raw.additional_kwargs?.reasoning_content
 		?? raw.kwargs?.lc_kwargs?.additional_kwargs?.reasoning_content
@@ -111,17 +123,34 @@ export function getMessageReasoning(raw: Record<string, any>): string {
 }
 
 export function getMessageToolCalls(raw: Record<string, any>): any[] {
+	const content = raw.kwargs?.content ?? raw.content;
+	if (Array.isArray(content)) {
+		return content
+			.filter((part: any) => part?.type === "tool-call")
+			.map((part: any) => ({
+				...part,
+				id: part.toolCallId ?? part.id ?? "",
+				name: part.toolName ?? part.name ?? "",
+				args: part.input ?? part.args ?? {},
+			}));
+	}
 	const toolCalls = raw.kwargs?.tool_calls ?? raw.tool_calls ?? raw.toolCalls;
 	return Array.isArray(toolCalls) ? toolCalls : [];
 }
 
 export function getMessageToolCallId(raw: Record<string, any>): string {
-	const toolCallId = raw.kwargs?.tool_call_id ?? raw.tool_call_id;
+	const content = raw.kwargs?.content ?? raw.content;
+	if (Array.isArray(content)) {
+		const part = content.find((p: any) => p?.toolCallId || p?.tool_call_id);
+		const id = part?.toolCallId ?? part?.tool_call_id;
+		return typeof id === "string" ? id : "";
+	}
+	const toolCallId = raw.kwargs?.tool_call_id ?? raw.tool_call_id ?? raw.toolCallId;
 	return typeof toolCallId === "string" ? toolCallId : "";
 }
 
 export function getToolCallId(raw: Record<string, any>): string {
-	const toolCallId = raw?.id ?? raw?.tool_call_id;
+	const toolCallId = raw?.id ?? raw?.tool_call_id ?? raw?.toolCallId;
 	return typeof toolCallId === "string" ? toolCallId : "";
 }
 

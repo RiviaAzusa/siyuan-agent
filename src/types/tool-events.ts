@@ -146,7 +146,7 @@ export interface RunAgentStreamResult {
 	error?: unknown;
 }
 
-/* ── ToolMessageUi: replaces raw ToolMessage in the UI layer ─────────── */
+/* ── ToolMessageUi: render-only projection for tool cards ────────────── */
 
 export interface ToolMessageUi {
 	type: "tool_message_ui";
@@ -154,15 +154,15 @@ export interface ToolMessageUi {
 	toolName: string;
 	status: "running" | "done" | "error";
 	summary?: string;
+	result?: string;
 	events: ToolUIEvent[];
 	startedAt: number;
 	finishedAt?: number;
 }
 
 /**
- * A single element in `messagesUi`.
- *   - HumanMessage / AIMessage are kept as LangChain objects (serialised dict).
- *   - ToolMessage is *never* stored; ToolMessageUi takes its place.
+ * A render-only message view element. This should be derived from
+ * AgentState.messages and not persisted by new code.
  */
 export type UiMessage = Record<string, any> | ToolMessageUi;
 

@@ -31,6 +31,7 @@ export interface CompactionState {
 
 export type AgentState = Record<string, any> & {
 	messages?: any[];
+	/** @deprecated read-only legacy display cache; new saves must use messages */
 	messagesUi?: UiMessage[];
 	compaction?: CompactionState;
 	todos?: TodoList;

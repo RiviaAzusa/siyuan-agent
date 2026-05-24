@@ -99,10 +99,6 @@ export function appendTaskRunState(existingState: AgentState | undefined, latest
 			...(Array.isArray(existingState?.messages) ? existingState!.messages : []),
 			...(Array.isArray(latestState.messages) ? latestState.messages : []),
 		],
-		messagesUi: [
-			...(Array.isArray(existingState?.messagesUi) ? existingState!.messagesUi : []),
-			...(Array.isArray(latestState.messagesUi) ? latestState.messagesUi : []),
-		],
 		toolUIEvents: [
 			...(Array.isArray(existingState?.toolUIEvents) ? existingState!.toolUIEvents : []),
 			...(Array.isArray(latestState.toolUIEvents) ? latestState.toolUIEvents : []),
@@ -419,10 +415,8 @@ export class ScheduledTaskManager {
 				throw new Error(i18n.t("chat.error.apiKeyMissing"));
 			}
 			const setup = await prepareAgent(config, this.options.getTools(), null, null, i18n);
-			const input = mergeState(null, buildScheduledTaskRunPrompt(task, startedAt, i18n));
-			/* Ensure the human message also appears in messagesUi */
 			const promptContent = buildScheduledTaskRunPrompt(task, startedAt, i18n);
-			input.messagesUi = [{ role: "user", content: promptContent }];
+			const input = mergeState(null, promptContent);
 			const result = await runAgentStream({
 				setup,
 				input,
@@ -436,8 +430,6 @@ export class ScheduledTaskManager {
 			lastError = normalizeError(error, i18n);
 			const errorContent = `${i18n.t("scheduled.error.marker")}\n\n${lastError}`;
 			const errorState = mergeState(null, errorContent) as AgentState;
-			/* Ensure the error human message also appears in messagesUi */
-			errorState.messagesUi = [{ role: "user", content: errorContent }];
 			latestState = appendTaskRunState(undefined, errorState);
 		}
 

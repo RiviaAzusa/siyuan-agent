@@ -1,5 +1,6 @@
-import type { ToolUIEvent, UiMessage, ToolMessageUi } from "../types";
+import type { ToolUIEvent, UiMessage } from "../types";
 import { isToolMessageUi } from "../types";
+import { buildMessagesView } from "../core/ui-message-builder";
 
 /**
  * Represents a single execution run within a scheduled task session.
@@ -37,6 +38,10 @@ function msgType(m: any): string {
 		if (cls === "SystemMessage") return "system";
 		if (cls === "ToolMessage") return "tool";
 	}
+	if (m.role === "user") return "human";
+	if (m.role === "assistant") return "ai";
+	if (m.role === "system") return "system";
+	if (m.role === "tool") return "tool";
 	return m.type ?? m.role ?? "";
 }
 
@@ -84,29 +89,14 @@ function inferRunStatus(messages: any[]): "success" | "error" | "unknown" {
 	return hasAi ? "success" : "unknown";
 }
 
-function getToolCallIndices(messages: any[]): Set<number> {
-	const indices = new Set<number>();
-	let idx = -1;
-	for (const m of messages) {
-		const toolCalls = m.kwargs?.tool_calls ?? m.tool_calls;
-		if (Array.isArray(toolCalls)) {
-			for (const _tc of toolCalls) {
-				idx++;
-				indices.add(idx);
-			}
-		}
-	}
-	return indices;
-}
-
 /**
  * Split a scheduled task session's messages into per-execution run groups.
  * 
  * Each run starts with a human message whose content begins with a scheduled task run prefix.
  * If no such messages are found (legacy data), all messages are returned as a single group.
  *
- * When `messagesUi` is provided, the UI messages are split at the same boundaries
- * so each group carries its own slice of `messagesUi`.
+ * `messagesUi` is accepted only as a legacy read fallback. Each group builds a
+ * fresh render projection from its canonical messages.
  */
 export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], messagesUi?: UiMessage[]): TaskRunGroup[] {
 	if (!messages || messages.length === 0) return [];
@@ -136,7 +126,7 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 			endIndex: messages.length - 1,
 			messages,
 			toolUIEvents,
-			messagesUi: uiArr,
+			messagesUi: buildMessagesView({ messages, toolUIEvents, messagesUi: uiArr }),
 			status: inferRunStatus(messages),
 		}];
 	}
@@ -146,7 +136,7 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 	const toolCallRunMap = new Map<number, number>();
 	for (let i = 0; i < messages.length; i++) {
 		const runIdx = findRunBoundary(i, boundaries);
-		const toolCalls = messages[i].kwargs?.tool_calls ?? messages[i].tool_calls;
+		const toolCalls = messages[i].kwargs?.tool_calls ?? messages[i].tool_calls ?? messages[i].toolCalls;
 		if (Array.isArray(toolCalls)) {
 			for (const _tc of toolCalls) {
 				globalToolCallIdx++;
@@ -167,13 +157,17 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 			return runIdx === start;
 		});
 
-		/* Slice messagesUi for this run */
 		let runMessagesUi: UiMessage[] = [];
 		if (uiBoundaries.length > 0) {
 			const uiStart = uiBoundaries[b] ?? 0;
 			const uiEnd = b + 1 < uiBoundaries.length ? uiBoundaries[b + 1] : uiArr.length;
 			runMessagesUi = uiArr.slice(uiStart, uiEnd);
 		}
+		const viewMessages = buildMessagesView({
+			messages: runMessages,
+			toolUIEvents: runToolUIEvents,
+			messagesUi: runMessagesUi,
+		});
 
 		groups.push({
 			startIndex: start,
@@ -182,7 +176,7 @@ export function groupTaskRuns(messages: any[], toolUIEvents: ToolUIEvent[], mess
 			taskTitle: extractTaskTitle(content),
 			messages: runMessages,
 			toolUIEvents: runToolUIEvents,
-			messagesUi: runMessagesUi,
+			messagesUi: viewMessages,
 			status: inferRunStatus(runMessages),
 		});
 	}
