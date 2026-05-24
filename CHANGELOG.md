@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4
+
+- Added basic support for Chinese models based on the Anthropic protocol.
+- Optimized chat UI: agent processing steps are now auto-collapsed.
+- Migrated the underlying system from LangChain to Vercel AI SDK and optimized code architecture.
+
+中文：
+
+- 增加中国模型的基本支持，基于 Anthropic 协议。
+- 优化对话 UI，Agent 处理过程将自动折叠。
+- 系统底层从 LangChain 迁移到 Vercel AI SDK，并优化代码架构。
+
 ## 0.1.3
 
 - Improved the welcome screen.
