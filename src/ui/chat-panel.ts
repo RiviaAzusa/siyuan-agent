@@ -1391,26 +1391,31 @@ export class ChatPanel {
 		const visibleItems = summary.items.slice(0, 3);
 		const hiddenItems = summary.items.slice(3);
 		const renderItem = (item: RunChangeSummaryItemUi) => {
-			const title = item.path || item.label || item.id || getToolDisplayTitle(item.toolName, this.i18n);
-			const meta = item.meta ? `<span class="chat-msg__change-meta">${escapeHtml(item.meta)}</span>` : "";
-			const status = item.status === "error" ? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.changes.status.error"))}</span>` : "";
-			return `<div class="chat-msg__change-item">
-				<span class="chat-msg__change-main">
-					<span class="chat-msg__change-action">${escapeHtml(this.getChangeActionText(item))}</span>
-					<span class="chat-msg__change-title">${escapeHtml(title)}</span>
-				</span>
-				<span class="chat-msg__change-side">${this.renderChangeCount(item)}${meta}${status}</span>
+			const actionText = escapeHtml(this.getChangeActionText(item));
+			const displayLabel = escapeHtml(item.path || item.label || item.id || "");
+			const docId = item.id || "";
+			const canOpen = Boolean(docId);
+			const linkHtml = docId
+				? `<a class="chat-msg__doc-link${canOpen ? " chat-msg__doc-link--open" : ""}" data-id="${escapeHtml(docId)}" href="javascript:void(0)">${displayLabel}</a>`
+				: `<span class="chat-msg__doc-label">${displayLabel}</span>`;
+			const meta = item.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(item.meta)}</span>` : "";
+			const status = item.status === "error"
+				? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.changes.status.error"))}</span>`
+				: "";
+			return `<div class="chat-msg__tool">
+				<details open>
+					<summary>
+						<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.tool.badge.change"))}</span>
+						<span class="chat-msg__tool-title">${actionText}</span>
+						${linkHtml}${meta}${status}
+					</summary>
+				</details>
 			</div>`;
 		};
 		card.innerHTML = `
 			<div class="chat-msg__change-summary-head">
-				<span class="chat-msg__change-icon" aria-hidden="true">
-					<svg viewBox="0 0 24 24"><use xlink:href="#iconEdit"></use></svg>
-				</span>
-				<span class="chat-msg__change-heading">
-					<span class="chat-msg__change-title-main">${escapeHtml(this.t("chat.changes.title", { count: summary.total }))}</span>
-					<span class="chat-msg__change-subtitle">${escapeHtml(subtitle)}</span>
-				</span>
+				<span class="chat-msg__change-title-main">${escapeHtml(this.t("chat.changes.title", { count: summary.total }))}</span>
+				<span class="chat-msg__change-subtitle">${escapeHtml(subtitle)}</span>
 			</div>
 			<div class="chat-msg__change-list">
 				${visibleItems.map(renderItem).join("")}
@@ -1422,6 +1427,12 @@ export class ChatPanel {
 				</details>
 			` : ""}
 		`;
+		card.querySelectorAll<HTMLElement>(".chat-msg__doc-link[data-id]").forEach((link) => {
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				openTab({ app: (globalThis as any).siyuanApp, doc: { id: link.dataset.id! } });
+			});
+		});
 		shell.stackEl.appendChild(card);
 	}
 

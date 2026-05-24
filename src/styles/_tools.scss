@@ -415,142 +415,108 @@
 }
 
 .chat-msg__change-summary {
-	margin-top: 10px;
-	border: 1px solid color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 82%, transparent);
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--agent-surface, var(--b3-theme-surface)) 86%, var(--agent-text, var(--b3-theme-on-surface)) 6%);
-	overflow: hidden;
+	margin: 4px 0;
+	padding: 6px 8px;
+	border: 1px solid var(--b3-border-color);
+	border-radius: 6px;
+	background: rgba(127, 127, 127, 0.04);
+	text-align: left;
 }
 
 .chat-msg__change-summary-head {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 13px 14px 12px;
-	border-bottom: 1px solid color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 72%, transparent);
+	flex-wrap: wrap;
+	gap: 4px 6px;
+	min-height: 24px;
+	padding: 0;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
 }
 
 .chat-msg__change-icon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 38px;
-	height: 38px;
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--agent-text, var(--b3-theme-on-surface)) 10%, transparent);
-	color: var(--agent-text, var(--b3-theme-on-surface));
-	flex: 0 0 auto;
-
-	svg {
-		width: 20px;
-		height: 20px;
-	}
+	display: none;
 }
 
 .chat-msg__change-heading {
-	display: flex;
-	flex-direction: column;
+	display: inline-flex;
+	align-items: center;
 	min-width: 0;
-	gap: 2px;
+	gap: 6px;
 }
 
 .chat-msg__change-title-main {
-	font-size: 15px;
-	font-weight: 650;
-	color: var(--agent-text, var(--b3-theme-on-surface));
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
 }
 
 .chat-msg__change-subtitle {
 	font-size: 12px;
+	font-weight: 400;
 	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+	opacity: 0.78;
 }
 
 .chat-msg__change-list {
 	display: flex;
 	flex-direction: column;
-}
+	margin: 2px 0 0 0;
 
-.chat-msg__change-item {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	min-height: 42px;
-	padding: 9px 14px;
-	border-top: 1px solid color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 36%, transparent);
-
-	&:first-child {
-		border-top: none;
+	.chat-msg__tool {
+		margin: 0;
 	}
 }
 
-.chat-msg__change-main {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	min-width: 0;
-}
-
-.chat-msg__change-action {
-	flex: 0 0 auto;
-	font-size: 12px;
-	font-weight: 600;
-	color: var(--agent-text-muted, var(--b3-theme-on-surface));
-}
-
-.chat-msg__change-title {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 14px;
-	color: var(--agent-text, var(--b3-theme-on-surface));
-}
-
-.chat-msg__change-side {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	flex: 0 0 auto;
-	font-size: 12px;
-	color: var(--agent-text-muted, var(--b3-theme-on-surface));
-}
-
-.chat-msg__change-count--add {
-	color: #18c964;
-	font-weight: 650;
-}
-
-.chat-msg__change-count--remove,
 .chat-msg__change-status--error {
-	color: #ff5b3f;
-	font-weight: 650;
-}
-
-.chat-msg__change-meta {
-	max-width: 180px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	color: var(--b3-card-error-color, #e53935);
+	font-weight: 500;
+	font-size: 12px;
 }
 
 .chat-msg__change-more {
-	border-top: 1px solid color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 48%, transparent);
+	margin: 0;
+	padding: 0;
 
 	> summary {
-		list-style: none;
+		display: flex;
+		align-items: center;
+		min-height: 24px;
+		padding: 3px 0 3px 20px;
 		cursor: pointer;
-		padding: 10px 14px;
-		font-size: 13px;
+		list-style: none;
+		font-size: 12px;
 		font-weight: 500;
-		color: var(--agent-text, var(--b3-theme-on-surface));
+		color: var(--agent-text-muted, var(--b3-theme-on-surface));
 
 		&::-webkit-details-marker {
 			display: none;
 		}
+
+		&::after {
+			content: ">";
+			margin-left: 2px;
+			opacity: 0;
+			transform: rotate(0deg);
+			transition: opacity 0.12s ease, transform 0.12s ease;
+		}
+	}
+
+	&:hover > summary::after,
+	&[open] > summary::after {
+		opacity: 0.72;
+	}
+
+	&[open] > summary::after {
+		transform: rotate(90deg);
+	}
+
+	&[open] > summary {
+		display: none;
 	}
 }
 
 .chat-msg__change-list--hidden {
-	border-top: 1px solid color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 36%, transparent);
+	margin: 0;
 }
