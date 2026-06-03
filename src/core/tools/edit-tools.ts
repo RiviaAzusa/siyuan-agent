@@ -1,7 +1,7 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
 import { openTab } from "siyuan";
-import { siyuanFetch } from "./siyuan-api";
+import { siyuanFetch, sqlEscape } from "./siyuan-api";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 function extractOperationBlockIds(data: any): string[] {
@@ -26,10 +26,27 @@ function isConservativeSingleMarkdownBlock(markdown: string): boolean {
 	return true;
 }
 
+function getRootDocId(info: any): string | undefined {
+	if (typeof info?.rootID === "string" && info.rootID) return info.rootID;
+	if (typeof info?.root_id === "string" && info.root_id) return info.root_id;
+	return undefined;
+}
+
+function buildRootDocIdMap(rows: any[]): Record<string, string> {
+	const map: Record<string, string> = {};
+	if (!Array.isArray(rows)) return map;
+	for (const row of rows) {
+		if (typeof row?.id === "string" && typeof row?.root_id === "string" && row.root_id) {
+			map[row.id] = row.root_id;
+		}
+	}
+	return map;
+}
+
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "edit_blocks",
-		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. Single-block replacements may preserve the original block ID; multi-block markdown is applied by inserting replacement blocks and deleting the old block, so the original block ID can become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
+		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. All blocks in one call must belong to the same root document; split cross-document edits into separate edit_blocks calls. Single-block replacements may preserve the original block ID; multi-block markdown is applied by inserting replacement blocks and deleting the old block, so the original block ID can become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
 		parameters: z.object({
 			blocks: z.array(z.object({
 				id: z.string().describe("Block ID to edit (from get_document_blocks)"),
@@ -40,8 +57,30 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 			const ids = blocks.map((b: { id: string }) => b.id);
 			const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
 			const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids });
+			const rootRows = ids.length > 0
+				? await siyuanFetch("/api/query/sql", {
+					stmt: `SELECT id, root_id FROM blocks WHERE id IN (${ids.map((id: string) => `'${sqlEscape(id)}'`).join(",")})`,
+				})
+				: [];
+			const rootDocIds = buildRootDocIdMap(rootRows);
 
 			const results: any[] = [];
+			const existingRootDocIds = [...new Set(blocks
+				.filter((block: { id: string }) => originals[block.id] !== undefined)
+				.map((block: { id: string }) => rootDocIds[block.id] || getRootDocId(treeInfos[block.id]))
+				.filter((id: string | undefined): id is string => Boolean(id)))];
+			if (existingRootDocIds.length > 1) {
+				return JSON.stringify({
+					__tool_type: "edit_blocks",
+					results: blocks.map((block: { id: string }) => ({
+						oldId: block.id,
+						rootDocId: rootDocIds[block.id] || getRootDocId(treeInfos[block.id]),
+						status: "error",
+						error: `edit_blocks cannot edit blocks across multiple documents in one call. Split this into separate calls per document. Root document IDs: ${existingRootDocIds.join(", ")}`,
+						original: originals[block.id],
+					})),
+				});
+			}
 			const editableBlocks = blocks.filter((block: { id: string; content: string }) => originals[block.id] !== undefined);
 			const canBatchUpdate = editableBlocks.length === blocks.length
 				&& blocks.length > 1
@@ -61,7 +100,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						results: blocks.map((block: { id: string; content: string }) => ({
 							oldId: block.id,
 							newIds: [block.id],
-							rootDocId: typeof treeInfos[block.id]?.rootID === "string" && treeInfos[block.id].rootID ? treeInfos[block.id].rootID : undefined,
+							rootDocId: rootDocIds[block.id] || getRootDocId(treeInfos[block.id]),
 							status: "ok",
 							original: originals[block.id],
 							updated: block.content,
@@ -72,7 +111,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						__tool_type: "edit_blocks",
 						results: blocks.map((block: { id: string; content: string }) => ({
 							oldId: block.id,
-							rootDocId: typeof treeInfos[block.id]?.rootID === "string" && treeInfos[block.id].rootID ? treeInfos[block.id].rootID : undefined,
+							rootDocId: rootDocIds[block.id] || getRootDocId(treeInfos[block.id]),
 							status: "error",
 							error: err.message,
 							original: originals[block.id],
@@ -84,7 +123,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 			for (const block of blocks) {
 				const original = originals[block.id];
 				const info = treeInfos[block.id];
-				const rootDocId: string | undefined = typeof info?.rootID === "string" && info.rootID ? info.rootID : undefined;
+				const rootDocId: string | undefined = rootDocIds[block.id] || getRootDocId(info);
 				if (original === undefined) {
 					results.push({
 						oldId: block.id,

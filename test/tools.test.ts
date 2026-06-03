@@ -191,6 +191,50 @@ describe("SQL escape in tool definitions", () => {
 });
 
 describe("edit_blocks tool", () => {
+	it("rejects cross-document edits without writing", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+			const body = JSON.parse(String(init?.body || "{}"));
+			if (url === "/api/block/getBlockKramdowns") {
+				expect(body.ids).toEqual(["block-1", "block-2"]);
+				return mockFetchResponse({ "block-1": "old 1", "block-2": "old 2" }) as any;
+			}
+			if (url === "/api/block/getBlockTreeInfos") {
+				return mockFetchResponse({
+					"block-1": { previousID: "", parentID: "doc-a" },
+					"block-2": { previousID: "", parentID: "doc-b" },
+				}) as any;
+			}
+			if (url === "/api/query/sql") {
+				expect(body.stmt).toContain("SELECT id, root_id FROM blocks");
+				return mockFetchResponse([
+					{ id: "block-1", root_id: "doc-a" },
+					{ id: "block-2", root_id: "doc-b" },
+				]) as any;
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+
+		const tool = createEditBlocksTool();
+		const raw = await (tool as any).execute({
+			blocks: [
+				{ id: "block-1", content: "updated 1" },
+				{ id: "block-2", content: "updated 2" },
+			],
+		});
+
+		expect(fetchMock).not.toHaveBeenCalledWith("/api/block/batchUpdateBlock", expect.anything());
+		expect(fetchMock).not.toHaveBeenCalledWith("/api/block/insertBlock", expect.anything());
+		expect(fetchMock).not.toHaveBeenCalledWith("/api/block/deleteBlock", expect.anything());
+		expect(JSON.parse(raw)).toMatchObject({
+			__tool_type: "edit_blocks",
+			results: [
+				{ oldId: "block-1", rootDocId: "doc-a", status: "error" },
+				{ oldId: "block-2", rootDocId: "doc-b", status: "error" },
+			],
+		});
+		expect(JSON.parse(raw).results[0].error).toContain("cannot edit blocks across multiple documents");
+	});
+
 	it("batch-updates multiple single-block edits without insert/delete churn", async () => {
 		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
 			const body = JSON.parse(String(init?.body || "{}"));
@@ -203,6 +247,12 @@ describe("edit_blocks tool", () => {
 					"block-1": { rootID: "root-doc", previousID: "", parentID: "root-doc" },
 					"block-2": { rootID: "root-doc", previousID: "block-1", parentID: "root-doc" },
 				}) as any;
+			}
+			if (url === "/api/query/sql") {
+				return mockFetchResponse([
+					{ id: "block-1", root_id: "root-doc" },
+					{ id: "block-2", root_id: "root-doc" },
+				]) as any;
 			}
 			if (url === "/api/block/batchUpdateBlock") {
 				expect(body).toEqual({
@@ -251,6 +301,9 @@ describe("edit_blocks tool", () => {
 					},
 				}) as any;
 			}
+			if (url === "/api/query/sql") {
+				return mockFetchResponse([{ id: "old-block", root_id: "root-doc" }]) as any;
+			}
 			if (url === "/api/block/insertBlock") {
 				expect(body.previousID).toBe("prev-block");
 				return mockFetchResponse([
@@ -297,6 +350,9 @@ describe("edit_blocks tool", () => {
 						parentID: "parent-block",
 					},
 				}) as any;
+			}
+			if (url === "/api/query/sql") {
+				return mockFetchResponse([{ id: "old-first", root_id: "root-doc" }]) as any;
 			}
 			if (url === "/api/block/prependBlock") {
 				expect(body.parentID).toBe("parent-block");

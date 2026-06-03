@@ -195,21 +195,36 @@ export class ChatPanel {
 		return parsed.results.find((item: any) => item?.status === "ok");
 	}
 
+	private getOkEditBlockIds(parsed: any): string[] {
+		if (!Array.isArray(parsed?.results)) return [];
+		const ids: string[] = [];
+		for (const item of parsed.results) {
+			if (item?.status !== "ok" || !Array.isArray(item.newIds)) continue;
+			for (const id of item.newIds) {
+				if (typeof id === "string" && id) ids.push(id);
+			}
+		}
+		return ids;
+	}
+
 	private enrichToolActivityFromResult(
 		toolName: string,
 		input: any,
 		result: string,
-	): { id?: string; blockId?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
+	): { id?: string; blockId?: string; blockIds?: string[]; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
 		if (toolName !== "edit_blocks") return this.getFriendlyToolActivity(toolName, input);
 		const activity = this.getFriendlyToolActivity(toolName, input);
-		const firstOk = this.getFirstOkEditResult(this.parseJsonResult(result));
-		const blockId = Array.isArray(firstOk?.newIds) ? firstOk.newIds.find((id: any) => typeof id === "string" && id) : undefined;
+		const parsed = this.parseJsonResult(result);
+		const firstOk = this.getFirstOkEditResult(parsed);
+		const blockIds = this.getOkEditBlockIds(parsed);
+		const blockId = blockIds[0];
 		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 		if (!activity || (!blockId && !rootDocId)) return activity;
 		return {
 			...activity,
 			id: blockId || rootDocId || activity.id,
 			blockId,
+			blockIds,
 			label: blockId || activity.label,
 			open: Boolean(blockId || rootDocId),
 		};
@@ -218,7 +233,7 @@ export class ChatPanel {
 	private getFriendlyToolActivity(
 		toolName: string,
 		input: any,
-	): { id?: string; blockId?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
+	): { id?: string; blockId?: string; blockIds?: string[]; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
 		const args = input && typeof input === "object" ? input : {};
 		if (toolName === "edit_blocks") {
 			const count = Array.isArray(args.blocks) ? args.blocks.length : undefined;
@@ -1441,23 +1456,38 @@ export class ChatPanel {
 		return document.querySelector<HTMLElement>(`.protyle-wysiwyg [data-node-id="${escaped}"], .protyle-wysiwyg [data-id="${escaped}"]`);
 	}
 
-	private async highlightBlockAfterOpen(blockId?: string): Promise<void> {
-		if (!blockId) return;
+	private async highlightBlocksAfterOpen(blockIds: string[]): Promise<void> {
+		const ids = [...new Set(blockIds.filter(Boolean))];
+		if (ids.length === 0) return;
 		for (let attempt = 0; attempt < 20; attempt++) {
-			const el = this.findBlockElement(blockId);
-			if (el) {
-				el.scrollIntoView({ block: "center", inline: "nearest" });
-				el.classList.add("protyle-wysiwyg--hl");
-				setTimeout(() => el.classList.remove("protyle-wysiwyg--hl"), 1024);
+			const elements = ids
+				.map(id => this.findBlockElement(id))
+				.filter((el): el is HTMLElement => Boolean(el));
+			if (elements.length > 0) {
+				elements[0].scrollIntoView({ block: "center", inline: "nearest" });
+				for (const el of elements) {
+					el.classList.add("protyle-wysiwyg--hl");
+					setTimeout(() => el.classList.remove("protyle-wysiwyg--hl"), 1024);
+				}
 				return;
 			}
 			await new Promise(resolve => setTimeout(resolve, 100));
 		}
 	}
 
-	private openDocumentLink(docId: string, blockId?: string): void {
+	private parseBlockIdsAttr(value?: string): string[] {
+		if (!value) return [];
+		try {
+			const parsed = JSON.parse(value);
+			return Array.isArray(parsed) ? parsed.filter((id: any) => typeof id === "string" && id) : [];
+		} catch {
+			return [];
+		}
+	}
+
+	private openDocumentLink(docId: string, blockIds: string[] = []): void {
 		const opened = openTab({ app: (globalThis as any).siyuanApp, doc: { id: docId } });
-		void Promise.resolve(opened).then(() => this.highlightBlockAfterOpen(blockId));
+		void Promise.resolve(opened).then(() => this.highlightBlocksAfterOpen(blockIds));
 	}
 
 	private renderRunChangeSummary(summary: RunChangeSummaryUi, shell: AssistantMessageShell): void {
@@ -1476,8 +1506,10 @@ export class ChatPanel {
 			const docId = item.id || "";
 			const canOpen = Boolean(docId);
 			const blockAttr = item.blockId ? ` data-block-id="${escapeHtml(item.blockId)}"` : "";
+			const blockIds = item.blockIds?.length ? item.blockIds : item.blockId ? [item.blockId] : [];
+			const blockIdsAttr = blockIds.length ? ` data-block-ids="${escapeHtml(JSON.stringify(blockIds))}"` : "";
 			const linkHtml = docId
-				? `<a class="chat-msg__doc-link${canOpen ? " chat-msg__doc-link--open" : ""}" data-id="${escapeHtml(docId)}"${blockAttr} href="javascript:void(0)">${displayLabel}</a>`
+				? `<a class="chat-msg__doc-link${canOpen ? " chat-msg__doc-link--open" : ""}" data-id="${escapeHtml(docId)}"${blockAttr}${blockIdsAttr} href="javascript:void(0)">${displayLabel}</a>`
 				: `<span class="chat-msg__doc-label">${displayLabel}</span>`;
 			const meta = item.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(item.meta)}</span>` : "";
 			const status = item.status === "error"
@@ -1511,7 +1543,8 @@ export class ChatPanel {
 		card.querySelectorAll<HTMLElement>(".chat-msg__doc-link[data-id]").forEach((link) => {
 			link.addEventListener("click", (e) => {
 				e.preventDefault();
-				this.openDocumentLink(link.dataset.id!, link.dataset.blockId);
+				const blockIds = this.parseBlockIdsAttr(link.dataset.blockIds);
+				this.openDocumentLink(link.dataset.id!, blockIds.length ? blockIds : link.dataset.blockId ? [link.dataset.blockId] : []);
 			});
 		});
 		shell.stackEl.appendChild(card);
@@ -1872,7 +1905,7 @@ export class ChatPanel {
 		toolEl: HTMLElement,
 		details: HTMLDetailsElement,
 		toolName: string,
-		options: { id?: string; blockId?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string },
+		options: { id?: string; blockId?: string; blockIds?: string[]; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string },
 	): void {
 		const summary = details.querySelector("summary");
 		if (!summary) return;
@@ -1882,8 +1915,10 @@ export class ChatPanel {
 		const meta = options.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(options.meta)}</span>` : "";
 		const canOpen = Boolean(docId) && options.open !== false;
 		const blockAttr = options.blockId ? ` data-block-id="${escapeHtml(options.blockId)}"` : "";
+		const blockIds = options.blockIds?.length ? options.blockIds : options.blockId ? [options.blockId] : [];
+		const blockIdsAttr = blockIds.length ? ` data-block-ids="${escapeHtml(JSON.stringify(blockIds))}"` : "";
 		const contentHtml = docId
-			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${escapeHtml(docId)}"${blockAttr} href="javascript:void(0)">${docTitle}</a>${meta}`
+			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${escapeHtml(docId)}"${blockAttr}${blockIdsAttr} href="javascript:void(0)">${docTitle}</a>${meta}`
 			: `<span class="chat-msg__doc-label">${docTitle}</span>${meta}`;
 		summary.innerHTML = this.buildToolSummaryHtml(
 			toolName || toolEl.dataset.toolName || "tool",
@@ -1895,7 +1930,8 @@ export class ChatPanel {
 		if (link && canOpen && docId) {
 			link.addEventListener("click", (e) => {
 				e.preventDefault();
-				this.openDocumentLink(docId, link.dataset.blockId);
+				const blockIds = this.parseBlockIdsAttr(link.dataset.blockIds);
+				this.openDocumentLink(docId, blockIds.length ? blockIds : link.dataset.blockId ? [link.dataset.blockId] : []);
 			});
 		} else if (link) {
 			link.addEventListener("click", (e) => {

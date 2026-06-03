@@ -77,6 +77,7 @@ export interface ToolMessageUi {
 		action: ToolActivityAction;
 		id?: string;
 		blockId?: string;
+		blockIds?: string[];
 		path?: string;
 		label?: string;
 		meta?: string;
@@ -99,6 +100,7 @@ export interface RunChangeSummaryItemUi {
 	label: string;
 	id?: string;
 	blockId?: string;
+	blockIds?: string[];
 	path?: string;
 	status: "ok" | "error";
 	added?: number;

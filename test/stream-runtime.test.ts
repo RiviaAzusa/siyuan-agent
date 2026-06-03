@@ -420,7 +420,10 @@ describe("buildMessagesView", () => {
 	it("adds a change summary for edit tools but not lookup tools", () => {
 		const editResult = JSON.stringify({
 			__tool_type: "edit_blocks",
-			results: [{ oldId: "b1", newIds: ["b2"], rootDocId: "doc1", status: "ok" }],
+			results: [
+				{ oldId: "b1", newIds: ["b2"], rootDocId: "doc1", status: "ok" },
+				{ oldId: "b3", newIds: ["b4"], rootDocId: "doc1", status: "ok" },
+			],
 		});
 		const state = {
 			messages: [
@@ -437,7 +440,7 @@ describe("buildMessagesView", () => {
 		expect(summary).toMatchObject({
 			type: "run_change_summary_ui",
 			total: 1,
-			items: [{ action: "edit", toolName: "edit_blocks", id: "b2", blockId: "b2", status: "ok" }],
+			items: [{ action: "edit", toolName: "edit_blocks", id: "b2", blockId: "b2", blockIds: ["b2", "b4"], status: "ok" }],
 		});
 	});
 
