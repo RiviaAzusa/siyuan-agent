@@ -10,3 +10,9 @@ index.js
 archive
 .env
 /tmp
+
+api.md
+.agent/
+.ai/
+deploy.sh
+.siyuan/
