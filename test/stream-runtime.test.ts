@@ -265,6 +265,42 @@ describe("runAgentStream", () => {
 		expect(ui[2]).toEqual({ role: "assistant", content: [{ type: "text", text: "I found it." }] });
 	});
 
+	it("unwraps text tool output before emitting UI tool_result events", async () => {
+		const { streamText } = await import("ai");
+		const editResult = JSON.stringify({ results: [{ oldId: "old", newIds: ["new"], rootDocId: "doc", status: "ok" }] });
+		(streamText as any)
+			.mockReturnValueOnce(makeResult(
+				[
+					{ type: "tool-call", toolCallId: "call-1", toolName: "edit_blocks", input: { blocks: [{ id: "old", content: "updated" }] } },
+					{ type: "tool-result", toolCallId: "call-1", toolName: "edit_blocks", output: { type: "text", value: editResult } },
+				],
+				[
+					{ role: "assistant", content: [{ type: "tool-call", toolCallId: "call-1", toolName: "edit_blocks", input: { blocks: [{ id: "old", content: "updated" }] } }] },
+					{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-1", toolName: "edit_blocks", output: { type: "text", value: editResult } }] },
+				],
+				[{ toolCallId: "call-1", toolName: "edit_blocks" }],
+			))
+			.mockReturnValueOnce(makeResult(
+				[{ type: "text-delta", text: "done" }],
+				[{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+			));
+
+		const seen: any[] = [];
+		await runAgentStream({
+			setup: makeSetup(),
+			input: mergeState(null, "edit"),
+			onUiEvent: (event) => {
+				if (event.type === "tool_result") seen.push(event);
+			},
+		});
+
+		expect(seen[0]).toMatchObject({
+			type: "tool_result",
+			toolName: "edit_blocks",
+			result: editResult,
+		});
+	});
+
 	it("does not copy previous step tool calls onto the final assistant UI message", async () => {
 		const { streamText } = await import("ai");
 		(streamText as any)
@@ -401,7 +437,7 @@ describe("buildMessagesView", () => {
 		expect(summary).toMatchObject({
 			type: "run_change_summary_ui",
 			total: 1,
-			items: [{ action: "edit", toolName: "edit_blocks", id: "b1", status: "ok" }],
+			items: [{ action: "edit", toolName: "edit_blocks", id: "b2", blockId: "b2", status: "ok" }],
 		});
 	});
 
@@ -491,11 +527,12 @@ describe("buildMessagesView", () => {
 			activity: {
 				category: "change",
 				action: "edit",
-				id: "20260524230326-dx2xwl8",
 				label: "20260524230326-dx2xwl8",
 				meta: "Edited 1 block(s)",
+				open: false,
 			},
 		});
+		expect(tool.activity.id).toBeUndefined();
 		expect(tool.result).toContain("boom");
 	});
 

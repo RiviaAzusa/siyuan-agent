@@ -173,15 +173,57 @@ export class ChatPanel {
 		return /^(Error|ToolError):/i.test(trimmed) || /^\[(MCP Error|MCP tool error:)/i.test(trimmed);
 	}
 
+	private parseJsonResult(result: string): any {
+		const normalized = (() => {
+			try {
+				const parsed = JSON.parse(result);
+				if (parsed && typeof parsed === "object" && parsed.type === "text" && typeof parsed.value === "string") return parsed.value;
+			} catch {
+				/* Try parsing the original value below. */
+			}
+			return result;
+		})();
+		try {
+			return JSON.parse(normalized);
+		} catch {
+			return null;
+		}
+	}
+
+	private getFirstOkEditResult(parsed: any): any | undefined {
+		if (!Array.isArray(parsed?.results)) return undefined;
+		return parsed.results.find((item: any) => item?.status === "ok");
+	}
+
+	private enrichToolActivityFromResult(
+		toolName: string,
+		input: any,
+		result: string,
+	): { id?: string; blockId?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
+		if (toolName !== "edit_blocks") return this.getFriendlyToolActivity(toolName, input);
+		const activity = this.getFriendlyToolActivity(toolName, input);
+		const firstOk = this.getFirstOkEditResult(this.parseJsonResult(result));
+		const blockId = Array.isArray(firstOk?.newIds) ? firstOk.newIds.find((id: any) => typeof id === "string" && id) : undefined;
+		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
+		if (!activity || (!blockId && !rootDocId)) return activity;
+		return {
+			...activity,
+			id: blockId || rootDocId || activity.id,
+			blockId,
+			label: blockId || activity.label,
+			open: Boolean(blockId || rootDocId),
+		};
+	}
+
 	private getFriendlyToolActivity(
 		toolName: string,
 		input: any,
-	): { id?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
+	): { id?: string; blockId?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
 		const args = input && typeof input === "object" ? input : {};
 		if (toolName === "edit_blocks") {
 			const count = Array.isArray(args.blocks) ? args.blocks.length : undefined;
 			const id = args.blocks?.[0]?.id;
-			return { category: "change", action: "edit", id, label: id || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
+			return { category: "change", action: "edit", id, label: id || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: false };
 		}
 		if (toolName === "append_block") {
 			return { category: "change", action: "append", id: args.parentID, label: args.parentID || toolName, meta: this.t("tool.appendBlock.metaSimple"), open: true };
@@ -898,6 +940,7 @@ export class ChatPanel {
 							event.toolCallIndex,
 							event.toolCallId,
 						);
+						(el as any).__toolArgs = event.args;
 						this.attachToolElementToShell(shell, el);
 						if (activity) {
 							const details = el.querySelector("details");
@@ -916,7 +959,15 @@ export class ChatPanel {
 					if (event.type === "tool_result") {
 						const toolEl = this.findPendingToolElement(event.toolCallId || "", pendingToolEls);
 						if (toolEl) {
-							if (this.isToolResultError(event.result, event.toolName || toolEl.dataset.toolName)) {
+							const toolName = event.toolName || toolEl.dataset.toolName || "";
+							if (toolEl.dataset.hasEvents === "true") {
+								const details = toolEl.querySelector("details");
+								const activity = this.enrichToolActivityFromResult(toolName, (toolEl as any).__toolArgs, event.result);
+								if (details && activity) {
+									this.renderToolActivitySummary(toolEl, details, toolName, activity);
+								}
+							}
+							if (this.isToolResultError(event.result, toolName)) {
 								toolEl.dataset.toolStatus = "error";
 								this.appendToolResultToElement(toolEl, event.result, true);
 							}
@@ -1380,6 +1431,35 @@ export class ChatPanel {
 		return parts.join("");
 	}
 
+	private cssEscape(value: string): string {
+		const escape = (globalThis as any).CSS?.escape;
+		return typeof escape === "function" ? escape(value) : value.replace(/["\\]/g, "\\$&");
+	}
+
+	private findBlockElement(blockId: string): HTMLElement | null {
+		const escaped = this.cssEscape(blockId);
+		return document.querySelector<HTMLElement>(`.protyle-wysiwyg [data-node-id="${escaped}"], .protyle-wysiwyg [data-id="${escaped}"]`);
+	}
+
+	private async highlightBlockAfterOpen(blockId?: string): Promise<void> {
+		if (!blockId) return;
+		for (let attempt = 0; attempt < 20; attempt++) {
+			const el = this.findBlockElement(blockId);
+			if (el) {
+				el.scrollIntoView({ block: "center", inline: "nearest" });
+				el.classList.add("protyle-wysiwyg--hl");
+				setTimeout(() => el.classList.remove("protyle-wysiwyg--hl"), 1024);
+				return;
+			}
+			await new Promise(resolve => setTimeout(resolve, 100));
+		}
+	}
+
+	private openDocumentLink(docId: string, blockId?: string): void {
+		const opened = openTab({ app: (globalThis as any).siyuanApp, doc: { id: docId } });
+		void Promise.resolve(opened).then(() => this.highlightBlockAfterOpen(blockId));
+	}
+
 	private renderRunChangeSummary(summary: RunChangeSummaryUi, shell: AssistantMessageShell): void {
 		const card = document.createElement("div");
 		card.className = "chat-msg__change-summary";
@@ -1395,8 +1475,9 @@ export class ChatPanel {
 			const displayLabel = escapeHtml(item.path || item.label || item.id || "");
 			const docId = item.id || "";
 			const canOpen = Boolean(docId);
+			const blockAttr = item.blockId ? ` data-block-id="${escapeHtml(item.blockId)}"` : "";
 			const linkHtml = docId
-				? `<a class="chat-msg__doc-link${canOpen ? " chat-msg__doc-link--open" : ""}" data-id="${escapeHtml(docId)}" href="javascript:void(0)">${displayLabel}</a>`
+				? `<a class="chat-msg__doc-link${canOpen ? " chat-msg__doc-link--open" : ""}" data-id="${escapeHtml(docId)}"${blockAttr} href="javascript:void(0)">${displayLabel}</a>`
 				: `<span class="chat-msg__doc-label">${displayLabel}</span>`;
 			const meta = item.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(item.meta)}</span>` : "";
 			const status = item.status === "error"
@@ -1430,7 +1511,7 @@ export class ChatPanel {
 		card.querySelectorAll<HTMLElement>(".chat-msg__doc-link[data-id]").forEach((link) => {
 			link.addEventListener("click", (e) => {
 				e.preventDefault();
-				openTab({ app: (globalThis as any).siyuanApp, doc: { id: link.dataset.id! } });
+				this.openDocumentLink(link.dataset.id!, link.dataset.blockId);
 			});
 		});
 		shell.stackEl.appendChild(card);
@@ -1791,7 +1872,7 @@ export class ChatPanel {
 		toolEl: HTMLElement,
 		details: HTMLDetailsElement,
 		toolName: string,
-		options: { id?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string },
+		options: { id?: string; blockId?: string; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string },
 	): void {
 		const summary = details.querySelector("summary");
 		if (!summary) return;
@@ -1800,8 +1881,9 @@ export class ChatPanel {
 		const docTitle = escapeHtml(options.label || options.path || docId || this.t("chat.tool.defaultDocument"));
 		const meta = options.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(options.meta)}</span>` : "";
 		const canOpen = Boolean(docId) && options.open !== false;
+		const blockAttr = options.blockId ? ` data-block-id="${escapeHtml(options.blockId)}"` : "";
 		const contentHtml = docId
-			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${escapeHtml(docId)}" href="javascript:void(0)">${docTitle}</a>${meta}`
+			? `<a class="${canOpen ? "chat-msg__doc-link chat-msg__doc-link--open" : "chat-msg__doc-link chat-msg__doc-link--muted"}" data-id="${escapeHtml(docId)}"${blockAttr} href="javascript:void(0)">${docTitle}</a>${meta}`
 			: `<span class="chat-msg__doc-label">${docTitle}</span>${meta}`;
 		summary.innerHTML = this.buildToolSummaryHtml(
 			toolName || toolEl.dataset.toolName || "tool",
@@ -1811,8 +1893,9 @@ export class ChatPanel {
 
 		const link = summary.querySelector<HTMLElement>(".chat-msg__doc-link");
 		if (link && canOpen && docId) {
-			link.addEventListener("click", () => {
-				openTab({ app: (globalThis as any).siyuanApp, doc: { id: docId } });
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				this.openDocumentLink(docId, link.dataset.blockId);
 			});
 		} else if (link) {
 			link.addEventListener("click", (e) => {

@@ -403,7 +403,11 @@ export async function runAgentStream({
 					});
 
 				} else if (chunk.type === "tool-result") {
-					const resultStr = typeof chunk.output === "string" ? chunk.output : JSON.stringify(chunk.output);
+					const resultStr = typeof chunk.output === "string"
+						? chunk.output
+						: chunk.output && typeof chunk.output === "object" && (chunk.output as any).type === "text" && typeof (chunk.output as any).value === "string"
+							? (chunk.output as any).value
+							: JSON.stringify(chunk.output);
 					const mapped = parserState.toolCallMap[chunk.toolCallId];
 					activeToolMessages.push({
 						role: "tool",

@@ -191,6 +191,50 @@ describe("SQL escape in tool definitions", () => {
 });
 
 describe("edit_blocks tool", () => {
+	it("batch-updates multiple single-block edits without insert/delete churn", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+			const body = JSON.parse(String(init?.body || "{}"));
+			if (url === "/api/block/getBlockKramdowns") {
+				expect(body.ids).toEqual(["block-1", "block-2"]);
+				return mockFetchResponse({ "block-1": "old 1", "block-2": "old 2" }) as any;
+			}
+			if (url === "/api/block/getBlockTreeInfos") {
+				return mockFetchResponse({
+					"block-1": { rootID: "root-doc", previousID: "", parentID: "root-doc" },
+					"block-2": { rootID: "root-doc", previousID: "block-1", parentID: "root-doc" },
+				}) as any;
+			}
+			if (url === "/api/block/batchUpdateBlock") {
+				expect(body).toEqual({
+					blocks: [
+						{ id: "block-1", data: "---", dataType: "markdown" },
+						{ id: "block-2", data: "updated paragraph", dataType: "markdown" },
+					],
+				});
+				return mockFetchResponse([{ doOperations: [{ action: "update", id: "block-1" }, { action: "update", id: "block-2" }] }]) as any;
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+
+		const tool = createEditBlocksTool();
+		const raw = await (tool as any).execute({
+			blocks: [
+				{ id: "block-1", content: "---" },
+				{ id: "block-2", content: "updated paragraph" },
+			],
+		});
+
+		expect(fetchMock).not.toHaveBeenCalledWith("/api/block/insertBlock", expect.anything());
+		expect(fetchMock).not.toHaveBeenCalledWith("/api/block/deleteBlock", expect.anything());
+		expect(JSON.parse(raw)).toEqual({
+			__tool_type: "edit_blocks",
+			results: [
+				{ oldId: "block-1", newIds: ["block-1"], rootDocId: "root-doc", status: "ok", original: "old 1", updated: "---" },
+				{ oldId: "block-2", newIds: ["block-2"], rootDocId: "root-doc", status: "ok", original: "old 2", updated: "updated paragraph" },
+			],
+		});
+	});
+
 	it("returns replacement IDs when editing after a previous sibling", async () => {
 		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
 			const body = JSON.parse(String(init?.body || "{}"));

@@ -76,6 +76,7 @@ export interface ToolMessageUi {
 		category: "lookup" | "change";
 		action: ToolActivityAction;
 		id?: string;
+		blockId?: string;
 		path?: string;
 		label?: string;
 		meta?: string;
@@ -97,6 +98,7 @@ export interface RunChangeSummaryItemUi {
 	toolName: string;
 	label: string;
 	id?: string;
+	blockId?: string;
 	path?: string;
 	status: "ok" | "error";
 	added?: number;

@@ -18,10 +18,18 @@ function extractOperationBlockIds(data: any): string[] {
 	return ids;
 }
 
+function isConservativeSingleMarkdownBlock(markdown: string): boolean {
+	const trimmed = markdown.trim();
+	if (!trimmed) return false;
+	if (trimmed.includes("\n\n")) return false;
+	if (/^```|^~~~/.test(trimmed)) return false;
+	return true;
+}
+
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "edit_blocks",
-		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. Changes are applied immediately by inserting replacement blocks and deleting the old blocks, so the original block IDs become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
+		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. Single-block replacements may preserve the original block ID; multi-block markdown is applied by inserting replacement blocks and deleting the old block, so the original block ID can become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
 		parameters: z.object({
 			blocks: z.array(z.object({
 				id: z.string().describe("Block ID to edit (from get_document_blocks)"),
@@ -34,6 +42,44 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 			const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids });
 
 			const results: any[] = [];
+			const editableBlocks = blocks.filter((block: { id: string; content: string }) => originals[block.id] !== undefined);
+			const canBatchUpdate = editableBlocks.length === blocks.length
+				&& blocks.length > 1
+				&& editableBlocks.every((block: { content: string }) => isConservativeSingleMarkdownBlock(block.content));
+
+			if (canBatchUpdate) {
+				try {
+					await siyuanFetch("/api/block/batchUpdateBlock", {
+						blocks: blocks.map((block: { id: string; content: string }) => ({
+							id: block.id,
+							data: block.content,
+							dataType: "markdown",
+						})),
+					});
+					return JSON.stringify({
+						__tool_type: "edit_blocks",
+						results: blocks.map((block: { id: string; content: string }) => ({
+							oldId: block.id,
+							newIds: [block.id],
+							rootDocId: typeof treeInfos[block.id]?.rootID === "string" && treeInfos[block.id].rootID ? treeInfos[block.id].rootID : undefined,
+							status: "ok",
+							original: originals[block.id],
+							updated: block.content,
+						})),
+					});
+				} catch (err: any) {
+					return JSON.stringify({
+						__tool_type: "edit_blocks",
+						results: blocks.map((block: { id: string; content: string }) => ({
+							oldId: block.id,
+							rootDocId: typeof treeInfos[block.id]?.rootID === "string" && treeInfos[block.id].rootID ? treeInfos[block.id].rootID : undefined,
+							status: "error",
+							error: err.message,
+							original: originals[block.id],
+						})),
+					});
+				}
+			}
 
 			for (const block of blocks) {
 				const original = originals[block.id];

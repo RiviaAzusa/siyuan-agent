@@ -151,6 +151,11 @@ function countInputBlocks(value: any): number | undefined {
 	return Array.isArray(value) ? value.length : undefined;
 }
 
+function getFirstOkEditResult(parsed: any): any | undefined {
+	if (!Array.isArray(parsed?.results)) return undefined;
+	return parsed.results.find((item: any) => item?.status === "ok");
+}
+
 function isToolResultError(resultText: string, explicitError = false): boolean {
 	if (explicitError) return true;
 	const parsed = parseJsonValue(resultText);
@@ -190,8 +195,11 @@ function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection
 	}
 	if (toolName === "edit_blocks") {
 		const count = countInputBlocks(input.blocks);
-		const id = input.blocks?.[0]?.id;
-		return { category: "change", action: "edit", id, label: id || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: true };
+		const inputId = input.blocks?.[0]?.id;
+		const firstOk = getFirstOkEditResult(parsed);
+		const blockId = Array.isArray(firstOk?.newIds) ? firstOk.newIds.find((id: any) => typeof id === "string" && id) : undefined;
+		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
+		return { category: "change", action: "edit", id: blockId || rootDocId, blockId, label: blockId || inputId || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: Boolean(blockId || rootDocId) };
 	}
 	if (toolName === "append_block") {
 		return { category: "change", action: "append", id: input.parentID, label: input.parentID || toolName, meta: i18n.t("tool.appendBlock.metaSimple"), open: true };
@@ -280,10 +288,14 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 
 	if (tool.toolName === "edit_blocks") {
 		const count = countInputBlocks(args?.blocks);
+		const firstOk = getFirstOkEditResult(parsed);
+		const blockId = Array.isArray(firstOk?.newIds) ? firstOk.newIds.find((id: any) => typeof id === "string" && id) : undefined;
+		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 		return {
 			...base,
-			label: base.label === tool.toolName ? (args?.blocks?.[0]?.id || tool.toolName) : base.label,
-			id: base.id || args?.blocks?.[0]?.id,
+			label: blockId || (base.label === tool.toolName ? (args?.blocks?.[0]?.id || tool.toolName) : base.label),
+			id: blockId || rootDocId,
+			blockId: blockId || base.blockId,
 			meta: base.meta || (count ? i18n.t("tool.editBlocks.meta", { count }) : undefined),
 		};
 	}
