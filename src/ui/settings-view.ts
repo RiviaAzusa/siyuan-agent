@@ -67,10 +67,6 @@ export class SettingsView {
 			customInstructions: config.customInstructions || "",
 			guideDoc: config.guideDoc || null,
 			defaultNotebook: config.defaultNotebook || null,
-			langSmithEnabled: Boolean(config.langSmithEnabled),
-			langSmithApiKey: config.langSmithApiKey || "",
-			langSmithEndpoint: config.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
-			langSmithProject: config.langSmithProject || DEFAULT_CONFIG.langSmithProject,
 			modelServices: cloneModelServices(config.modelServices),
 			defaultModelId: config.defaultModelId || "",
 			subAgentModelId: config.subAgentModelId || "",
@@ -109,7 +105,6 @@ export class SettingsView {
 			{ id: "general", label: this.t("settings.nav.general") },
 			{ id: "model-services", label: this.t("settings.nav.modelServices") },
 			{ id: "default-models", label: this.t("settings.nav.defaultModels") },
-			{ id: "tracing", label: this.t("settings.nav.tracing") },
 		];
 		const modelServicesHtml = this.renderModelServices(draft.modelServices);
 
@@ -186,26 +181,6 @@ export class SettingsView {
 							</select>
 						</label>
 					</section>
-
-				<section class="settings-panel__section${this.currentSection === "tracing" ? " settings-panel__section--active" : ""}" data-settings-panel="tracing">
-					<div class="settings-panel__section-title">${escapeHtml(this.t("settings.tracing.title"))}</div>
-					<label class="settings-panel__checkbox">
-						<input type="checkbox" name="langSmithEnabled"${draft.langSmithEnabled ? " checked" : ""} />
-						<span>${escapeHtml(this.t("settings.tracing.enable"))}</span>
-					</label>
-					<label class="settings-panel__field">
-						<span>LangSmith API Key</span>
-						<input class="b3-text-field" name="langSmithApiKey" type="password" value="${escapeHtml(draft.langSmithApiKey)}" placeholder="lsv2_..." />
-					</label>
-					<label class="settings-panel__field">
-						<span>LangSmith Endpoint</span>
-						<input class="b3-text-field" name="langSmithEndpoint" value="${escapeHtml(draft.langSmithEndpoint)}" placeholder="https://api.smith.langchain.com" />
-					</label>
-					<label class="settings-panel__field">
-						<span>LangSmith Project</span>
-						<input class="b3-text-field" name="langSmithProject" value="${escapeHtml(draft.langSmithProject)}" placeholder="SiYuan-Agent" />
-					</label>
-				</section>
 			</div>
 		</div>
 	</form>
@@ -279,10 +254,6 @@ export class SettingsView {
 			defaultModelId: String(formData.get("defaultModelId") || "").trim(),
 			subAgentModelId: String(formData.get("subAgentModelId") || "").trim(),
 			mcpServers: draft.mcpServers.map((item) => ({ ...item })),
-			langSmithEnabled: formData.get("langSmithEnabled") === "on",
-			langSmithApiKey: String(formData.get("langSmithApiKey") || "").trim(),
-			langSmithEndpoint: String(formData.get("langSmithEndpoint") || "").trim() || DEFAULT_CONFIG.langSmithEndpoint,
-			langSmithProject: String(formData.get("langSmithProject") || "").trim() || DEFAULT_CONFIG.langSmithProject,
 		};
 		this.ctx.plugin.data[CONFIG_STORAGE] = nextConfig;
 		await this.ctx.plugin.saveData(CONFIG_STORAGE, nextConfig);
@@ -292,10 +263,6 @@ export class SettingsView {
 			customInstructions: nextConfig.customInstructions,
 			guideDoc: nextConfig.guideDoc || null,
 			defaultNotebook: nextConfig.defaultNotebook || null,
-			langSmithEnabled: Boolean(nextConfig.langSmithEnabled),
-			langSmithApiKey: nextConfig.langSmithApiKey || "",
-			langSmithEndpoint: nextConfig.langSmithEndpoint || DEFAULT_CONFIG.langSmithEndpoint,
-			langSmithProject: nextConfig.langSmithProject || DEFAULT_CONFIG.langSmithProject,
 			modelServices: cloneModelServices(nextConfig.modelServices),
 			defaultModelId: nextConfig.defaultModelId || "",
 			subAgentModelId: nextConfig.subAgentModelId || "",

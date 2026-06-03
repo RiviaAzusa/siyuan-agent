@@ -68,7 +68,6 @@ Optional settings:
 - `Custom Instructions`
 - `Guide Document`
 - `Default Notebook`
-- `LangSmith Tracing`
 
 ## Development
 

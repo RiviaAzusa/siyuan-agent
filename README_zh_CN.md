@@ -68,7 +68,6 @@
 - `Custom Instructions`
 - `Guide Document`
 - `Default Notebook`
-- `LangSmith Tracing`
 
 ## 开发
 
