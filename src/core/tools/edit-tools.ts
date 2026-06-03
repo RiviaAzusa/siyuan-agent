@@ -1,7 +1,7 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
 import { openTab } from "siyuan";
-import { siyuanFetch, sqlEscape } from "./siyuan-api";
+import { siyuanFetch } from "./siyuan-api";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 function extractOperationBlockIds(data: any): string[] {
@@ -32,15 +32,8 @@ function getRootDocId(info: any): string | undefined {
 	return undefined;
 }
 
-function buildRootDocIdMap(rows: any[]): Record<string, string> {
-	const map: Record<string, string> = {};
-	if (!Array.isArray(rows)) return map;
-	for (const row of rows) {
-		if (typeof row?.id === "string" && typeof row?.root_id === "string" && row.root_id) {
-			map[row.id] = row.root_id;
-		}
-	}
-	return map;
+function resolveRootDocId(blockId: string, treeInfos: Record<string, any>): string | undefined {
+	return getRootDocId(treeInfos[blockId]);
 }
 
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
@@ -57,24 +50,17 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 			const ids = blocks.map((b: { id: string }) => b.id);
 			const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids });
 			const treeInfos: Record<string, any> = await siyuanFetch("/api/block/getBlockTreeInfos", { ids });
-			const rootRows = ids.length > 0
-				? await siyuanFetch("/api/query/sql", {
-					stmt: `SELECT id, root_id FROM blocks WHERE id IN (${ids.map((id: string) => `'${sqlEscape(id)}'`).join(",")})`,
-				})
-				: [];
-			const rootDocIds = buildRootDocIdMap(rootRows);
-
 			const results: any[] = [];
 			const existingRootDocIds = [...new Set(blocks
 				.filter((block: { id: string }) => originals[block.id] !== undefined)
-				.map((block: { id: string }) => rootDocIds[block.id] || getRootDocId(treeInfos[block.id]))
-				.filter((id: string | undefined): id is string => Boolean(id)))];
+				.map((block: { id: string }) => resolveRootDocId(block.id, treeInfos))
+				.filter((id: string | undefined): id is string => id !== undefined))];
 			if (existingRootDocIds.length > 1) {
 				return JSON.stringify({
 					__tool_type: "edit_blocks",
 					results: blocks.map((block: { id: string }) => ({
 						oldId: block.id,
-						rootDocId: rootDocIds[block.id] || getRootDocId(treeInfos[block.id]),
+						rootDocId: resolveRootDocId(block.id, treeInfos),
 						status: "error",
 						error: `edit_blocks cannot edit blocks across multiple documents in one call. Split this into separate calls per document. Root document IDs: ${existingRootDocIds.join(", ")}`,
 						original: originals[block.id],
@@ -100,7 +86,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						results: blocks.map((block: { id: string; content: string }) => ({
 							oldId: block.id,
 							newIds: [block.id],
-							rootDocId: rootDocIds[block.id] || getRootDocId(treeInfos[block.id]),
+							rootDocId: resolveRootDocId(block.id, treeInfos),
 							status: "ok",
 							original: originals[block.id],
 							updated: block.content,
@@ -111,7 +97,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						__tool_type: "edit_blocks",
 						results: blocks.map((block: { id: string; content: string }) => ({
 							oldId: block.id,
-							rootDocId: rootDocIds[block.id] || getRootDocId(treeInfos[block.id]),
+							rootDocId: resolveRootDocId(block.id, treeInfos),
 							status: "error",
 							error: err.message,
 							original: originals[block.id],
@@ -123,7 +109,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 			for (const block of blocks) {
 				const original = originals[block.id];
 				const info = treeInfos[block.id];
-				const rootDocId: string | undefined = rootDocIds[block.id] || getRootDocId(info);
+				const rootDocId: string | undefined = resolveRootDocId(block.id, treeInfos);
 				if (original === undefined) {
 					results.push({
 						oldId: block.id,

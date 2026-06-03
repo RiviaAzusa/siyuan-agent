@@ -33,7 +33,7 @@ import { mergeState, runAgentStream } from "../core/stream-runtime";
 import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
-import { buildMessagesView } from "../core/ui-message-builder";
+import { buildMessagesView, extractEditOkResults } from "../core/ui-message-builder";
 import { compactMessages, shouldCompact } from "../core/compaction";
 import { createModel } from "../llms/ai-sdk-provider";
 import { getDefaultTools, type SiyuanTool } from "../core/tools";
@@ -174,71 +174,36 @@ export class ChatPanel {
 	}
 
 	private parseJsonResult(result: string): any {
-		const normalized = (() => {
-			try {
-				const parsed = JSON.parse(result);
-				if (parsed && typeof parsed === "object" && parsed.type === "text" && typeof parsed.value === "string") return parsed.value;
-			} catch {
-				/* Try parsing the original value below. */
-			}
-			return result;
-		})();
 		try {
-			return JSON.parse(normalized);
+			const parsed = JSON.parse(result);
+			if (parsed && typeof parsed === "object" && parsed.type === "text" && typeof parsed.value === "string") {
+				try { return JSON.parse(parsed.value); } catch { return null; }
+			}
+			return parsed;
 		} catch {
 			return null;
 		}
 	}
 
-	private getFirstOkEditResult(parsed: any): any | undefined {
-		if (!Array.isArray(parsed?.results)) return undefined;
-		return parsed.results.find((item: any) => item?.status === "ok");
-	}
-
-	private getOkEditBlockIds(parsed: any): string[] {
-		if (!Array.isArray(parsed?.results)) return [];
-		const ids: string[] = [];
-		for (const item of parsed.results) {
-			if (item?.status !== "ok" || !Array.isArray(item.newIds)) continue;
-			for (const id of item.newIds) {
-				if (typeof id === "string" && id) ids.push(id);
-			}
-		}
-		return ids;
-	}
-
-	private enrichToolActivityFromResult(
-		toolName: string,
-		input: any,
-		result: string,
-	): { id?: string; blockId?: string; blockIds?: string[]; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
-		if (toolName !== "edit_blocks") return this.getFriendlyToolActivity(toolName, input);
-		const activity = this.getFriendlyToolActivity(toolName, input);
-		const parsed = this.parseJsonResult(result);
-		const firstOk = this.getFirstOkEditResult(parsed);
-		const blockIds = this.getOkEditBlockIds(parsed);
-		const blockId = blockIds[0];
-		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
-		if (!activity || (!blockId && !rootDocId)) return activity;
-		return {
-			...activity,
-			id: blockId || rootDocId || activity.id,
-			blockId,
-			blockIds,
-			label: blockId || activity.label,
-			open: Boolean(blockId || rootDocId),
-		};
-	}
-
 	private getFriendlyToolActivity(
 		toolName: string,
 		input: any,
+		result?: string,
 	): { id?: string; blockId?: string; blockIds?: string[]; path?: string; label?: string; meta?: string; open?: boolean; category?: "lookup" | "change"; action?: string } | null {
 		const args = input && typeof input === "object" ? input : {};
 		if (toolName === "edit_blocks") {
 			const count = Array.isArray(args.blocks) ? args.blocks.length : undefined;
-			const id = args.blocks?.[0]?.id;
-			return { category: "change", action: "edit", id, label: id || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: false };
+			const inputId = args.blocks?.[0]?.id;
+			if (result) {
+				const parsed = this.parseJsonResult(result);
+				const { firstOk, blockIds } = extractEditOkResults(parsed);
+				const blockId = blockIds[0];
+				const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
+				if (blockId || rootDocId) {
+					return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: blockId || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
+				}
+			}
+			return { category: "change", action: "edit", id: inputId, label: inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: false };
 		}
 		if (toolName === "append_block") {
 			return { category: "change", action: "append", id: args.parentID, label: args.parentID || toolName, meta: this.t("tool.appendBlock.metaSimple"), open: true };
@@ -977,7 +942,7 @@ export class ChatPanel {
 							const toolName = event.toolName || toolEl.dataset.toolName || "";
 							if (toolEl.dataset.hasEvents === "true") {
 								const details = toolEl.querySelector("details");
-								const activity = this.enrichToolActivityFromResult(toolName, (toolEl as any).__toolArgs, event.result);
+								const activity = this.getFriendlyToolActivity(toolName, (toolEl as any).__toolArgs, event.result);
 								if (details && activity) {
 									this.renderToolActivitySummary(toolEl, details, toolName, activity);
 								}

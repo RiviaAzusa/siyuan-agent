@@ -108,6 +108,14 @@ function normalizeToolOutput(output: any): unknown {
 	return { type: "json", value: output ?? null };
 }
 
+function stringifyToolOutput(output: unknown): string {
+	if (typeof output === "string") return output;
+	if (output && typeof output === "object" && (output as any).type === "text" && typeof (output as any).value === "string") {
+		return (output as any).value;
+	}
+	return JSON.stringify(output);
+}
+
 function normalizeModelMessage(m: any): Record<string, any> {
 	if (m.role === "assistant") {
 		const content = Array.isArray(m.content) ? m.content : [
@@ -403,11 +411,7 @@ export async function runAgentStream({
 					});
 
 				} else if (chunk.type === "tool-result") {
-					const resultStr = typeof chunk.output === "string"
-						? chunk.output
-						: chunk.output && typeof chunk.output === "object" && (chunk.output as any).type === "text" && typeof (chunk.output as any).value === "string"
-							? (chunk.output as any).value
-							: JSON.stringify(chunk.output);
+					const resultStr = stringifyToolOutput(chunk.output);
 					const mapped = parserState.toolCallMap[chunk.toolCallId];
 					activeToolMessages.push({
 						role: "tool",

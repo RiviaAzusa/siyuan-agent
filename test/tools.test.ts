@@ -200,16 +200,9 @@ describe("edit_blocks tool", () => {
 			}
 			if (url === "/api/block/getBlockTreeInfos") {
 				return mockFetchResponse({
-					"block-1": { previousID: "", parentID: "doc-a" },
-					"block-2": { previousID: "", parentID: "doc-b" },
+					"block-1": { rootID: "doc-a", previousID: "", parentID: "doc-a" },
+					"block-2": { rootID: "doc-b", previousID: "", parentID: "doc-b" },
 				}) as any;
-			}
-			if (url === "/api/query/sql") {
-				expect(body.stmt).toContain("SELECT id, root_id FROM blocks");
-				return mockFetchResponse([
-					{ id: "block-1", root_id: "doc-a" },
-					{ id: "block-2", root_id: "doc-b" },
-				]) as any;
 			}
 			throw new Error(`Unexpected URL: ${url}`);
 		});
@@ -247,12 +240,6 @@ describe("edit_blocks tool", () => {
 					"block-1": { rootID: "root-doc", previousID: "", parentID: "root-doc" },
 					"block-2": { rootID: "root-doc", previousID: "block-1", parentID: "root-doc" },
 				}) as any;
-			}
-			if (url === "/api/query/sql") {
-				return mockFetchResponse([
-					{ id: "block-1", root_id: "root-doc" },
-					{ id: "block-2", root_id: "root-doc" },
-				]) as any;
 			}
 			if (url === "/api/block/batchUpdateBlock") {
 				expect(body).toEqual({
@@ -301,9 +288,6 @@ describe("edit_blocks tool", () => {
 					},
 				}) as any;
 			}
-			if (url === "/api/query/sql") {
-				return mockFetchResponse([{ id: "old-block", root_id: "root-doc" }]) as any;
-			}
 			if (url === "/api/block/insertBlock") {
 				expect(body.previousID).toBe("prev-block");
 				return mockFetchResponse([
@@ -350,9 +334,6 @@ describe("edit_blocks tool", () => {
 						parentID: "parent-block",
 					},
 				}) as any;
-			}
-			if (url === "/api/query/sql") {
-				return mockFetchResponse([{ id: "old-first", root_id: "root-doc" }]) as any;
 			}
 			if (url === "/api/block/prependBlock") {
 				expect(body.parentID).toBe("parent-block");

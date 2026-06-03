@@ -151,21 +151,20 @@ function countInputBlocks(value: any): number | undefined {
 	return Array.isArray(value) ? value.length : undefined;
 }
 
-function getFirstOkEditResult(parsed: any): any | undefined {
-	if (!Array.isArray(parsed?.results)) return undefined;
-	return parsed.results.find((item: any) => item?.status === "ok");
-}
-
-function getOkEditBlockIds(parsed: any): string[] {
-	if (!Array.isArray(parsed?.results)) return [];
-	const ids: string[] = [];
+export function extractEditOkResults(parsed: any): { firstOk: any | undefined; blockIds: string[] } {
+	if (!Array.isArray(parsed?.results)) return { firstOk: undefined, blockIds: [] };
+	let firstOk: any | undefined;
+	const blockIds: string[] = [];
 	for (const item of parsed.results) {
-		if (item?.status !== "ok" || !Array.isArray(item.newIds)) continue;
-		for (const id of item.newIds) {
-			if (typeof id === "string" && id) ids.push(id);
+		if (item?.status !== "ok") continue;
+		if (!firstOk) firstOk = item;
+		if (Array.isArray(item.newIds)) {
+			for (const id of item.newIds) {
+				if (typeof id === "string" && id) blockIds.push(id);
+			}
 		}
 	}
-	return ids;
+	return { firstOk, blockIds };
 }
 
 function isToolResultError(resultText: string, explicitError = false): boolean {
@@ -208,8 +207,7 @@ function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection
 	if (toolName === "edit_blocks") {
 		const count = countInputBlocks(input.blocks);
 		const inputId = input.blocks?.[0]?.id;
-		const firstOk = getFirstOkEditResult(parsed);
-		const blockIds = getOkEditBlockIds(parsed);
+		const { firstOk, blockIds } = extractEditOkResults(parsed);
 		const blockId = blockIds[0];
 		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 		return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: blockId || inputId || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: Boolean(blockId || rootDocId) };
@@ -301,8 +299,7 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 
 	if (tool.toolName === "edit_blocks") {
 		const count = countInputBlocks(args?.blocks);
-		const firstOk = getFirstOkEditResult(parsed);
-		const blockIds = getOkEditBlockIds(parsed);
+		const { firstOk, blockIds } = extractEditOkResults(parsed);
 		const blockId = blockIds[0];
 		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 		return {
