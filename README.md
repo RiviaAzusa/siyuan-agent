@@ -26,9 +26,17 @@ It understands your notes and writing habits, then helps with search, drafting, 
   - Automatically compresses context in the background, and manages long tasks with Todo.
 - Scheduled tasks: delegate recurring work to the Agent.
 
+## What's New (v0.1.6)
+
+> For full details, see [CHANGELOG.md](./CHANGELOG.md)
+
+- Added tool permission system — configure approval rules for destructive tools.
+- Visual display of edit results in chat.
+- Unified system prompt across providers.
+- Fixed block jump links.
+
 ## Roadmap
 
-- Tool permission management
 - Visual edit history and rollback
 - ACP protocol exposure
 - ... (tentative, issues are welcome)

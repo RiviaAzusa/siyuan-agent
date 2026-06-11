@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.6
+
+- Added tool permission system — configure approval rules for tools.
+- Added tool permission configure UI.
+- Added visual display of edit results in chat.
+- Unified system prompt across providers.
+- Fixed block jump links.
+
+中文：
+
+- 新增工具权限管理系统 — 可为工具配置审批规则。
+- 新增工具权限配置界面。
+- 聊天中可视化展示编辑结果。
+- 统一各模型供应商的系统提示词。
+- 修复文档块跳转链接。
+
 ## 0.1.5
 
 - Added block highlight effect when editing blocks.
