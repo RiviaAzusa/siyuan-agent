@@ -424,7 +424,7 @@ export class ScheduledTaskManager {
 			if (!modelConfig.apiKey) {
 				throw new Error(i18n.t("chat.error.apiKeyMissing"));
 			}
-			const setup = await prepareAgent(config, this.options.getTools(), null, null, i18n);
+			const setup = await prepareAgent(config, this.options.getTools(), null, null);
 			const promptContent = buildScheduledTaskRunPrompt(task, startedAt, i18n);
 			const input = mergeState(null, promptContent);
 			const result = await runAgentStream({

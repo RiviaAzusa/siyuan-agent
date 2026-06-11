@@ -1,14 +1,16 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
 import { siyuanFetch, sqlEscape } from "./siyuan-api";
+import { TOOL_DESC } from "../../types";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 export function createGetDocumentTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.get_document;
 	return createTool({
 		name: "get_document",
-		description: "Get the full Markdown content of a document (block) by its ID. Returns the complete document content including its path.",
+		description: desc.description,
 		parameters: z.object({
-			id: z.string().describe("The Document block ID. You usually get this from list_documents or search results."),
+			id: z.string().describe(desc.params.id),
 		}),
 		async execute({ id }) {
 			const data = await siyuanFetch("/api/export/exportMdContent", { id });
@@ -20,11 +22,12 @@ export function createGetDocumentTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createGetDocumentBlocksTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.get_document_blocks;
 	return createTool({
 		name: "get_document_blocks",
-		description: "Get all child blocks of a document with their block IDs and markdown content. Use this when you need to edit specific blocks — it returns block IDs needed for edit_blocks. Each block has: id (block ID for editing), type (h=heading, p=paragraph, c=code, l=list, etc.), markdown (block content). For large documents, prefer search_fulltext to locate specific blocks first.",
+		description: desc.description,
 		parameters: z.object({
-			id: z.string().describe("Document block ID. Get this from list_documents or search results."),
+			id: z.string().describe(desc.params.id),
 		}),
 		async execute({ id }) {
 			const data = await siyuanFetch("/api/block/getChildBlocks", { id });
@@ -40,11 +43,12 @@ export function createGetDocumentBlocksTool(i18n: Translator = defaultTranslator
 }
 
 export function createGetDocumentOutlineTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.get_document_outline;
 	return createTool({
 		name: "get_document_outline",
-		description: "Get the heading outline (table of contents) of a document. Returns all headings with their IDs, titles, and levels. Useful for understanding document structure before reading or editing specific sections.",
+		description: desc.description,
 		parameters: z.object({
-			id: z.string().describe("Document ID to get outline for"),
+			id: z.string().describe(desc.params.id),
 		}),
 		async execute({ id }) {
 			const stmt = `SELECT id, content, subtype, sort FROM blocks WHERE root_id='${sqlEscape(id)}' AND type='h' ORDER BY sort ASC LIMIT 200`;
@@ -60,11 +64,12 @@ export function createGetDocumentOutlineTool(i18n: Translator = defaultTranslato
 }
 
 export function createReadBlockTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.read_block;
 	return createTool({
 		name: "read_block",
-		description: "Read a single block's content by ID. Returns the block's kramdown content, type, and location. Useful for reading specific blocks found via search or after getting an outline.",
+		description: desc.description,
 		parameters: z.object({
-			id: z.string().describe("Block ID to read"),
+			id: z.string().describe(desc.params.id),
 		}),
 		async execute({ id }) {
 			const kramdowns: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", { ids: [id] });
@@ -89,12 +94,13 @@ export function createReadBlockTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createSearchFulltextTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.search_fulltext;
 	return createTool({
 		name: "search_fulltext",
-		description: "Full-text search across all notebooks. Returns matching blocks with their content, path, and type. Use this to find specific information in the knowledge base.",
+		description: desc.description,
 		parameters: z.object({
-			query: z.string().describe("Search keyword or phrase"),
-			page: z.number().optional().describe("Page number, defaults to 1. Each page returns up to 10 results."),
+			query: z.string().describe(desc.params.query),
+			page: z.number().optional().describe(desc.params.page),
 		}),
 		async execute({ query, page }) {
 			const data = await siyuanFetch("/api/search/fullTextSearchBlock", {
@@ -124,12 +130,13 @@ export function createSearchFulltextTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createSearchDocumentsTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.search_documents;
 	return createTool({
 		name: "search_documents",
-		description: "Search for documents (notes) by title keyword. Returns matching document IDs, titles, paths, and notebooks. Use search_fulltext to search inside document content instead.",
+		description: desc.description,
 		parameters: z.object({
-			keyword: z.string().describe("Keyword to search in document titles"),
-			notebook: z.string().optional().describe("Limit search to a specific notebook ID. Omit to search all notebooks."),
+			keyword: z.string().describe(desc.params.keyword),
+			notebook: z.string().optional().describe(desc.params.notebook),
 		}),
 		async execute({ keyword, notebook }) {
 			const safeKeyword = sqlEscape(keyword);

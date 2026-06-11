@@ -2,6 +2,7 @@ import { createTool } from "../tool-types";
 import { z } from "zod";
 import { openTab } from "siyuan";
 import { siyuanFetch } from "./siyuan-api";
+import { TOOL_DESC } from "../../types";
 import { defaultTranslator, type Translator } from "../../i18n";
 import { stripSiyuanBlockAttrs } from "../siyuan-markdown";
 
@@ -42,15 +43,16 @@ function displayOriginal(original: string | undefined): string | undefined {
 }
 
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.edit_blocks;
 	return createTool({
 		name: "edit_blocks",
 		category: "change",
-		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. All blocks in one call must belong to the same root document; split cross-document edits into separate edit_blocks calls. Single-block replacements may preserve the original block ID; multi-block markdown is applied by inserting replacement blocks and deleting the old block, so the original block ID can become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
+		description: desc.description,
 		parameters: z.object({
 			blocks: z.array(z.object({
-				id: z.string().describe("Block ID to edit (from get_document_blocks)"),
-				content: z.string().min(1).describe("New markdown content for this block"),
-			})).describe("Array of blocks to edit"),
+				id: z.string().describe(desc.params["blocks[].id"]),
+				content: z.string().min(1).describe(desc.params["blocks[].content"]),
+			})).describe(desc.params.blocks),
 		}),
 		async execute({ blocks }) {
 			const ids = blocks.map((b: { id: string }) => b.id);
@@ -179,13 +181,14 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.append_block;
 	return createTool({
 		name: "append_block",
 		category: "change",
-		description: "Append Markdown content as child blocks to an existing block (usually a document). Use this to add new content to a document.",
+		description: desc.description,
 		parameters: z.object({
-			parentID: z.string().describe("The parent block ID to append content to. Usually a document ID from list_documents or search results."),
-			markdown: z.string().describe("Markdown content to append"),
+			parentID: z.string().describe(desc.params.parentID),
+			markdown: z.string().describe(desc.params.markdown),
 		}),
 		async execute({ parentID, markdown }) {
 			const data = await siyuanFetch("/api/block/appendBlock", {
@@ -199,14 +202,15 @@ export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.create_document;
 	return createTool({
 		name: "create_document",
 		category: "change",
-		description: "Create a new document (note) in a notebook with optional Markdown content. The path is the human-readable path (hpath) like '/Folder/My Note'. Returns the new document's ID.",
+		description: desc.description,
 		parameters: z.object({
-			notebook: z.string().describe("Notebook ID (from list_notebooks)"),
-			path: z.string().describe("Human-readable path for the new document, e.g. '/Daily Notes/2024-01-01' or '/Project/Meeting Notes'"),
-			markdown: z.string().optional().describe("Initial Markdown content for the document. Defaults to empty."),
+			notebook: z.string().describe(desc.params.notebook),
+			path: z.string().describe(desc.params.path),
+			markdown: z.string().optional().describe(desc.params.markdown),
 		}),
 		async execute({ notebook, path, markdown }) {
 			const id = await siyuanFetch("/api/filetree/createDocWithMd", {
@@ -221,13 +225,14 @@ export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.move_document;
 	return createTool({
 		name: "move_document",
 		category: "change",
-		description: "Move one or more documents to a different location. toID can be a notebook ID (moves to notebook root) or a document ID (moves inside that document as sub-document).",
+		description: desc.description,
 		parameters: z.object({
-			fromIDs: z.array(z.string()).describe("Array of document IDs to move"),
-			toID: z.string().describe("Target notebook ID or parent document ID"),
+			fromIDs: z.array(z.string()).describe(desc.params.fromIDs),
+			toID: z.string().describe(desc.params.toID),
 		}),
 		async execute({ fromIDs, toID }) {
 			await siyuanFetch("/api/filetree/moveDocsByID", { fromIDs, toID });
@@ -237,13 +242,14 @@ export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.rename_document;
 	return createTool({
 		name: "rename_document",
 		category: "change",
-		description: "Rename a document by changing its title.",
+		description: desc.description,
 		parameters: z.object({
-			id: z.string().describe("Document ID to rename"),
-			title: z.string().describe("New title for the document"),
+			id: z.string().describe(desc.params.id),
+			title: z.string().describe(desc.params.title),
 		}),
 		async execute({ id, title }) {
 			await siyuanFetch("/api/filetree/renameDocByID", { id, title });
@@ -256,9 +262,9 @@ export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
 export const deleteDocumentTool = createTool({
 	name: "delete_document",
 	category: "change",
-	description: "Permanently delete a document by its ID. This is irreversible.",
+	description: TOOL_DESC.delete_document.description,
 	parameters: z.object({
-		id: z.string().describe("Document ID to delete"),
+		id: z.string().describe(TOOL_DESC.delete_document.params.id),
 	}),
 	async execute({ id }) {
 		await siyuanFetch("/api/filetree/removeDocByID", { id });

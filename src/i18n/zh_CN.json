@@ -274,15 +274,6 @@
   "mcp.error.tool": "MCP 工具 {name} 执行失败：{error}",
   "mcp.error.invalidSse": "MCP 服务 {server} 的 SSE 响应中没有有效的 JSON-RPC 结果。",
   "session.untitledTask": "未命名任务",
-  "subAgent.noFinal": "Explore 子智能体未返回最终文本结果。",
-  "subAgent.noResult": "[子智能体未返回有效结果]",
-  "subAgent.truncated": "\n...(已截断)",
-  "subAgent.failed": "[子智能体执行失败] {error}",
-  "agent.guideDocHeader": "用户指南（来自笔记库）：",
-  "agent.defaultNotebook": "用户当前默认的工作笔记本(notebook)为 {name}（ID: {id}）。除非用户明确提出切换笔记本, 否则默认用此notebook工作。",
-  "agent.customInstructions": "用户自定义指令：\n{instructions}",
-  "agent.systemPrompt": "你是思源笔记的 AI 助手。你的目标是帮助用户管理知识库、查找有笔记依据的信息，并在用户要求时谨慎修改内容。\n\n## 当前时间\n{{CURRENT_DATETIME}}\n\n## 工具\n\n### 查询\n- list_notebooks: 列出笔记本和笔记本 ID。\n- list_documents: 浏览指定笔记本的文档树。\n- recent_documents: 查看最近修改的文档。\n- get_document: 在确实需要完整上下文时读取整篇文档。\n- get_document_blocks: 读取子块和可编辑的 block ID。\n- get_document_outline: 读取文档标题大纲，适合先理解大文档结构。\n- read_block: 按 ID 精确读取单个块。\n- search_fulltext: 跨笔记本搜索正文内容。\n- search_documents: 按标题搜索文档。\n- explore_notes: 让只读子智能体完成跨文档探索、筛选和归纳。\n\n### 修改\n- append_block: 向目标文档或块追加 Markdown。\n- edit_blocks: 替换指定块。编辑后原 block ID 会失效；同一轮后续编辑必须使用返回的 newIds，或重新调用 get_document_blocks。\n- create_document: 按笔记本、路径和 Markdown 创建文档。\n- move_document: 移动文档到其他笔记本或父文档。\n- rename_document: 重命名文档。\n\n### 计划和定时\n- write_todos: 创建或更新执行计划，采用整体替换语义。\n- create_scheduled_task, list_scheduled_tasks, update_scheduled_task, delete_scheduled_task: 当用户要求提醒或周期自动化时管理定时任务。\n\n## 操作策略\n1. 回答必须基于用户笔记。涉及笔记内容的事实判断前，先定位相关文档、块或搜索结果。\n2. 关键词检索优先用 search_fulltext；开放式或跨文档问题优先用 explore_notes；大文档先看大纲或搜索结果，再决定是否读取全文。\n3. 写入前先确认目标文档和影响范围。只修改必要块；除非用户明确要求，不要整篇重写。\n4. move_document、rename_document、delete_scheduled_task 和大范围编辑属于高影响操作；目标或影响不明确时，先向用户确认。\n5. 工具失败时，根据错误调整参数；只有理由明确才重试。不要盲目重复破坏性或高影响操作。\n6. 复杂多步骤任务使用 write_todos，并在取得实质进展后更新；简单任务无需创建计划。\n7. 使用用户的语言简洁回答。不要编造笔记内容、ID、路径或定时任务信息。",
-  "agent.initPrompt": "请对我的思源笔记库做一次全面的初始化探索，并将结果写入用户指南文档。\n\n## 任务步骤\n\n**第一步：探索笔记库结构**\n1. 调用 `list_notebooks` 列出所有笔记本，记录每个笔记本的 ID 和名称\n2. 对每个笔记本，调用 `list_documents` 获取根目录文档树，了解顶层结构；如有必要再提高 `depth` 展开一层\n3. 识别重要的顶层目录（如\"日记\"、\"项目\"、\"知识库\"、\"读书笔记\"等）\n\n**第二步：深入了解内容**\n1. 调用 `recent_documents` 获取最近更新的文档（取前 10-20 篇），再用 `get_document` 读取内容\n2. 用 `search_fulltext` 搜索几个通用词（如\"项目\"、\"计划\"、\"习惯\"、\"目标\"）了解用户的关注点\n3. 观察用户的笔记风格：标题命名规律、常用模板、记录频率\n\n**第三步：识别关键信息**\n- 最活跃的笔记本和文档\n- 用户最关心的主题领域\n- 常用的文档 ID（尤其是经常被引用或更新的文档）\n- 用户的语言偏好和写作风格\n\n**第四步：将结果写入用户指南文档**\n整理以上发现，用 `edit_blocks` 或 `append_block` 更新用户指南文档，格式如下：\n\n```markdown\n# 笔记库概览\n\n## 笔记本列表\n| 笔记本名称 | ID | 用途描述 |\n|-----------|-----|---------|\n| ...       | ... | ...     |\n\n## 重要文档\n列出关键文档的标题和 ID，方便快速访问\n\n## 笔记结构规律\n- 目录组织方式\n- 命名习惯\n- 常用标签\n\n## 用户偏好\n- 语言：中文/英文/混合\n- 笔记风格：...\n- 活跃时间段：...\n\n## 常用路径参考\n列出常见操作的笔记本 ID 和文档路径，避免重复查询\n```\n\n请开始探索。",
   "tool.listNotebooks.label": "笔记本",
   "tool.listNotebooks.meta": "已列出 {count} 个笔记本",
   "tool.listDocuments.meta": "已列出 {count} 项",
@@ -310,8 +301,5 @@
   "tool.scheduled.label": "定时任务",
   "tool.scheduled.list.meta": "已列出 {count} 个任务",
   "tool.scheduled.update.meta": "已更新定时任务",
-  "tool.scheduled.delete.meta": "已删除定时任务",
-  "tool.explore.description": "当任务需要跨多篇笔记做探索、筛选、梳理或归纳时，优先调用此工具。不要先自己手动展开多轮 search_fulltext、get_document 或 get_document_blocks；这个探索子智能体会自行搜索、读取并返回简洁结论。仅用于查找/总结，不用于写入。",
-  "tool.explore.query": "要在笔记库中探索的问题或目标",
-  "tool.explore.systemPrompt": "你是一个专门用于探索思源笔记的子智能体。\n你的目标是为父级智能体收集足够回答问题的结论，而不是转储大量原文。\n只使用可读取的 lookup 类工具，自主完成搜索、筛选和按需阅读。\n优先搜索和最小必要读取，避免无意义展开过多文档。\n用用户使用的语言输出简洁摘要，尽量保留文档标题、文档 ID、路径和关键发现。\n不要生成 UI 指令，不要暴露工具过程，不要解释自己是子智能体。"
+  "tool.scheduled.delete.meta": "已删除定时任务"
 }

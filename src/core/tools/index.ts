@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createSubAgentTool } from "../sub-agent";
 import type { AgentConfig } from "../../types";
 import type { ScheduledTaskManager } from "../scheduled-task-manager";
+import { TOOL_DESC, EXPLORE_SUBAGENT_PROMPT } from "../../types";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 import { createListNotebooksTool, createListDocumentsTool, createRecentDocumentsTool } from "./notebook-tools";
@@ -37,18 +38,17 @@ function createLookupTools(i18n: Translator): SiyuanTool[] {
 
 function createExploreNotesTool(
 	getAgentConfig: () => AgentConfig | Promise<AgentConfig>,
-	i18n: Translator,
 ): SiyuanTool {
+	const desc = TOOL_DESC.explore_notes;
 	return createSubAgentTool({
 		name: "explore_notes",
-		description: i18n.t("tool.explore.description"),
+		description: desc.description,
 		schema: z.object({
-			query: z.string().describe(i18n.t("tool.explore.query")),
+			query: z.string().describe(desc.params.query),
 		}),
-		toolset: () => createLookupTools(i18n),
-		systemPrompt: i18n.t("tool.explore.systemPrompt"),
+		toolset: () => createLookupTools(defaultTranslator),
+		systemPrompt: EXPLORE_SUBAGENT_PROMPT,
 		getAgentConfig,
-		i18n,
 		recursionLimit: 12,
 	});
 }
@@ -68,7 +68,7 @@ export function getDefaultTools(
 		createGetDocumentOutlineTool(i18n),
 		createReadBlockTool(i18n),
 		createSearchFulltextTool(i18n),
-		createExploreNotesTool(getAgentConfig, i18n),
+		createExploreNotesTool(getAgentConfig),
 		createAppendBlockTool(i18n),
 		createEditBlocksTool(i18n),
 		createCreateDocumentTool(i18n),

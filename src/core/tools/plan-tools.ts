@@ -1,6 +1,7 @@
 import { createTool } from "../tool-types";
 import { z } from "zod";
 import type { TodoList, TodoStatus } from "../../types";
+import { TOOL_DESC } from "../../types";
 
 /**
  * `write_todos` tool — creates or replaces the agent's task execution plan.
@@ -8,21 +9,21 @@ import type { TodoList, TodoStatus } from "../../types";
  * The tool updates AgentState.todos through the runtime context and returns
  * a normal ToolResult that remains part of the message history.
  */
+const desc = TOOL_DESC.write_todos;
 export const writeTodosTool = createTool({
 	name: "write_todos",
-	description:
-		"Create or replace the current task execution plan. Use this for multi-step tasks to track progress. Each call replaces the entire plan. Update item statuses as you complete steps.",
+	description: desc.description,
 	parameters: z.object({
-		goal: z.string().describe("Overall goal of the plan"),
+		goal: z.string().describe(desc.params.goal),
 		todos: z.array(
 			z.object({
-				content: z.string().describe("Description of this step"),
+				content: z.string().describe(desc.params["todos[].content"]),
 				status: z
 					.enum(["pending", "in_progress", "completed"])
 					.default("pending")
-					.describe("Current status of this step"),
+					.describe(desc.params["todos[].status"]),
 			}),
-		).describe("List of plan items"),
+		).describe(desc.params.todos),
 	}),
 	async execute({ goal, todos: items }, options) {
 		const now = Date.now();

@@ -9,6 +9,7 @@ import type {
 	RunAgentStreamResult,
 	TodoList,
 } from "../types";
+import { COMPACTION_SUMMARY_LABEL, TASK_PLAN_LABEL } from "../types";
 import type { ToolContext } from "./tool-types";
 import type { AgentSetup } from "./agent";
 
@@ -278,14 +279,14 @@ export function mergeState(
 
 	const compaction = savedState?.compaction ? { ...savedState.compaction } : undefined;
 	if (compaction?.summary) {
-		messages.push({ role: "system", content: `[Conversation summary from earlier turns]\n${compaction.summary}` });
+		messages.push({ role: "system", content: `${COMPACTION_SUMMARY_LABEL}\n${compaction.summary}` });
 	}
 
 	const todos: TodoList | undefined = savedState?.todos;
 	if (todos && todos.items.length > 0) {
 		const statusIcon = (s: string) => s === "completed" ? "✅" : s === "in_progress" ? "🔄" : "⬜";
 		const lines = todos.items.map((item) => `- ${statusIcon(item.status)} [${item.status}] ${item.content}`);
-		messages.push({ role: "system", content: `[Current task plan]\nGoal: ${todos.goal}\n${lines.join("\n")}` });
+		messages.push({ role: "system", content: `${TASK_PLAN_LABEL}\nGoal: ${todos.goal}\n${lines.join("\n")}` });
 	}
 
 	if (savedState?.messages && Array.isArray(savedState.messages)) {

@@ -860,7 +860,7 @@ export class ChatPanel {
 			const guideDocId = config.guideDoc?.id || "";
 			const extra = (initMatch[1] || "").trim();
 			extraSystemPrompt = [
-				buildInitPrompt(this.i18n),
+				buildInitPrompt(),
 				this.t("chat.init.targetDoc", { id: guideDocId }),
 				extra ? this.t("chat.init.extra", { extra }) : "",
 				this.t("chat.init.start"),
@@ -984,7 +984,7 @@ export class ChatPanel {
 
 		try {
 			const modelOverride = sessionModelId ? activeModel : null;
-			const setup = await prepareAgent(config, this.tools, extraSystemPrompt, modelOverride, this.i18n, reasoningEffort);
+			const setup = await prepareAgent(config, this.tools, extraSystemPrompt, modelOverride, reasoningEffort);
 			const result = await runAgentStream({
 				setup,
 				input,

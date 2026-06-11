@@ -1,32 +1,7 @@
 import { generateText } from "ai";
 import type { LanguageModelV1 } from "@ai-sdk/provider";
 import type { AgentState, CompactionState } from "../types";
-
-const COMPACT_SUMMARY_PROMPT = `You are a conversation summariser for a note-taking AI assistant.
-Below is the existing summary (if any) followed by new conversation turns.
-Produce a concise, information-dense summary that preserves:
-
-1. User goals, requirements, and preferences
-2. Important facts and decisions made
-3. What was created, modified, searched, or found (document titles, block IDs, paths)
-4. Open questions and pending tasks
-5. Errors encountered and how they were resolved
-
-Rules:
-- Max 2000 characters
-- Use the SAME language as the user's messages (Chinese / English / mixed)
-- Output ONLY the updated summary, no preamble or explanation
-- If a task plan is provided below, reference it in your summary to preserve plan context
-
-{plan_context}
-
-## Existing summary
-{existing_summary}
-
-## New turns
-{new_turns}
-
-Updated summary:`;
+import { COMPACT_PROMPT } from "../types";
 
 function msgType(m: any): string {
 	if (typeof m?._getType === "function") return m._getType();
@@ -144,7 +119,7 @@ export async function compactMessages(
 		planContext = `## Current task plan (MUST preserve)\nGoal: ${state.todos.goal}\n${lines.join("\n")}`;
 	}
 
-	let prompt = COMPACT_SUMMARY_PROMPT
+	let prompt = COMPACT_PROMPT
 		.replace("{plan_context}", planContext)
 		.replace("{existing_summary}", existingSummary)
 		.replace("{new_turns}", newTurnsText);

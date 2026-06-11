@@ -13,19 +13,16 @@ describe("i18n", () => {
 		expect(i18n.t("slash.help")).toBe("Show available commands");
 	});
 
-	it("builds localized slash command descriptions", () => {
-		const commands = getSlashCommands(createTranslator(zhCN));
-		expect(commands.find((item) => item.name === "/init")?.description).toBe("探索笔记库，生成用户指南");
+	it("returns English slash command descriptions", () => {
+		const commands = getSlashCommands();
+		expect(commands.find((item) => item.name === "/init")?.description).toBe("Explore the knowledge base and generate a guide document");
 	});
 
-	it("builds English and Chinese system prompts", () => {
-		const englishPrompt = buildSystemPrompt(createTranslator({}));
-		const chinesePrompt = buildSystemPrompt(createTranslator(zhCN));
+	it("builds English system prompt with date injected", () => {
+		const prompt = buildSystemPrompt();
 
-		expect(englishPrompt).toContain("You are the AI agent for SiYuan Notes");
-		expect(chinesePrompt).toContain("你是思源笔记的 AI 助手");
-		expect(englishPrompt).not.toContain("{{CURRENT_DATETIME}}");
-		expect(chinesePrompt).not.toContain("{{CURRENT_DATETIME}}");
+		expect(prompt).toContain("You are the AI agent for SiYuan Notes");
+		expect(prompt).not.toContain("{{CURRENT_DATETIME}}");
 	});
 
 	it("localizes common runtime errors", () => {

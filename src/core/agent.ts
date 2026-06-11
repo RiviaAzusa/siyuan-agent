@@ -1,6 +1,6 @@
 import type { Tool } from "@ai-sdk/provider-utils";
 import { buildSystemPrompt, resolveModelConfig, type AgentConfig, type ModelConfig, type ReasoningEffort } from "../types";
-import { defaultTranslator, type Translator } from "../i18n";
+import { GUIDE_DOC_HEADER, DEFAULT_NOTEBOOK_TPL, CUSTOM_INSTRUCTIONS_TPL } from "../types";
 import { createModel, buildProviderOptions } from "../llms/ai-sdk-provider";
 
 async function fetchGuideDoc(docId: string): Promise<string> {
@@ -30,29 +30,26 @@ export async function prepareAgent(
 	tools: Tool<any, string>[],
 	extraSystemPrompt?: string | null,
 	modelOverride?: ModelConfig | null,
-	i18n: Translator = defaultTranslator,
 	reasoningEffort: ReasoningEffort = "default",
 ): Promise<AgentSetup> {
 	const mc = modelOverride || resolveModelConfig(config);
 	const model = createModel(mc, { reasoningEffort });
 
-	let systemPrompt = buildSystemPrompt(i18n);
+	let systemPrompt = buildSystemPrompt();
 	if (config.guideDoc?.id) {
 		const guideContent = await fetchGuideDoc(config.guideDoc.id);
 		if (guideContent) {
-			systemPrompt += `\n\n---\n${i18n.t("agent.guideDocHeader")}\n${guideContent}\n---`;
+			systemPrompt += `\n\n---\n${GUIDE_DOC_HEADER}\n${guideContent}\n---`;
 		}
 	}
 	if (config.defaultNotebook?.id) {
-		systemPrompt += `\n\n${i18n.t("agent.defaultNotebook", {
-			name: config.defaultNotebook.name,
-			id: config.defaultNotebook.id,
-		})}`;
+		systemPrompt += `\n\n${DEFAULT_NOTEBOOK_TPL
+			.replace("{name}", config.defaultNotebook.name)
+			.replace("{id}", config.defaultNotebook.id)}`;
 	}
 	if (config.customInstructions?.trim()) {
-		systemPrompt += `\n\n${i18n.t("agent.customInstructions", {
-			instructions: config.customInstructions.trim(),
-		})}`;
+		systemPrompt += `\n\n${CUSTOM_INSTRUCTIONS_TPL
+			.replace("{instructions}", config.customInstructions.trim())}`;
 	}
 	if (extraSystemPrompt) {
 		systemPrompt += `\n\n${extraSystemPrompt}`;

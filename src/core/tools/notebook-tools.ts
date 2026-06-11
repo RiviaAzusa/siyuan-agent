@@ -3,12 +3,14 @@ import { z } from "zod";
 import { siyuanFetch } from "./siyuan-api";
 import { listDocumentsViaApi } from "../list-documents";
 import { recentDocumentsViaApi } from "../recent-documents";
+import { TOOL_DESC } from "../../types";
 import { defaultTranslator, type Translator } from "../../i18n";
 
 export function createListNotebooksTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.list_notebooks;
 	return createTool({
 		name: "list_notebooks",
-		description: "List all notebooks in SiYuan. returns id, name, icon, and closed status for each notebook. Use this to find the notebook ID needed for other tools.",
+		description: desc.description,
 		parameters: z.object({}),
 		async execute() {
 			const data = await siyuanFetch("/api/notebook/lsNotebooks", {});
@@ -24,17 +26,18 @@ export function createListNotebooksTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createListDocumentsTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.list_documents;
 	return createTool({
 		name: "list_documents",
-		description: "List documents in a specific notebook as a paginated tree. The path parameter uses the human-readable hpath, while the tool resolves SiYuan filetree paths internally. Returns pagination metadata plus items with id, title, hpath, updated, hasChildren, childCount, optional children, and optional summary.",
+		description: desc.description,
 		parameters: z.object({
-			notebook: z.string().describe("The Notebook ID (box ID) to search in. You must get this from list_notebooks first."),
-			path: z.string().optional().describe("Optional human-readable path (hpath) to list under, e.g. '/Daily Notes'. Defaults to root '/'."),
-			depth: z.number().int().min(0).max(5).optional().describe("Tree expansion depth. 0 returns only the current level, 1 includes one level of children. Defaults to 0."),
-			page: z.number().int().min(1).optional().describe("Page number for the current level. Defaults to 1."),
-			page_size: z.number().int().min(1).max(50).optional().describe("Number of items per page at the current level. Defaults to 20, max 50."),
-			child_limit: z.number().int().min(0).max(20).optional().describe("Maximum number of direct child documents to include for each expanded node. Defaults to 5, max 20."),
-			include_summary: z.boolean().optional().describe("Whether to include a lightweight summary for each returned document. Defaults to true."),
+			notebook: z.string().describe(desc.params.notebook),
+			path: z.string().optional().describe(desc.params.path),
+			depth: z.number().int().min(0).max(5).optional().describe(desc.params.depth),
+			page: z.number().int().min(1).optional().describe(desc.params.page),
+			page_size: z.number().int().min(1).max(50).optional().describe(desc.params.page_size),
+			child_limit: z.number().int().min(0).max(20).optional().describe(desc.params.child_limit),
+			include_summary: z.boolean().optional().describe(desc.params.include_summary),
 		}),
 		async execute({ notebook, path, depth, page, page_size, child_limit, include_summary }) {
 			const result = await listDocumentsViaApi({
@@ -52,11 +55,12 @@ export function createListDocumentsTool(i18n: Translator = defaultTranslator) {
 }
 
 export function createRecentDocumentsTool(i18n: Translator = defaultTranslator) {
+	const desc = TOOL_DESC.recent_documents;
 	return createTool({
 		name: "recent_documents",
-		description: "List the most recently modified documents with brief summaries.",
+		description: desc.description,
 		parameters: z.object({
-			limit: z.number().int().min(1).max(20).optional().describe("Number of documents to return. Defaults to 10."),
+			limit: z.number().int().min(1).max(20).optional().describe(desc.params.limit),
 		}),
 		async execute({ limit }) {
 			const result = await recentDocumentsViaApi({
