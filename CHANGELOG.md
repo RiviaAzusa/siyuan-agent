@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.5
+
+- Added block highlight effect when editing blocks.
+- Fixed simultaneous block editing flicker issue.
+- Enhanced error handling for tool results and improved message display logic.
+- Refactored edit_blocks tool logic and enhanced output handling.
+- Disabled cross-document block editing to prevent errors.
+- Removed unused LangSmith tracing code.
+- Updated font color and icon.
+
+中文：
+
+- 编辑块时增加块高亮效果。
+- 修复同时编辑多个块时的闪烁问题。
+- 增强工具结果的错误处理，优化消息展示逻辑。
+- 重构 edit_blocks 工具逻辑，优化输出处理。
+- 禁用跨文档块编辑以防止错误。
+- 移除未使用的 LangSmith 追踪代码。
+- 更新字体颜色和图标。
+
 ## 0.1.4
 
 - Added basic support for Chinese models based on the Anthropic protocol.
