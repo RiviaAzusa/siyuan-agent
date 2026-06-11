@@ -1,4 +1,4 @@
-import type { AgentRunMeta } from "./tool-events";
+import type { AgentRunMeta, PendingToolApproval } from "./tool-events";
 import type { ReasoningEffort } from "./model-config";
 
 /* ── TodoList (agent plan management) ────────────────────────────────── */
@@ -34,6 +34,7 @@ export type AgentState = Record<string, any> & {
 	compaction?: CompactionState;
 	todos?: TodoList;
 	runMeta?: AgentRunMeta[];
+	pendingApprovals?: PendingToolApproval[];
 };
 
 /* ── Session types ──────────────────────────────────────────────────── */

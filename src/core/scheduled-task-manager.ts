@@ -432,6 +432,9 @@ export class ScheduledTaskManager {
 				input,
 			});
 			latestState = result.lastState;
+			if (!result.completed && result.lastState.pendingApprovals?.length) {
+				throw new Error(i18n.t("scheduled.error.approvalRequired"));
+			}
 			if (result.error) {
 				throw result.error;
 			}

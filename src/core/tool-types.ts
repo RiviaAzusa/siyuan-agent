@@ -19,11 +19,14 @@ export type SiyuanToolExecute<INPUT> = (
     options: SiyuanToolOptions,
 ) => Promise<string> | string;
 
+export type ToolCategory = "lookup" | "change";
+
 // Config for creating a tool
 export interface SiyuanToolConfig<INPUT> {
     name?: string;
     description: string;
     parameters: z.ZodType<INPUT>;
+    category?: ToolCategory;
     execute: SiyuanToolExecute<INPUT>;
 }
 
@@ -32,12 +35,17 @@ export function createTool<INPUT>(config: SiyuanToolConfig<INPUT>): Tool<INPUT, 
     const t = tool({
         description: config.description,
         inputSchema: config.parameters,
+        needsApproval: config.category === "change" ? true : undefined,
+        metadata: config.category ? { category: config.category } : undefined,
         execute: async (input, options) => {
             return config.execute(input, options as SiyuanToolOptions);
         },
     });
     if (config.name) {
         (t as any).name = config.name;
+    }
+    if (config.category) {
+        (t as any).category = config.category;
     }
     return t as Tool<INPUT, string> & { name?: string };
 }

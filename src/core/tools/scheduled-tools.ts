@@ -17,6 +17,7 @@ export function createScheduledTaskTools(
 
 	const createScheduledTaskTool = createTool({
 		name: "create_scheduled_task",
+		category: "change",
 		description: "Create a scheduled task for future execution. Use this when the user asks for a daily/weekly/one-time reminder, summary, or recurring automation.",
 		parameters: z.object({
 			title: z.string().min(1).describe("Short task title shown in the task board"),
@@ -53,6 +54,7 @@ export function createScheduledTaskTools(
 
 	const updateScheduledTaskTool = createTool({
 		name: "update_scheduled_task",
+		category: "change",
 		description: "Update an existing scheduled task. Usually list tasks first to confirm the target taskId.",
 		parameters: z.object({
 			taskId: z.string().describe("Scheduled task ID"),
@@ -80,6 +82,7 @@ export function createScheduledTaskTools(
 
 	const deleteScheduledTaskTool = createTool({
 		name: "delete_scheduled_task",
+		category: "change",
 		description: "Delete a scheduled task by its taskId.",
 		parameters: z.object({
 			taskId: z.string().describe("Scheduled task ID"),

@@ -301,6 +301,114 @@ describe("runAgentStream", () => {
 		});
 	});
 
+	it("pauses with pending approval for a change tool", async () => {
+		const { streamText } = await import("ai");
+		(streamText as any).mockReturnValueOnce(makeResult(
+			[
+				{ type: "tool-call", toolCallId: "call-edit", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "updated" }] } },
+				{ type: "tool-approval-request", approvalId: "approval-edit", toolCall: { toolCallId: "call-edit", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "updated" }] } } },
+			],
+			[
+				{ role: "assistant", content: [
+					{ type: "tool-call", toolCallId: "call-edit", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "updated" }] } },
+					{ type: "tool-approval-request", approvalId: "approval-edit", toolCallId: "call-edit" },
+				] },
+			],
+			[{ toolCallId: "call-edit", toolName: "edit_blocks" }],
+		));
+
+		const seen: any[] = [];
+		const result = await runAgentStream({
+			setup: makeSetup(),
+			input: mergeState(null, "edit"),
+			onUiEvent: (event) => {
+				if (event.type === "tool_approval_request") seen.push(event.approval);
+			},
+		});
+
+		expect(result.completed).toBe(false);
+		expect(result.error).toBeUndefined();
+		expect(result.lastState.pendingApprovals).toEqual([{
+			approvalId: "approval-edit",
+			toolCallId: "call-edit",
+			toolName: "edit_blocks",
+			input: { blocks: [{ id: "b1", content: "updated" }] },
+			status: "pending",
+		}]);
+		expect(result.lastState.runMeta?.[0].status).toBe("running");
+		expect(seen).toHaveLength(1);
+		const view = buildMessagesView(result.lastState);
+		expect(view.some((m: any) => m.type === "tool_approval_ui" && m.approvalId === "approval-edit")).toBe(true);
+	});
+
+	it("resumes after two approved change tool approvals", async () => {
+		const { streamText } = await import("ai");
+		const pendingState = {
+			messages: [
+				{ role: "user", content: "edit twice" },
+				{ role: "assistant", content: [
+					{ type: "tool-call", toolCallId: "call-a", toolName: "append_block", input: { parentID: "doc", markdown: "A" } },
+					{ type: "tool-approval-request", approvalId: "approval-a", toolCallId: "call-a" },
+					{ type: "tool-call", toolCallId: "call-b", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "B" }] } },
+					{ type: "tool-approval-request", approvalId: "approval-b", toolCallId: "call-b" },
+				] },
+			],
+			pendingApprovals: [
+				{ approvalId: "approval-a", toolCallId: "call-a", toolName: "append_block", input: { parentID: "doc", markdown: "A" }, status: "approved" },
+				{ approvalId: "approval-b", toolCallId: "call-b", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "B" }] }, status: "approved" },
+			],
+		};
+
+		(streamText as any)
+			.mockImplementationOnce((opts: any) => {
+				expect(opts.messages[opts.messages.length - 1]).toEqual({
+					role: "tool",
+					content: [
+						{ type: "tool-approval-response", approvalId: "approval-a", approved: true },
+						{ type: "tool-approval-response", approvalId: "approval-b", approved: true },
+					],
+				});
+				return makeResult(
+					[
+						{ type: "tool-result", toolCallId: "call-a", toolName: "append_block", output: "appended" },
+						{ type: "tool-result", toolCallId: "call-b", toolName: "edit_blocks", output: JSON.stringify({ __tool_type: "edit_blocks", results: [{ oldId: "b1", newIds: ["b2"], rootDocId: "doc", status: "ok" }] }) },
+					],
+					[
+						...opts.messages,
+						{ role: "tool", content: [
+							{ type: "tool-result", toolCallId: "call-a", toolName: "append_block", output: { type: "text", value: "appended" } },
+							{ type: "tool-result", toolCallId: "call-b", toolName: "edit_blocks", output: { type: "text", value: JSON.stringify({ __tool_type: "edit_blocks", results: [{ oldId: "b1", newIds: ["b2"], rootDocId: "doc", status: "ok" }] }) } },
+						] },
+					],
+					[
+						{ toolCallId: "call-a", toolName: "append_block" },
+						{ toolCallId: "call-b", toolName: "edit_blocks" },
+					],
+				);
+			})
+			.mockImplementationOnce((opts: any) => makeResult(
+				[{ type: "text-delta", text: "done" }],
+				[
+					...opts.messages,
+					{ role: "assistant", content: [{ type: "text", text: "done" }] },
+				],
+			));
+
+		const result = await runAgentStream({
+			setup: makeSetup(),
+			input: mergeState(pendingState),
+			approvalResponses: [
+				{ approvalId: "approval-a", approved: true },
+				{ approvalId: "approval-b", approved: true },
+			],
+		});
+
+		expect(result.completed).toBe(true);
+		expect(result.lastState.pendingApprovals).toBeUndefined();
+		expect(result.lastState.messages?.filter((m: any) => m.role === "tool")).toHaveLength(2);
+		expect(result.lastState.messages?.[result.lastState.messages.length - 1]).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
+	});
+
 	it("does not copy previous step tool calls onto the final assistant UI message", async () => {
 		const { streamText } = await import("ai");
 		(streamText as any)

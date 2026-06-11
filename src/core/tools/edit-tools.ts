@@ -39,6 +39,7 @@ function resolveRootDocId(blockId: string, treeInfos: Record<string, any>): stri
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "edit_blocks",
+		category: "change",
 		description: "Edit one or more blocks by providing new markdown content. First use get_document_blocks to get block IDs and current content, then call this tool with the modified content. All blocks in one call must belong to the same root document; split cross-document edits into separate edit_blocks calls. Single-block replacements may preserve the original block ID; multi-block markdown is applied by inserting replacement blocks and deleting the old block, so the original block ID can become invalid. The result returns oldId, newIds, and rootDocId for each edit; use newIds for any further edits in the same turn, or call get_document_blocks again before continuing. Only modify the blocks that need changes — do not rewrite entire documents. Provide complete plain markdown content (not kramdown).",
 		parameters: z.object({
 			blocks: z.array(z.object({
@@ -175,6 +176,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "append_block",
+		category: "change",
 		description: "Append Markdown content as child blocks to an existing block (usually a document). Use this to add new content to a document.",
 		parameters: z.object({
 			parentID: z.string().describe("The parent block ID to append content to. Usually a document ID from list_documents or search results."),
@@ -194,6 +196,7 @@ export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
 export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "create_document",
+		category: "change",
 		description: "Create a new document (note) in a notebook with optional Markdown content. The path is the human-readable path (hpath) like '/Folder/My Note'. Returns the new document's ID.",
 		parameters: z.object({
 			notebook: z.string().describe("Notebook ID (from list_notebooks)"),
@@ -215,6 +218,7 @@ export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
 export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "move_document",
+		category: "change",
 		description: "Move one or more documents to a different location. toID can be a notebook ID (moves to notebook root) or a document ID (moves inside that document as sub-document).",
 		parameters: z.object({
 			fromIDs: z.array(z.string()).describe("Array of document IDs to move"),
@@ -230,6 +234,7 @@ export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
 export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "rename_document",
+		category: "change",
 		description: "Rename a document by changing its title.",
 		parameters: z.object({
 			id: z.string().describe("Document ID to rename"),
@@ -245,6 +250,7 @@ export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
 // deleteDocumentTool is intentionally NOT in defaultTools (safety) — export for opt-in use
 export const deleteDocumentTool = createTool({
 	name: "delete_document",
+	category: "change",
 	description: "Permanently delete a document by its ID. This is irreversible.",
 	parameters: z.object({
 		id: z.string().describe("Document ID to delete"),

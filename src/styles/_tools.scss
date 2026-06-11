@@ -218,6 +218,36 @@
 	padding-top: 6px;
 }
 
+.chat-msg__approval {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 6px 0 0 20px;
+	padding: 6px 8px;
+	border-left: 2px solid color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 72%, transparent);
+	background: rgba(127, 127, 127, 0.06);
+}
+
+.chat-msg__approval-status {
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--agent-text, var(--b3-theme-on-surface));
+}
+
+.chat-msg__approval-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+
+	.b3-button {
+		min-height: 24px;
+		padding: 2px 10px;
+		font-size: 12px;
+	}
+}
+
 .chat-msg__error {
 	color: var(--b3-card-error-color, #e53935);
 	font-style: italic;

@@ -5,6 +5,7 @@ import type {
 	AgentState,
 	AgentStreamUiEvent,
 	ChunkParserState,
+	PendingToolApproval,
 	RunAgentStreamResult,
 	TodoList,
 } from "../types";
@@ -153,6 +154,13 @@ function normalizeModelMessage(m: any): Record<string, any> {
 						...(part.output !== undefined ? { output: normalizeToolOutput(part.output) } : {}),
 					};
 				}
+				if (part?.type === "tool-approval-request") {
+					return {
+						type: "tool-approval-request",
+						approvalId: part.approvalId ?? "",
+						toolCallId: part.toolCallId ?? "",
+					};
+				}
 				return part;
 			}),
 		};
@@ -168,14 +176,25 @@ function normalizeModelMessage(m: any): Record<string, any> {
 			}];
 		return {
 			role: "tool",
-			content: content.map((part: any) => ({
-				...part,
-				type: part?.type ?? "tool-result",
-				toolCallId: part?.toolCallId ?? m.toolCallId ?? m.tool_call_id ?? "",
-				toolName: part?.toolName ?? m.toolName ?? m.name ?? "",
-				...(part?.input !== undefined || part?.args !== undefined ? { input: getToolCallInput(part) } : {}),
-				output: normalizeToolOutput(part?.output ?? part?.result ?? ""),
-			})),
+			content: content.map((part: any) => {
+				if (part?.type === "tool-approval-response") {
+					return {
+						type: "tool-approval-response",
+						approvalId: part.approvalId ?? "",
+						approved: Boolean(part.approved),
+						...(part.reason ? { reason: part.reason } : {}),
+						...(part.providerExecuted !== undefined ? { providerExecuted: Boolean(part.providerExecuted) } : {}),
+					};
+				}
+				return {
+					...part,
+					type: part?.type ?? "tool-result",
+					toolCallId: part?.toolCallId ?? m.toolCallId ?? m.tool_call_id ?? "",
+					toolName: part?.toolName ?? m.toolName ?? m.name ?? "",
+					...(part?.input !== undefined || part?.args !== undefined ? { input: getToolCallInput(part) } : {}),
+					output: normalizeToolOutput(part?.output ?? part?.result ?? ""),
+				};
+			}),
 		};
 	}
 	return m;
@@ -254,7 +273,7 @@ async function nextWithTimeout<T>(
 export function mergeState(
 	savedState: Record<string, any> | null,
 	inputMsgStr?: string,
-): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[] } {
+): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[]; pendingApprovals?: PendingToolApproval[] } {
 	let messages: Record<string, any>[] = [];
 
 	const compaction = savedState?.compaction ? { ...savedState.compaction } : undefined;
@@ -279,16 +298,18 @@ export function mergeState(
 	}
 
 	const runMeta = Array.isArray(savedState?.runMeta) ? [...savedState.runMeta] : undefined;
-	return { messages, compaction, todos, runMeta };
+	const pendingApprovals = Array.isArray(savedState?.pendingApprovals) ? savedState.pendingApprovals.map((item: any) => ({ ...item })) : undefined;
+	return { messages, compaction, todos, runMeta, pendingApprovals };
 }
 
 /* ── Agent stream ──────────────────────────────────────────────────── */
 
 interface RunAgentStreamParams {
 	setup: AgentSetup;
-	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[] };
+	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[]; pendingApprovals?: PendingToolApproval[] };
 	signal?: AbortSignal;
 	recursionLimit?: number;
+	approvalResponses?: Array<{ approvalId: string; approved: boolean; reason?: string }>;
 	onUiEvent?: (event: AgentStreamUiEvent) => void;
 }
 
@@ -304,6 +325,7 @@ export async function runAgentStream({
 	input,
 	signal,
 	recursionLimit = 25,
+	approvalResponses,
 	onUiEvent,
 }: RunAgentStreamParams): Promise<RunAgentStreamResult> {
 	const runStartedAt = Date.now();
@@ -316,9 +338,22 @@ export async function runAgentStream({
 	let activeAssistantParts: any[] = [];
 	let activeToolMessages: Record<string, any>[] = [];
 	let responseCompleted = false;
+	let pendingApprovals: PendingToolApproval[] = [];
 	let persistedMessages: Record<string, any>[] = Array.isArray(input.messages)
 		? input.messages.filter((m) => m.role !== "system").map((m) => ({ ...m }))
 		: [];
+	if (approvalResponses?.length) {
+		const approvalMessage = {
+			role: "tool",
+			content: approvalResponses.map((response) => ({
+				type: "tool-approval-response",
+				approvalId: response.approvalId,
+				approved: response.approved,
+				...(response.reason ? { reason: response.reason } : {}),
+			})),
+		};
+		persistedMessages.push(approvalMessage);
+	}
 	const userMessageIndex = persistedMessages.filter((m) => m.role === "user").length - 1;
 
 	try {
@@ -330,7 +365,11 @@ export async function runAgentStream({
 			...systemMessages.map((m) => m.content as string),
 		].filter(Boolean).join("\n\n");
 
-		let messages = toModelMessages(nonSystemMessages);
+		let messages = toModelMessages(
+			approvalResponses?.length
+				? [...nonSystemMessages, persistedMessages[persistedMessages.length - 1]]
+				: nonSystemMessages
+		);
 
 		const IDLE_TIMEOUT_MS = 120_000;
 
@@ -413,6 +452,29 @@ export async function runAgentStream({
 						args: chunk.input,
 					});
 
+				} else if (chunk.type === "tool-approval-request") {
+					const toolCall = (chunk as any).toolCall || {};
+					const toolCallId = (chunk as any).toolCallId || toolCall.toolCallId || "";
+					const mapped = parserState.toolCallMap[toolCallId];
+					const activeToolCall = activeAssistantParts.find((part) => part?.type === "tool-call" && part.toolCallId === toolCallId);
+					const approval: PendingToolApproval = {
+						approvalId: (chunk as any).approvalId,
+						toolCallId,
+						toolName: toolCall.toolName || mapped?.name || activeToolCall?.toolName || "",
+						input: toolCall.input ?? activeToolCall?.input ?? {},
+						status: "pending",
+					};
+					if (!activeAssistantParts.some((part) => part?.type === "tool-approval-request" && part.approvalId === approval.approvalId)) {
+						activeAssistantParts.push({
+							type: "tool-approval-request",
+							approvalId: approval.approvalId,
+							toolCallId,
+						});
+					}
+					if (!pendingApprovals.some((item) => item.approvalId === approval.approvalId)) {
+						pendingApprovals.push(approval);
+						onUiEvent?.({ type: "tool_approval_request", approval });
+					}
 				} else if (chunk.type === "tool-result") {
 					const resultStr = stringifyToolOutput(chunk.output);
 					const mapped = parserState.toolCallMap[chunk.toolCallId];
@@ -433,6 +495,10 @@ export async function runAgentStream({
 			persistedMessages = mergeResponseMessages(messages, response.messages);
 			messages = toModelMessages(persistedMessages);
 			responseCompleted = true;
+
+			if (pendingApprovals.length > 0) {
+				break;
+			}
 
 			// Check if any tool calls were made — if not, agent is done
 			const toolCalls = await result.toolCalls;
@@ -475,16 +541,20 @@ export async function runAgentStream({
 	};
 	source.compaction = (input as AgentState).compaction;
 	source.todos = runtimeTodos;
+	source.pendingApprovals = pendingApprovals.length > 0 ? pendingApprovals : undefined;
 	const previousRunMeta = Array.isArray((input as AgentState).runMeta) ? (input as AgentState).runMeta : [];
 	source.runMeta = [
 		...previousRunMeta.filter((meta) => meta?.userMessageIndex !== runMeta.userMessageIndex),
-		runMeta,
+		{
+			...runMeta,
+			status: pendingApprovals.length > 0 ? "running" : runMeta.status,
+		},
 	];
 
 	return {
 		lastState: source,
 		aborted,
-		completed: !aborted && !error,
+		completed: !aborted && !error && pendingApprovals.length === 0,
 		error,
 	};
 }

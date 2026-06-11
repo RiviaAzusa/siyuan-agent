@@ -4,10 +4,11 @@ import type {
 	ProcessingSummaryUi,
 	RunChangeSummaryItemUi,
 	RunChangeSummaryUi,
+	ToolApprovalUi,
 	ToolMessageUi,
 	UiMessage,
 } from "../types";
-import { isProcessingSummaryUi, isRunChangeSummaryUi, isToolMessageUi } from "../types";
+import { isProcessingSummaryUi, isRunChangeSummaryUi, isToolApprovalUi, isToolMessageUi } from "../types";
 import { defaultTranslator, type Translator } from "../i18n";
 
 function msgType(m: any): string {
@@ -111,6 +112,18 @@ function getToolResultParts(msg: any): any[] {
 		}];
 	}
 	return [];
+}
+
+function getToolApprovalRequestParts(msg: any): any[] {
+	const content = msg?.kwargs?.content ?? msg?.content;
+	if (!Array.isArray(content)) return [];
+	return content.filter((part: any) => part?.type === "tool-approval-request");
+}
+
+function getToolApprovalResponseParts(msg: any): any[] {
+	const content = msg?.kwargs?.content ?? msg?.content;
+	if (!Array.isArray(content)) return [];
+	return content.filter((part: any) => part?.type === "tool-approval-response");
 }
 
 function getToolResultText(part: any): string {
@@ -248,7 +261,7 @@ function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection
 }
 
 function isInternalUiMessage(m: UiMessage): boolean {
-	return isToolMessageUi(m) || isProcessingSummaryUi(m) || isRunChangeSummaryUi(m);
+	return isToolMessageUi(m) || isToolApprovalUi(m) || isProcessingSummaryUi(m) || isRunChangeSummaryUi(m);
 }
 
 function getRunMetaForUser(runMeta: AgentRunMeta[], userMessageIndex: number): AgentRunMeta | undefined {
@@ -474,6 +487,7 @@ function collapseMessagesByTurn(messages: UiMessage[], runMeta: AgentRunMeta[], 
 export class UiMessageBuilder {
 	private messages: UiMessage[] = [];
 	private pendingToolMessages = new Map<string, ToolMessageUi>();
+	private pendingApprovals = new Map<string, ToolApprovalUi>();
 	private currentAiIndex: number | null = null;
 
 	constructor(private readonly i18n: Translator = defaultTranslator) {}
@@ -540,6 +554,21 @@ export class UiMessageBuilder {
 		this.currentAiIndex = null;
 	}
 
+	onToolApprovalRequest(approval: ToolApprovalUi): void {
+		this.pendingApprovals.set(approval.approvalId, approval);
+		this.messages.push(approval);
+	}
+
+	onToolApprovalResponse(approvalId: string, approved: boolean, reason?: string): void {
+		const approval = this.pendingApprovals.get(approvalId);
+		if (approval) {
+			approval.status = approved ? "approved" : "denied";
+			if (reason) approval.reason = reason;
+			this.pendingApprovals.delete(approvalId);
+		}
+		this.currentAiIndex = null;
+	}
+
 	/* ── Finalise ──────────────────────────────────────────────────── */
 
 	/**
@@ -550,13 +579,18 @@ export class UiMessageBuilder {
 	finalise(): UiMessage[] {
 		/* Keep still-pending tool messages marked as running. */
 		this.pendingToolMessages.clear();
+		this.pendingApprovals.clear();
 		this.currentAiIndex = null;
 
 		/* Ensure every AIMessage tool_call has a ToolMessageUi */
 		const existing = new Set<string>();
+		const approvalToolCallIds = new Set<string>();
 		for (const m of this.messages) {
 			if (isToolMessageUi(m)) {
 				existing.add(m.toolCallId);
+			}
+			if (isToolApprovalUi(m)) {
+				approvalToolCallIds.add(m.toolCallId);
 			}
 		}
 
@@ -570,6 +604,7 @@ export class UiMessageBuilder {
 			for (const tc of toolCalls) {
 				const tcId = getToolCallId(tc);
 				if (!tcId || existing.has(tcId)) continue;
+				if (approvalToolCallIds.has(tcId)) continue;
 				existing.add(tcId);
 				insertions.push({
 					afterIndex: i,
@@ -631,10 +666,27 @@ export function buildMessagesViewFromParts(
 				toolCallsById.set(tcId, tc);
 				builder.onToolCallStart(getToolCallName(tc), tcId);
 			}
+			for (const part of getToolApprovalRequestParts(msg)) {
+				const tcId = part.toolCallId;
+				if (!tcId) continue;
+				const tc = toolCallsById.get(tcId);
+				builder.onToolApprovalRequest({
+					type: "tool_approval_ui",
+					approvalId: part.approvalId,
+					toolCallId: tcId,
+					toolName: getToolCallName(tc),
+					input: tc?.input ?? tc?.args ?? {},
+					status: "pending",
+				});
+			}
 			continue;
 		}
 
 		if (type === "tool") {
+			for (const part of getToolApprovalResponseParts(msg)) {
+				if (!part.approvalId) continue;
+				builder.onToolApprovalResponse(part.approvalId, Boolean(part.approved), part.reason);
+			}
 			for (const part of getToolResultParts(msg)) {
 				const tcId = part.toolCallId;
 				if (!tcId) continue;

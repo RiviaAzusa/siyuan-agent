@@ -13,6 +13,7 @@ import {
 	genModelServiceId,
 	genModelId,
 	isToolMessageUi,
+	isToolApprovalUi,
 	isProcessingSummaryUi,
 	isRunChangeSummaryUi,
 	normalizeAgentConfig,
@@ -26,6 +27,8 @@ import {
 	type ProcessingSummaryUi,
 	type RunChangeSummaryItemUi,
 	type RunChangeSummaryUi,
+	type ToolApprovalUi,
+	type PendingToolApproval,
 } from "../types";
 import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 import { prepareAgent } from "../core/agent";
@@ -80,6 +83,7 @@ export class ChatPanel {
 	private currentView: "chat" | "tasks" | "settings" = "chat";
 	private pendingContext: string | null = null;
 	private abortCtrl: AbortController | null = null;
+	private approvalResumeInFlight = false;
 	private pendingEl: HTMLElement | null = null;
 	private autoScroll = true;
 	private sessionListExpanded = false;
@@ -819,6 +823,7 @@ export class ChatPanel {
 		extraSystemPrompt: string | null,
 		activeModel: ModelConfig,
 		reasoningEffort: ReasoningEffort,
+		approvalResponses?: Array<{ approvalId: string; approved: boolean; reason?: string }>,
 	): Promise<void> {
 		let latestState: AgentState = {
 			...s.state,
@@ -886,6 +891,7 @@ export class ChatPanel {
 			const result = await runAgentStream({
 				setup,
 				input,
+				approvalResponses,
 				signal: this.abortCtrl?.signal,
 				onUiEvent: (event) => {
 					if (event.type === "reasoning_delta") {
@@ -962,6 +968,18 @@ export class ChatPanel {
 						return;
 					}
 
+					if (event.type === "tool_approval_request") {
+						const toolEl = this.findPendingToolElement(event.approval.toolCallId, pendingToolEls);
+						if (toolEl) {
+							this.renderToolApproval(toolEl, {
+								type: "tool_approval_ui",
+								...event.approval,
+							});
+						}
+						this.scrollToBottom();
+						return;
+					}
+
 					if (event.type === "todos_update") {
 						this.renderTodosBar(event.todos);
 						this.scrollToBottom();
@@ -1022,6 +1040,7 @@ export class ChatPanel {
 			this.refreshSessionListUi();
 
 			this.abortCtrl = null;
+			this.approvalResumeInFlight = false;
 			this.setLoading(false);
 		}
 	}
@@ -1232,7 +1251,7 @@ export class ChatPanel {
 		/* Build toolCallId → args map from AI messages */
 		const toolCallArgsMap = new Map<string, unknown>();
 		for (const m of viewMessages) {
-			if (isToolMessageUi(m)) continue;
+			if (isToolMessageUi(m) || isToolApprovalUi(m)) continue;
 			const toolCalls = getMessageToolCalls(m);
 			for (const tc of toolCalls) {
 				const tcId = getToolCallId(tc);
@@ -1265,6 +1284,26 @@ export class ChatPanel {
 					currentListEl.appendChild(currentAssistantShell.el);
 				}
 				this.renderRunChangeSummary(m, currentAssistantShell);
+				this.scrollToBottom();
+				continue;
+			}
+
+			if (isToolApprovalUi(m)) {
+				if (!currentListEl) {
+					const turn = this.createConversationTurn(undefined, targetEl);
+					currentListEl = turn.listEl;
+				}
+				if (!currentAssistantShell) {
+					currentAssistantShell = this.createAssistantMessageShell();
+					currentListEl.appendChild(currentAssistantShell.el);
+				}
+				const args = toolCallArgsMap.get(m.toolCallId) ?? m.input;
+				let toolEl = currentAssistantShell.el.querySelector<HTMLElement>(`.chat-msg__tool[data-tool-call-id="${this.cssEscape(m.toolCallId)}"]`);
+				if (!toolEl) {
+					toolEl = this.createToolCallElement(m.toolName, args, undefined, m.toolCallId);
+					this.attachToolElementToShell(currentAssistantShell, toolEl);
+				}
+				this.renderToolApproval(toolEl, m);
 				this.scrollToBottom();
 				continue;
 			}
@@ -1397,6 +1436,110 @@ export class ChatPanel {
 			body.innerHTML = `<div class="chat-msg__processing-empty">${escapeHtml(this.t("chat.processing.noDetails"))}</div>`;
 		}
 		shell.stackEl.appendChild(details);
+	}
+
+	private renderToolApproval(toolEl: HTMLElement, approval: ToolApprovalUi): void {
+		toolEl.dataset.approvalId = approval.approvalId;
+		toolEl.dataset.approvalStatus = approval.status;
+		if (approval.status === "denied") toolEl.dataset.toolStatus = "error";
+
+		const details = toolEl.querySelector("details");
+		if (!details) return;
+		let approvalEl = details.querySelector<HTMLElement>(".chat-msg__approval");
+		if (!approvalEl) {
+			approvalEl = document.createElement("div");
+			approvalEl.className = "chat-msg__approval";
+			details.appendChild(approvalEl);
+		}
+
+		const pending = approval.status === "pending";
+		const statusText = approval.status === "approved"
+			? this.t("chat.approval.approved", undefined, "Approved")
+			: approval.status === "denied"
+				? this.t("chat.approval.denied", undefined, "Denied")
+				: this.t("chat.approval.pending", undefined, "Approval required");
+		approvalEl.innerHTML = `
+			<div class="chat-msg__approval-status">${escapeHtml(statusText)}</div>
+			<div class="chat-msg__approval-actions">
+				<button class="b3-button b3-button--text" data-action="deny-approval" ${pending ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
+				<button class="b3-button b3-button--primary" data-action="approve-approval" ${pending ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+			</div>
+		`;
+		approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-approval']")?.addEventListener("click", () => {
+			void this.handleToolApprovalDecision(approval.approvalId, true, toolEl);
+		});
+		approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
+			void this.handleToolApprovalDecision(approval.approvalId, false, toolEl);
+		});
+	}
+
+	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement): Promise<void> {
+		if (this.approvalResumeInFlight) return;
+		const s = this.activeSession;
+		const approvals: PendingToolApproval[] = Array.isArray(s.state?.pendingApprovals)
+			? s.state.pendingApprovals.map((item) => ({ ...item }))
+			: [];
+		const target = approvals.find((item) => item.approvalId === approvalId);
+		if (!target || target.status !== "pending") return;
+		target.status = approved ? "approved" : "denied";
+		if (!approved) target.reason = this.t("chat.approval.deniedByUser", undefined, "Denied by user");
+		s.state = {
+			...(s.state || {}),
+			pendingApprovals: approvals,
+		};
+		s.updated = Date.now();
+		await this.store.saveSession(s);
+
+		if (toolEl) {
+			this.renderToolApproval(toolEl, {
+				type: "tool_approval_ui",
+				...target,
+			});
+		}
+
+		if (approvals.some((item) => item.status === "pending")) return;
+		await this.resumeAfterToolApprovals(approvals);
+	}
+
+	private getLastTurnList(): HTMLElement {
+		let listEl = this.messagesEl.querySelector<HTMLElement>(".chat-turn:last-child .chat-turn__messages");
+		if (!listEl) {
+			listEl = this.createConversationTurn(undefined).listEl;
+		}
+		return listEl;
+	}
+
+	private async resumeAfterToolApprovals(approvals: PendingToolApproval[]): Promise<void> {
+		if (this.abortCtrl || this.approvalResumeInFlight) return;
+		const responses = approvals.map((item) => ({
+			approvalId: item.approvalId,
+			approved: item.status === "approved",
+			...(item.reason ? { reason: item.reason } : {}),
+		}));
+		const s = this.activeSession;
+		let config = await this.getConfig();
+		const sessionModelId = s.modelId;
+		const activeModel = resolveModelConfig(config, sessionModelId);
+		const reasoningEffort = this.normalizeReasoningEffort(s.reasoningEffort);
+		if (!activeModel.apiKey) {
+			showMessage(this.t("chat.error.apiKeyMissing"));
+			return;
+		}
+
+		this.approvalResumeInFlight = true;
+		this.setLoading(true);
+		this.abortCtrl = new AbortController();
+
+		const shell = this.createAssistantMessageShell();
+		this.getLastTurnList().appendChild(shell.el);
+		this.pendingEl = document.createElement("div");
+		this.pendingEl.className = "chat-msg__pending";
+		this.pendingEl.innerHTML = `<span class="chat-msg__pending-spinner"></span><span class="chat-msg__pending-text">${escapeHtml(this.t("chat.pending"))}</span>`;
+		shell.stackEl.appendChild(this.pendingEl);
+		this.scrollToBottom();
+
+		const input = mergeState(s.state ?? null) as any;
+		await this.streamToShell(shell, input, config, sessionModelId, s, null, activeModel, reasoningEffort, responses);
 	}
 
 	private getChangeActionText(item: RunChangeSummaryItemUi): string {

@@ -21,6 +21,15 @@ export interface ChunkParserState {
 	seenToolCallKeys: string[];
 }
 
+export interface PendingToolApproval {
+	approvalId: string;
+	toolCallId: string;
+	toolName: string;
+	input?: unknown;
+	status: "pending" | "approved" | "denied";
+	reason?: string;
+}
+
 export type AgentStreamUiEvent =
 	| {
 		type: "text_delta";
@@ -42,6 +51,10 @@ export type AgentStreamUiEvent =
 		toolCallId?: string;
 		toolName?: string;
 		result: string;
+	}
+	| {
+		type: "tool_approval_request";
+		approval: PendingToolApproval;
 	}
 	| {
 		type: "todos_update";
@@ -87,6 +100,16 @@ export interface ToolMessageUi {
 	finishedAt?: number;
 }
 
+export interface ToolApprovalUi {
+	type: "tool_approval_ui";
+	approvalId: string;
+	toolCallId: string;
+	toolName: string;
+	input?: unknown;
+	status: "pending" | "approved" | "denied";
+	reason?: string;
+}
+
 export interface ProcessingSummaryUi {
 	type: "processing_summary_ui";
 	status: "done" | "running" | "error";
@@ -118,10 +141,14 @@ export interface RunChangeSummaryUi {
  * A render-only message view element. This is derived from AgentState.messages
  * and must not be persisted as session state.
  */
-export type UiMessage = Record<string, any> | ToolMessageUi | ProcessingSummaryUi | RunChangeSummaryUi;
+export type UiMessage = Record<string, any> | ToolMessageUi | ToolApprovalUi | ProcessingSummaryUi | RunChangeSummaryUi;
 
 export function isToolMessageUi(m: UiMessage): m is ToolMessageUi {
 	return (m as any).type === "tool_message_ui";
+}
+
+export function isToolApprovalUi(m: UiMessage): m is ToolApprovalUi {
+	return (m as any).type === "tool_approval_ui";
 }
 
 export function isProcessingSummaryUi(m: UiMessage): m is ProcessingSummaryUi {
