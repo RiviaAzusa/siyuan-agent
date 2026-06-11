@@ -338,7 +338,13 @@ describe("runAgentStream", () => {
 		expect(result.lastState.runMeta?.[0].status).toBe("running");
 		expect(seen).toHaveLength(1);
 		const view = buildMessagesView(result.lastState);
-		expect(view.some((m: any) => m.type === "tool_approval_ui" && m.approvalId === "approval-edit")).toBe(true);
+		const processing = view.find((m: any) => m.type === "processing_summary_ui") as any;
+		expect(processing.details.some((m: any) => m.type === "tool_approval_ui" && m.approvalId === "approval-edit")).toBe(true);
+		const summary = view.find((m: any) => m.type === "run_change_summary_ui") as any;
+		expect(summary).toMatchObject({
+			total: 1,
+			items: [{ approvalId: "approval-edit", toolName: "edit_blocks", status: "pending", label: "b1" }],
+		});
 	});
 
 	it("resumes after two approved change tool approvals", async () => {

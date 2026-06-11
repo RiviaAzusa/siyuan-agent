@@ -125,7 +125,8 @@ export interface RunChangeSummaryItemUi {
 	blockId?: string;
 	blockIds?: string[];
 	path?: string;
-	status: "ok" | "error";
+	status: "ok" | "error" | "pending" | "approved" | "denied";
+	approvalId?: string;
 	added?: number;
 	removed?: number;
 	meta?: string;

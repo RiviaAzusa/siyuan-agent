@@ -378,6 +378,79 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 	return base;
 }
 
+function makeChangeItemFromApproval(approval: ToolApprovalUi, args: any, i18n: Translator): RunChangeSummaryItemUi | null {
+	const action = changeToolActions[approval.toolName];
+	if (!action) return null;
+	const input = args ?? approval.input ?? {};
+	const base: RunChangeSummaryItemUi = {
+		action,
+		toolName: approval.toolName,
+		label: approval.toolName,
+		status: approval.status,
+		approvalId: approval.approvalId,
+	};
+
+	if (approval.toolName === "edit_blocks") {
+		const count = countInputBlocks(input?.blocks);
+		const firstBlockId = input?.blocks?.[0]?.id;
+		return {
+			...base,
+			label: firstBlockId || approval.toolName,
+			id: firstBlockId,
+			blockId: firstBlockId,
+			meta: count ? i18n.t("tool.editBlocks.meta", { count }) : undefined,
+		};
+	}
+
+	if (approval.toolName === "append_block") {
+		return {
+			...base,
+			label: input?.parentID || approval.toolName,
+			id: input?.parentID,
+		};
+	}
+
+	if (approval.toolName === "create_document") {
+		return {
+			...base,
+			label: input?.path || input?.id || approval.toolName,
+			id: input?.id,
+			path: input?.path,
+			added: 1,
+		};
+	}
+
+	if (approval.toolName === "move_document") {
+		const moved = Array.isArray(input?.fromIDs) ? input.fromIDs.length : undefined;
+		return {
+			...base,
+			label: (input?.fromIDs || [])[0] || approval.toolName,
+			id: (input?.fromIDs || [])[0],
+			meta: input?.toID ? String(input.toID) : undefined,
+			added: moved,
+		};
+	}
+
+	if (approval.toolName === "rename_document") {
+		return {
+			...base,
+			label: input?.title || input?.id || approval.toolName,
+			id: input?.id,
+		};
+	}
+
+	if (approval.toolName === "delete_document") {
+		return {
+			...base,
+			label: input?.id || approval.toolName,
+			id: input?.id,
+			removed: 1,
+		};
+	}
+
+	return base;
+}
+
 function buildChangeSummary(turnMessages: UiMessage[], i18n: Translator): RunChangeSummaryUi | null {
 	const argsByToolCallId = new Map<string, any>();
 	for (const m of turnMessages) {
@@ -389,14 +462,23 @@ function buildChangeSummary(turnMessages: UiMessage[], i18n: Translator): RunCha
 		}
 	}
 	const items: RunChangeSummaryItemUi[] = [];
+	const approvalToolCallIds = new Set(
+		turnMessages
+			.filter(isToolApprovalUi)
+			.map((approval) => approval.toolCallId),
+	);
 	for (const m of turnMessages) {
-		if (!isToolMessageUi(m)) continue;
-		const item = makeChangeItemFromTool(m, argsByToolCallId.get(m.toolCallId), i18n);
+		if (isToolMessageUi(m) && approvalToolCallIds.has(m.toolCallId)) continue;
+		const item = isToolMessageUi(m)
+			? makeChangeItemFromTool(m, argsByToolCallId.get(m.toolCallId), i18n)
+			: isToolApprovalUi(m)
+				? makeChangeItemFromApproval(m, argsByToolCallId.get(m.toolCallId), i18n)
+				: null;
 		if (item) items.push(item);
 	}
-	const okCount = items.filter((item) => item.status !== "error").length;
-	if (!okCount) return null;
-	return { type: "run_change_summary_ui", items, total: okCount };
+	const visibleCount = items.filter((item) => item.status !== "error" && item.status !== "denied").length;
+	if (!visibleCount) return null;
+	return { type: "run_change_summary_ui", items, total: visibleCount };
 }
 
 function collapseTurn(
@@ -419,7 +501,21 @@ function collapseTurn(
 			break;
 		}
 	}
-	if (finalAiIndex < 0) return turnMessages;
+	if (finalAiIndex < 0) {
+		const meta = getRunMetaForUser(runMeta, userMessageIndex);
+		const collapsed: UiMessage[] = [first];
+		if (turnMessages.length > 1) {
+			collapsed.push({
+				type: "processing_summary_ui",
+				status: statusFromRunMeta(meta),
+				durationMs: meta?.durationMs,
+				details: turnMessages.slice(1),
+			});
+		}
+		const changeSummary = buildChangeSummary(turnMessages, i18n);
+		if (changeSummary) collapsed.push(changeSummary);
+		return collapsed;
+	}
 
 	const finalAi = turnMessages[finalAiIndex] as Record<string, any>;
 	const finalTextMessage = cloneAiWithParts(finalAi, (part) => part?.type === "text");

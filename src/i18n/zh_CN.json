@@ -80,6 +80,7 @@
   "chat.changes.title": "本轮修改 {count} 项",
   "chat.changes.subtitle": "已完成 {count} 项编辑工作",
   "chat.changes.subtitleWithErrors": "已完成 {count} 项，{errors} 项失败",
+  "chat.changes.subtitleWithApprovals": "待审批 {count} 项编辑工作",
   "chat.changes.showMore": "再显示 {count} 项",
   "chat.changes.status.error": "失败",
   "chat.changes.action.create": "已创建",

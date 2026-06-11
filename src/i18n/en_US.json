@@ -80,6 +80,7 @@
   "chat.changes.title": "Changed {count} item(s)",
   "chat.changes.subtitle": "Completed {count} edit item(s)",
   "chat.changes.subtitleWithErrors": "Completed {count}, {errors} failed",
+  "chat.changes.subtitleWithApprovals": "{count} edit item(s) awaiting approval",
   "chat.changes.showMore": "Show {count} more",
   "chat.changes.status.error": "Failed",
   "chat.changes.action.create": "Created",

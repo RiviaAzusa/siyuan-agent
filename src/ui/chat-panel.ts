@@ -976,6 +976,14 @@ export class ChatPanel {
 								...event.approval,
 							});
 						}
+						const item = this.makeApprovalChangeItem(event.approval);
+						if (item) {
+							this.renderRunChangeSummary({
+								type: "run_change_summary_ui",
+								items: [item],
+								total: 1,
+							}, shell);
+						}
 						this.scrollToBottom();
 						return;
 					}
@@ -1441,36 +1449,22 @@ export class ChatPanel {
 	private renderToolApproval(toolEl: HTMLElement, approval: ToolApprovalUi): void {
 		toolEl.dataset.approvalId = approval.approvalId;
 		toolEl.dataset.approvalStatus = approval.status;
+		toolEl.dataset.toolStatus = approval.status === "denied" ? "error" : "pending";
 		if (approval.status === "denied") toolEl.dataset.toolStatus = "error";
 
 		const details = toolEl.querySelector("details");
 		if (!details) return;
-		let approvalEl = details.querySelector<HTMLElement>(".chat-msg__approval");
-		if (!approvalEl) {
-			approvalEl = document.createElement("div");
-			approvalEl.className = "chat-msg__approval";
-			details.appendChild(approvalEl);
-		}
-
-		const pending = approval.status === "pending";
 		const statusText = approval.status === "approved"
 			? this.t("chat.approval.approved", undefined, "Approved")
 			: approval.status === "denied"
 				? this.t("chat.approval.denied", undefined, "Denied")
 				: this.t("chat.approval.pending", undefined, "Approval required");
-		approvalEl.innerHTML = `
-			<div class="chat-msg__approval-status">${escapeHtml(statusText)}</div>
-			<div class="chat-msg__approval-actions">
-				<button class="b3-button b3-button--text" data-action="deny-approval" ${pending ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
-				<button class="b3-button b3-button--primary" data-action="approve-approval" ${pending ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
-			</div>
-		`;
-		approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-approval']")?.addEventListener("click", () => {
-			void this.handleToolApprovalDecision(approval.approvalId, true, toolEl);
-		});
-		approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
-			void this.handleToolApprovalDecision(approval.approvalId, false, toolEl);
-		});
+		details.querySelector<HTMLElement>(".chat-msg__approval")?.remove();
+		const summary = details.querySelector("summary");
+		if (summary) {
+			summary.querySelector<HTMLElement>(".chat-msg__approval-inline")?.remove();
+			summary.insertAdjacentHTML("beforeend", `<span class="chat-msg__doc-meta chat-msg__approval-inline">${escapeHtml(statusText)}</span>`);
+		}
 	}
 
 	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement): Promise<void> {
@@ -1496,9 +1490,26 @@ export class ChatPanel {
 				...target,
 			});
 		}
+		this.updateApprovalElements(target);
 
 		if (approvals.some((item) => item.status === "pending")) return;
 		await this.resumeAfterToolApprovals(approvals);
+	}
+
+	private updateApprovalElements(approval: PendingToolApproval): void {
+		const statusText = approval.status === "approved"
+			? this.t("chat.approval.approved", undefined, "Approved")
+			: approval.status === "denied"
+				? this.t("chat.approval.denied", undefined, "Denied")
+				: this.t("chat.approval.pending", undefined, "Approval required");
+		this.messagesEl.querySelectorAll<HTMLElement>(`.chat-msg__approval-summary[data-approval-id="${this.cssEscape(approval.approvalId)}"]`).forEach((el) => {
+			el.dataset.approvalStatus = approval.status;
+			const statusEl = el.querySelector<HTMLElement>(".chat-msg__approval-status");
+			if (statusEl) statusEl.textContent = statusText;
+			el.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+				button.disabled = approval.status !== "pending";
+			});
+		});
 	}
 
 	private getLastTurnList(): HTMLElement {
@@ -1558,6 +1569,23 @@ export class ChatPanel {
 		return parts.join("");
 	}
 
+	private makeApprovalChangeItem(approval: PendingToolApproval): RunChangeSummaryItemUi | null {
+		const activity = this.getFriendlyToolActivity(approval.toolName, approval.input);
+		if (activity?.category !== "change") return null;
+		return {
+			action: (activity.action || "other") as RunChangeSummaryItemUi["action"],
+			toolName: approval.toolName,
+			label: activity.label || activity.path || activity.id || approval.toolName,
+			id: activity.id,
+			blockId: activity.blockId,
+			blockIds: activity.blockIds,
+			path: activity.path,
+			meta: activity.meta,
+			status: approval.status,
+			approvalId: approval.approvalId,
+		};
+	}
+
 	private cssEscape(value: string): string {
 		const escape = (globalThis as any).CSS?.escape;
 		return typeof escape === "function" ? escape(value) : value.replace(/["\\]/g, "\\$&");
@@ -1605,11 +1633,14 @@ export class ChatPanel {
 	private renderRunChangeSummary(summary: RunChangeSummaryUi, shell: AssistantMessageShell): void {
 		const card = document.createElement("div");
 		card.className = "chat-msg__change-summary";
-		const okItems = summary.items.filter((item) => item.status !== "error");
-		const errorItems = summary.items.length - okItems.length;
-		const subtitle = errorItems > 0
-			? this.t("chat.changes.subtitleWithErrors", { count: okItems.length, errors: errorItems })
-			: this.t("chat.changes.subtitle", { count: okItems.length });
+		const activeItems = summary.items.filter((item) => item.status !== "error" && item.status !== "denied");
+		const errorItems = summary.items.filter((item) => item.status === "error").length;
+		const pendingItems = summary.items.filter((item) => item.status === "pending").length;
+		const subtitle = pendingItems > 0
+			? this.t("chat.changes.subtitleWithApprovals", { count: pendingItems })
+			: errorItems > 0
+				? this.t("chat.changes.subtitleWithErrors", { count: activeItems.length, errors: errorItems })
+				: this.t("chat.changes.subtitle", { count: activeItems.length });
 		const visibleItems = summary.items.slice(0, 3);
 		const hiddenItems = summary.items.slice(3);
 		const renderItem = (item: RunChangeSummaryItemUi) => {
@@ -1626,14 +1657,34 @@ export class ChatPanel {
 			const meta = item.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(item.meta)}</span>` : "";
 			const status = item.status === "error"
 				? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.changes.status.error"))}</span>`
+				: item.status === "pending"
+					? `<span class="chat-msg__change-status chat-msg__change-status--pending">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>`
+					: item.status === "approved"
+						? `<span class="chat-msg__change-status chat-msg__change-status--approved">${escapeHtml(this.t("chat.approval.approved", undefined, "Approved"))}</span>`
+						: item.status === "denied"
+							? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.approval.denied", undefined, "Denied"))}</span>`
+							: "";
+			const approvalActions = item.approvalId
+				? `<div class="chat-msg__approval-summary" data-approval-id="${escapeHtml(item.approvalId)}" data-approval-status="${escapeHtml(item.status)}">
+					<div class="chat-msg__approval-status">${escapeHtml(item.status === "approved"
+						? this.t("chat.approval.approved", undefined, "Approved")
+						: item.status === "denied"
+							? this.t("chat.approval.denied", undefined, "Denied")
+							: this.t("chat.approval.pending", undefined, "Approval required"))}</div>
+					<div class="chat-msg__approval-actions">
+						<button class="b3-button b3-button--text" data-action="deny-approval" ${item.status === "pending" ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
+						<button class="b3-button b3-button--primary" data-action="approve-approval" ${item.status === "pending" ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+					</div>
+				</div>`
 				: "";
-			return `<div class="chat-msg__tool" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" ? "error" : "done"}">
+			return `<div class="chat-msg__tool" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" || item.status === "denied" ? "error" : item.status === "pending" ? "pending" : "done"}">
 				<details open>
 					<summary>
 						<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.tool.badge.change"))}</span>
 						<span class="chat-msg__tool-title">${actionText}</span>
 						${linkHtml}${meta}${status}
 					</summary>
+					${approvalActions}
 				</details>
 			</div>`;
 		};
@@ -1657,6 +1708,15 @@ export class ChatPanel {
 				e.preventDefault();
 				const blockIds = this.parseBlockIdsAttr(link.dataset.blockIds);
 				this.openDocumentLink(link.dataset.id!, blockIds.length ? blockIds : link.dataset.blockId ? [link.dataset.blockId] : []);
+			});
+		});
+		card.querySelectorAll<HTMLElement>(".chat-msg__approval-summary[data-approval-id]").forEach((approvalEl) => {
+			const approvalId = approvalEl.dataset.approvalId || "";
+			approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-approval']")?.addEventListener("click", () => {
+				void this.handleToolApprovalDecision(approvalId, true);
+			});
+			approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
+				void this.handleToolApprovalDecision(approvalId, false);
 			});
 		});
 		shell.stackEl.appendChild(card);
