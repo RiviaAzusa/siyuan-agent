@@ -22,6 +22,14 @@
 	--agent-shadow-soft: color-mix(in srgb, var(--b3-theme-on-background) 10%, transparent);
 }
 
+:root[data-theme-mode="dark"] .chat-panel,
+html[data-theme-mode="dark"] .chat-panel,
+body.body--dark .chat-panel {
+	--agent-text: var(--b3-theme-on-background);
+	--agent-text-muted: color-mix(in srgb, var(--b3-theme-on-background) 76%, var(--b3-theme-background) 24%);
+	--agent-accent-strong: color-mix(in srgb, var(--b3-theme-primary) 74%, var(--b3-theme-on-background) 26%);
+}
+
 .chat-panel__messages {
 	flex: 1;
 	overflow-y: auto;
