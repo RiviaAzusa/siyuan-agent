@@ -221,8 +221,8 @@ describe("edit_blocks tool", () => {
 		expect(JSON.parse(raw)).toMatchObject({
 			__tool_type: "edit_blocks",
 			results: [
-				{ oldId: "block-1", rootDocId: "doc-a", status: "error" },
-				{ oldId: "block-2", rootDocId: "doc-b", status: "error" },
+				{ oldId: "block-1", rootDocId: "doc-a", status: "error", original: "old 1" },
+				{ oldId: "block-2", rootDocId: "doc-b", status: "error", original: "old 2" },
 			],
 		});
 		expect(JSON.parse(raw).results[0].error).toContain("cannot edit blocks across multiple documents");

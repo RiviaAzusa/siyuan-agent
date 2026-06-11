@@ -26,6 +26,7 @@ export interface PendingToolApproval {
 	toolCallId: string;
 	toolName: string;
 	input?: unknown;
+	preview?: ChangePreview;
 	status: "pending" | "approved" | "denied";
 	reason?: string;
 }
@@ -85,6 +86,7 @@ export interface ToolMessageUi {
 	status: "running" | "done" | "error";
 	summary?: string;
 	result?: string;
+	preview?: ChangePreview;
 	activity?: {
 		category: "lookup" | "change";
 		action: ToolActivityAction;
@@ -106,8 +108,27 @@ export interface ToolApprovalUi {
 	toolCallId: string;
 	toolName: string;
 	input?: unknown;
+	preview?: ChangePreview;
 	status: "pending" | "approved" | "denied";
 	reason?: string;
+}
+
+export interface ChangePreviewBlock {
+	id?: string;
+	label?: string;
+	before?: string;
+	after?: string;
+	status?: "ok" | "error";
+	error?: string;
+}
+
+export interface ChangePreview {
+	kind: "edit_blocks" | "create_document";
+	title?: string;
+	path?: string;
+	status: "ready" | "partial" | "error";
+	error?: string;
+	items: ChangePreviewBlock[];
 }
 
 export interface ProcessingSummaryUi {
@@ -130,6 +151,7 @@ export interface RunChangeSummaryItemUi {
 	added?: number;
 	removed?: number;
 	meta?: string;
+	preview?: ChangePreview;
 }
 
 export interface RunChangeSummaryUi {

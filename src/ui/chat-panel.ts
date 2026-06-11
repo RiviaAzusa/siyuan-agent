@@ -29,6 +29,7 @@ import {
 	type RunChangeSummaryUi,
 	type ToolApprovalUi,
 	type PendingToolApproval,
+	type ChangePreview,
 } from "../types";
 import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 import { prepareAgent } from "../core/agent";
@@ -40,6 +41,7 @@ import { buildMessagesView, extractEditOkResults } from "../core/ui-message-buil
 import { compactMessages, shouldCompact } from "../core/compaction";
 import { createModel } from "../llms/ai-sdk-provider";
 import { getDefaultTools, type SiyuanTool } from "../core/tools";
+import { siyuanFetch } from "../core/tools/siyuan-api";
 import { SettingsView, type SettingsViewContext } from "./settings-view";
 import { TasksView, type TasksViewContext } from "./tasks-view";
 import { Autocomplete } from "./autocomplete";
@@ -189,6 +191,98 @@ export class ChatPanel {
 		} catch {
 			return null;
 		}
+	}
+
+	private makeCreateDocumentPreview(input: any): ChangePreview | undefined {
+		const args = input && typeof input === "object" ? input : {};
+		const markdown = typeof args.markdown === "string" ? args.markdown : "";
+		const path = typeof args.path === "string" ? args.path : undefined;
+		if (!markdown && !path) return undefined;
+		return {
+			kind: "create_document",
+			path,
+			status: "ready",
+			items: [{
+				label: path || args.id || "create_document",
+				before: "",
+				after: markdown,
+				status: "ok",
+			}],
+		};
+	}
+
+	private async buildApprovalPreview(approval: PendingToolApproval | ToolApprovalUi): Promise<ChangePreview | undefined> {
+		const input = approval.input && typeof approval.input === "object" ? approval.input as any : {};
+		if (approval.toolName === "create_document") return this.makeCreateDocumentPreview(input);
+		if (approval.toolName !== "edit_blocks" || !Array.isArray(input.blocks)) return undefined;
+
+		const blocks = input.blocks
+			.filter((block: any) => block && typeof block.id === "string")
+			.map((block: any) => ({
+				id: block.id,
+				content: typeof block.content === "string" ? block.content : "",
+			}));
+		if (!blocks.length) return undefined;
+
+		try {
+			const originals: Record<string, string> = await siyuanFetch("/api/block/getBlockKramdowns", {
+				ids: blocks.map((block: any) => block.id),
+			});
+			return {
+				kind: "edit_blocks",
+				status: "ready",
+				items: blocks.map((block: any) => ({
+					id: block.id,
+					label: block.id,
+					before: typeof originals?.[block.id] === "string" ? originals[block.id] : "",
+					after: block.content,
+					status: "ok",
+				})),
+			};
+		} catch (err) {
+			return {
+				kind: "edit_blocks",
+				status: "error",
+				error: localizeErrorMessage(err, this.i18n),
+				items: blocks.map((block: any) => ({
+					id: block.id,
+					label: block.id,
+					after: block.content,
+					status: "error",
+					error: localizeErrorMessage(err, this.i18n),
+				})),
+			};
+		}
+	}
+
+	private async enrichPendingApprovalPreviews(state: AgentState): Promise<void> {
+		const approvals: PendingToolApproval[] = Array.isArray(state.pendingApprovals) ? state.pendingApprovals : [];
+		for (const approval of approvals) {
+			if (approval.preview) continue;
+			const preview = await this.buildApprovalPreview(approval);
+			if (preview) approval.preview = preview;
+		}
+	}
+
+	private async refreshApprovalPreviewInUi(approval: PendingToolApproval, toolEl?: HTMLElement | null): Promise<void> {
+		const preview = await this.buildApprovalPreview(approval);
+		if (!preview) return;
+		const s = this.activeSession;
+		const approvals: PendingToolApproval[] = Array.isArray(s.state?.pendingApprovals)
+			? s.state.pendingApprovals.map((item) => item.approvalId === approval.approvalId ? { ...item, preview } : { ...item })
+			: [{ ...approval, preview }];
+		s.state = { ...(s.state || {}), pendingApprovals: approvals };
+		if (toolEl?.isConnected) {
+			this.renderToolApproval(toolEl, { type: "tool_approval_ui", ...approval, preview });
+		}
+		this.messagesEl.querySelectorAll<HTMLElement>(`.chat-msg__change-summary [data-approval-id="${this.cssEscape(approval.approvalId)}"]`).forEach((approvalEl) => {
+			const toolItem = approvalEl.closest<HTMLElement>(".chat-msg__tool");
+			const details = toolItem?.querySelector<HTMLElement>("details");
+			if (details && !details.querySelector(".chat-msg__change-preview")) {
+				const actions = details.querySelector<HTMLElement>(".chat-msg__approval-summary");
+				(actions || details).insertAdjacentHTML(actions ? "beforebegin" : "beforeend", this.renderChangePreviewHtml(preview));
+			}
+		});
 	}
 
 	private getFriendlyToolActivity(
@@ -975,6 +1069,7 @@ export class ChatPanel {
 								type: "tool_approval_ui",
 								...event.approval,
 							});
+							void this.refreshApprovalPreviewInUi(event.approval, toolEl);
 						}
 						const item = this.makeApprovalChangeItem(event.approval);
 						if (item) {
@@ -1022,6 +1117,10 @@ export class ChatPanel {
 			if (streamHadError && shell.el.isConnected && shell.stackEl.children.length > 0) {
 				const lastAi = (latestState.messages || []).filter((m: any) => msgType(m) === "ai").pop();
 				this.appendActionBar(shell, lastAi ? getMessageContent(lastAi) : "");
+			}
+
+			if (!this.abortCtrl?.signal.aborted && latestState.pendingApprovals?.length) {
+				await this.enrichPendingApprovalPreviews(latestState);
 			}
 
 			s.state = latestState;
@@ -1351,6 +1450,12 @@ export class ChatPanel {
 					if (m.status === "error") toolEl.dataset.toolStatus = "error";
 					this.appendToolResultToElement(toolEl, m.result, true);
 				}
+				if (m.preview) {
+					const details = toolEl.querySelector("details");
+					if (details && !details.querySelector(".chat-msg__change-preview")) {
+						details.insertAdjacentHTML("beforeend", this.renderChangePreviewHtml(m.preview));
+					}
+				}
 				if (m.status === "done" || m.status === "error") {
 					this.finalizeToolElement(toolEl);
 				}
@@ -1465,6 +1570,10 @@ export class ChatPanel {
 			summary.querySelector<HTMLElement>(".chat-msg__approval-inline")?.remove();
 			summary.insertAdjacentHTML("beforeend", `<span class="chat-msg__doc-meta chat-msg__approval-inline">${escapeHtml(statusText)}</span>`);
 		}
+		details.querySelector<HTMLElement>(".chat-msg__change-preview")?.remove();
+		if (approval.preview) {
+			details.insertAdjacentHTML("beforeend", this.renderChangePreviewHtml(approval.preview));
+		}
 	}
 
 	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement): Promise<void> {
@@ -1569,6 +1678,72 @@ export class ChatPanel {
 		return parts.join("");
 	}
 
+	private buildSimpleLineDiff(before = "", after = ""): string {
+		const beforeLines = before.split(/\r?\n/);
+		const afterLines = after.split(/\r?\n/);
+		const max = Math.max(beforeLines.length, afterLines.length);
+		const lines: string[] = [];
+		for (let i = 0; i < max; i++) {
+			const oldLine = beforeLines[i];
+			const newLine = afterLines[i];
+			if (oldLine === newLine) {
+				if (oldLine !== undefined) lines.push(`<div class="diff-line diff-line--context"> ${escapeHtml(oldLine)}</div>`);
+				continue;
+			}
+			if (oldLine !== undefined) lines.push(`<div class="diff-line diff-line--del">- ${escapeHtml(oldLine)}</div>`);
+			if (newLine !== undefined) lines.push(`<div class="diff-line diff-line--add">+ ${escapeHtml(newLine)}</div>`);
+		}
+		return lines.join("") || `<div class="diff-line diff-line--context">${escapeHtml(this.t("common.noContent", undefined, "No content"))}</div>`;
+	}
+
+	private renderPreviewText(value?: string): string {
+		const text = value ?? "";
+		return text ? escapeHtml(text) : `<span class="chat-msg__preview-empty">${escapeHtml(this.t("common.noContent", undefined, "No content"))}</span>`;
+	}
+
+	private renderChangePreviewHtml(preview: ChangePreview): string {
+		const title = preview.kind === "create_document"
+			? this.t("chat.preview.createTitle", undefined, "Document to create")
+			: this.t("chat.preview.editTitle", { count: preview.items.length }, `Edit ${preview.items.length} block(s)`);
+		const error = preview.error
+			? `<div class="chat-msg__preview-error">${escapeHtml(this.t("chat.preview.loadFailed", { error: preview.error }, `Preview unavailable: ${preview.error}`))}</div>`
+			: "";
+		const blocks = preview.items.map((item, index) => {
+			const label = escapeHtml(item.label || item.id || `${index + 1}`);
+			const itemError = item.error ? `<div class="chat-msg__preview-error">${escapeHtml(item.error)}</div>` : "";
+			const before = this.renderPreviewText(item.before);
+			const after = this.renderPreviewText(item.after);
+			const diff = this.buildSimpleLineDiff(item.before || "", item.after || "");
+			return `<div class="chat-msg__preview-item" data-preview-status="${escapeHtml(item.status || "ok")}">
+				<div class="chat-msg__preview-item-head">${label}</div>
+				${itemError}
+				<div class="chat-msg__preview-columns">
+					<div class="chat-msg__preview-column">
+						<div class="chat-msg__preview-label">${escapeHtml(this.t("chat.preview.before", undefined, "Original"))}</div>
+						<pre class="chat-msg__preview-text">${before}</pre>
+					</div>
+					<div class="chat-msg__preview-arrow" aria-hidden="true">&rarr;</div>
+					<div class="chat-msg__preview-column">
+						<div class="chat-msg__preview-label">${escapeHtml(this.t("chat.preview.after", undefined, "New"))}</div>
+						<pre class="chat-msg__preview-text">${after}</pre>
+					</div>
+				</div>
+				<details class="chat-msg__preview-diff">
+					<summary>${escapeHtml(this.t("chat.preview.showDiff", undefined, "Show line diff"))}</summary>
+					<div class="chat-msg__edit-lines">${diff}</div>
+				</details>
+			</div>`;
+		}).join("");
+		return `<div class="chat-msg__change-preview" data-preview-kind="${escapeHtml(preview.kind)}" data-preview-status="${escapeHtml(preview.status)}">
+			<div class="chat-msg__preview-head">
+				<span class="chat-msg__preview-title">${escapeHtml(title)}</span>
+				${preview.path ? `<span class="chat-msg__doc-meta">${escapeHtml(preview.path)}</span>` : ""}
+			</div>
+			${error}
+			${blocks}
+		</div>`;
+	}
+
 	private makeApprovalChangeItem(approval: PendingToolApproval): RunChangeSummaryItemUi | null {
 		const activity = this.getFriendlyToolActivity(approval.toolName, approval.input);
 		if (activity?.category !== "change") return null;
@@ -1583,6 +1758,7 @@ export class ChatPanel {
 			meta: activity.meta,
 			status: approval.status,
 			approvalId: approval.approvalId,
+			preview: approval.preview,
 		};
 	}
 
@@ -1677,6 +1853,7 @@ export class ChatPanel {
 					</div>
 				</div>`
 				: "";
+			const previewHtml = item.preview ? this.renderChangePreviewHtml(item.preview) : "";
 			return `<div class="chat-msg__tool" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" || item.status === "denied" ? "error" : item.status === "pending" ? "pending" : "done"}">
 				<details open>
 					<summary>
@@ -1684,6 +1861,7 @@ export class ChatPanel {
 						<span class="chat-msg__tool-title">${actionText}</span>
 						${linkHtml}${meta}${status}
 					</summary>
+					${previewHtml}
 					${approvalActions}
 				</details>
 			</div>`;

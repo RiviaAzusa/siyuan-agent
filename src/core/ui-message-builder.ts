@@ -1,6 +1,7 @@
 import type {
 	AgentRunMeta,
 	AgentState,
+	ChangePreview,
 	ProcessingSummaryUi,
 	RunChangeSummaryItemUi,
 	RunChangeSummaryUi,
@@ -159,6 +160,71 @@ function parseToolResultJson(text: string): any {
 	return undefined;
 }
 
+function makeCreateDocumentPreview(input: any): ChangePreview | undefined {
+	const markdown = typeof input?.markdown === "string" ? input.markdown : "";
+	const path = typeof input?.path === "string" ? input.path : undefined;
+	if (!markdown && !path) return undefined;
+	return {
+		kind: "create_document",
+		path,
+		status: "ready",
+		items: [{
+			label: path || input?.id || "create_document",
+			before: "",
+			after: markdown,
+			status: "ok",
+		}],
+	};
+}
+
+function makeEditBlocksPreviewFromInput(input: any): ChangePreview | undefined {
+	if (!Array.isArray(input?.blocks)) return undefined;
+	const items = input.blocks.map((block: any) => ({
+		id: typeof block?.id === "string" ? block.id : undefined,
+		label: typeof block?.id === "string" ? block.id : undefined,
+		after: typeof block?.content === "string" ? block.content : "",
+		status: "ok" as const,
+	}));
+	return { kind: "edit_blocks", status: "partial", items };
+}
+
+function makeEditBlocksPreviewFromResult(input: any, parsed: any): ChangePreview | undefined {
+	if (!Array.isArray(parsed?.results)) return makeEditBlocksPreviewFromInput(input);
+	const inputBlocks = Array.isArray(input?.blocks) ? input.blocks : [];
+	const inputById = new Map(inputBlocks.map((block: any) => [block?.id, block]));
+	const items = parsed.results.map((item: any) => {
+		const inputBlock = inputById.get(item?.oldId);
+		const after = typeof item?.updated === "string"
+			? item.updated
+			: typeof inputBlock?.content === "string"
+				? inputBlock.content
+				: "";
+		return {
+			id: typeof item?.oldId === "string" ? item.oldId : undefined,
+			label: typeof item?.oldId === "string" ? item.oldId : undefined,
+			before: typeof item?.original === "string" ? item.original : undefined,
+			after,
+			status: item?.status === "error" ? "error" as const : "ok" as const,
+			error: typeof item?.error === "string" ? item.error : undefined,
+		};
+	});
+	const hasError = items.some((item: ChangePreview["items"][number]) => item.status === "error");
+	const hasBefore = items.some((item: ChangePreview["items"][number]) => item.before !== undefined);
+	return {
+		kind: "edit_blocks",
+		status: hasError ? "partial" : hasBefore ? "ready" : "partial",
+		items,
+	};
+}
+
+function deriveChangePreview(toolName: string, input: any, resultText?: string, approvalPreview?: ChangePreview): ChangePreview | undefined {
+	if (approvalPreview) return approvalPreview;
+	if (toolName === "create_document") return makeCreateDocumentPreview(input);
+	if (toolName !== "edit_blocks") return undefined;
+	const parsed = resultText ? parseToolResultJson(resultText) : undefined;
+	return parsed ? makeEditBlocksPreviewFromResult(input, parsed) : makeEditBlocksPreviewFromInput(input);
+}
+
 type ToolActivityProjection = NonNullable<ToolMessageUi["activity"]>;
 
 function countInputBlocks(value: any): number | undefined {
@@ -311,6 +377,7 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 		path: activity?.path,
 		status,
 		meta: activity?.meta,
+		preview: tool.preview,
 	};
 
 	if (tool.toolName === "edit_blocks") {
@@ -388,6 +455,7 @@ function makeChangeItemFromApproval(approval: ToolApprovalUi, args: any, i18n: T
 		label: approval.toolName,
 		status: approval.status,
 		approvalId: approval.approvalId,
+		preview: approval.preview || deriveChangePreview(approval.toolName, input),
 	};
 
 	if (approval.toolName === "edit_blocks") {
@@ -644,6 +712,7 @@ export class UiMessageBuilder {
 			tmu.status = hasError ? "error" : "done";
 			if (result !== undefined) tmu.result = result;
 			if (part) tmu.activity = deriveToolActivity({ ...part, resultText: result }, this.i18n);
+			if (part) tmu.preview = deriveChangePreview(part.toolName || "", part.input || {}, result);
 			tmu.finishedAt = Date.now();
 			this.pendingToolMessages.delete(toolCallId);
 		}
@@ -740,9 +809,11 @@ export class UiMessageBuilder {
 export function buildMessagesViewFromParts(
 	messages: any[],
 	i18n: Translator = defaultTranslator,
+	pendingApprovals: ToolApprovalUi[] = [],
 ): UiMessage[] {
 	const builder = new UiMessageBuilder(i18n);
 	const toolCallsById = new Map<string, any>();
+	const approvalsById = new Map(pendingApprovals.map((approval) => [approval.approvalId, approval]));
 
 	for (const msg of messages || []) {
 		const type = msgType(msg);
@@ -766,13 +837,16 @@ export function buildMessagesViewFromParts(
 				const tcId = part.toolCallId;
 				if (!tcId) continue;
 				const tc = toolCallsById.get(tcId);
+				const storedApproval = approvalsById.get(part.approvalId);
 				builder.onToolApprovalRequest({
 					type: "tool_approval_ui",
 					approvalId: part.approvalId,
 					toolCallId: tcId,
-					toolName: getToolCallName(tc),
-					input: tc?.input ?? tc?.args ?? {},
-					status: "pending",
+					toolName: storedApproval?.toolName || getToolCallName(tc),
+					input: storedApproval?.input ?? tc?.input ?? tc?.args ?? {},
+					preview: storedApproval?.preview,
+					status: storedApproval?.status || "pending",
+					reason: storedApproval?.reason,
 				});
 			}
 			continue;
@@ -810,5 +884,8 @@ export function buildMessagesViewFromParts(
 export function buildMessagesView(state: AgentState | undefined | null, i18n: Translator = defaultTranslator): UiMessage[] {
 	const messages = Array.isArray(state?.messages) ? state!.messages : [];
 	const runMeta = Array.isArray(state?.runMeta) ? state!.runMeta : [];
-	return collapseMessagesByTurn(buildMessagesViewFromParts(messages, i18n), runMeta, i18n);
+	const pendingApprovals = Array.isArray(state?.pendingApprovals)
+		? state!.pendingApprovals.map((approval: any) => ({ type: "tool_approval_ui", ...approval }))
+		: [];
+	return collapseMessagesByTurn(buildMessagesViewFromParts(messages, i18n, pendingApprovals), runMeta, i18n);
 }

@@ -347,6 +347,43 @@ describe("runAgentStream", () => {
 		});
 	});
 
+	it("projects pending approval previews from state", () => {
+		const state = {
+			messages: [
+				{ role: "user", content: "edit" },
+				{ role: "assistant", content: [
+					{ type: "tool-call", toolCallId: "call-edit", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "updated" }] } },
+					{ type: "tool-approval-request", approvalId: "approval-edit", toolCallId: "call-edit" },
+				] },
+			],
+			pendingApprovals: [{
+				approvalId: "approval-edit",
+				toolCallId: "call-edit",
+				toolName: "edit_blocks",
+				input: { blocks: [{ id: "b1", content: "updated" }] },
+				status: "pending",
+				preview: {
+					kind: "edit_blocks",
+					status: "ready",
+					items: [{ id: "b1", before: "original", after: "updated", status: "ok" }],
+				},
+			}],
+		};
+
+		const view = buildMessagesView(state);
+		const processing = view.find((m: any) => m.type === "processing_summary_ui") as any;
+		const approval = processing.details.find((m: any) => m.type === "tool_approval_ui");
+		expect(approval.preview).toMatchObject({
+			kind: "edit_blocks",
+			items: [{ id: "b1", before: "original", after: "updated" }],
+		});
+		const summary = view.find((m: any) => m.type === "run_change_summary_ui") as any;
+		expect(summary.items[0].preview).toMatchObject({
+			kind: "edit_blocks",
+			items: [{ id: "b1", before: "original", after: "updated" }],
+		});
+	});
+
 	it("resumes after two approved change tool approvals", async () => {
 		const { streamText } = await import("ai");
 		const pendingState = {
@@ -535,8 +572,8 @@ describe("buildMessagesView", () => {
 		const editResult = JSON.stringify({
 			__tool_type: "edit_blocks",
 			results: [
-				{ oldId: "b1", newIds: ["b2"], rootDocId: "doc1", status: "ok" },
-				{ oldId: "b3", newIds: ["b4"], rootDocId: "doc1", status: "ok" },
+				{ oldId: "b1", newIds: ["b2"], rootDocId: "doc1", status: "ok", original: "old 1", updated: "new" },
+				{ oldId: "b3", newIds: ["b4"], rootDocId: "doc1", status: "ok", original: "old 3", updated: "new 3" },
 			],
 		});
 		const state = {
@@ -555,6 +592,14 @@ describe("buildMessagesView", () => {
 			type: "run_change_summary_ui",
 			total: 1,
 			items: [{ action: "edit", toolName: "edit_blocks", id: "b2", blockId: "b2", blockIds: ["b2", "b4"], status: "ok" }],
+		});
+		expect(summary.items[0].preview).toMatchObject({
+			kind: "edit_blocks",
+			status: "ready",
+			items: [
+				{ id: "b1", before: "old 1", after: "new" },
+				{ id: "b3", before: "old 3", after: "new 3" },
+			],
 		});
 	});
 
@@ -608,6 +653,11 @@ describe("buildMessagesView", () => {
 		expect(summary).toMatchObject({
 			total: 1,
 			items: [{ action: "create", toolName: "create_document", id: "result-doc", path: "/Test/AI工具测试文档", status: "ok", added: 1 }],
+		});
+		expect(summary.items[0].preview).toMatchObject({
+			kind: "create_document",
+			path: "/Test/AI工具测试文档",
+			items: [{ before: "", after: "# AI 工具测试文档" }],
 		});
 	});
 
