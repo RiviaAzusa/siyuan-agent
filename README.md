@@ -35,7 +35,7 @@ It understands your notes and writing habits, then helps with search, drafting, 
 
 ## Tech Stack
 
-- [LangChain](https://js.langchain.com/): Agent, tool calling, and streaming runtime
+- [Vercel AI SDK](https://sdk.vercel.ai/): Agent, tool calling, and streaming runtime
 - [SiYuan Plugin API](https://github.com/siyuan-note/siyuan): SiYuan plugin integration and document operations
 - TypeScript
 - Webpack

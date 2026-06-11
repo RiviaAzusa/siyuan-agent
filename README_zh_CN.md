@@ -35,7 +35,7 @@
 
 ## 技术栈
 
-- [LangChain](https://js.langchain.com/)：Agent、工具调用与流式运行
+- [Vercel AI SDK](https://sdk.vercel.ai/)：Agent、工具调用与流式运行
 - [SiYuan Plugin API](https://github.com/siyuan-note/siyuan)：思源插件集成与文档操作
 - TypeScript
 - Webpack
