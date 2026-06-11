@@ -162,6 +162,7 @@ export class ChatPanel {
 		try {
 			const parsed = JSON.parse(trimmed);
 			if (parsed && typeof parsed === "object") {
+				if (parsed.type === "error-text") return true;
 				if (parsed.ok === false || parsed.error) return true;
 				if (Array.isArray(parsed.results) && parsed.results.some((item: any) => item?.status === "error")) return true;
 				const keys = Object.keys(parsed);
@@ -179,6 +180,7 @@ export class ChatPanel {
 			if (parsed && typeof parsed === "object" && parsed.type === "text" && typeof parsed.value === "string") {
 				try { return JSON.parse(parsed.value); } catch { return null; }
 			}
+			if (parsed && typeof parsed === "object" && parsed.type === "error-text") return null;
 			return parsed;
 		} catch {
 			return null;
@@ -209,7 +211,9 @@ export class ChatPanel {
 			return { category: "change", action: "append", id: args.parentID, label: args.parentID || toolName, meta: this.t("tool.appendBlock.metaSimple"), open: true };
 		}
 		if (toolName === "create_document") {
-			return { category: "change", action: "create", id: args.id, path: args.path, label: args.path || args.id || toolName, meta: this.t("tool.createDocument.meta"), open: Boolean(args.id) };
+			const parsed = result ? this.parseJsonResult(result) : undefined;
+			const resultId = typeof parsed?.id === "string" && parsed.id ? parsed.id : undefined;
+			return { category: "change", action: "create", id: resultId || args.id, path: args.path, label: args.path || resultId || args.id || toolName, meta: this.t("tool.createDocument.meta"), open: Boolean(resultId || args.id) };
 		}
 		if (toolName === "move_document") {
 			const count = Array.isArray(args.fromIDs) ? args.fromIDs.length : undefined;
@@ -1480,7 +1484,7 @@ export class ChatPanel {
 			const status = item.status === "error"
 				? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.changes.status.error"))}</span>`
 				: "";
-			return `<div class="chat-msg__tool">
+			return `<div class="chat-msg__tool" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" ? "error" : "done"}">
 				<details open>
 					<summary>
 						<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.tool.badge.change"))}</span>

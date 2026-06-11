@@ -117,6 +117,7 @@ function getToolResultText(part: any): string {
 	const value = part?.output ?? part?.result ?? part?.error ?? "";
 	if (typeof value === "string") return value;
 	if (value && typeof value === "object" && value.type === "text" && typeof value.value === "string") return value.value;
+	if (value && typeof value === "object" && value.type === "error-text" && typeof value.value === "string") return value.value;
 	if (value && typeof value === "object" && value.type === "json") {
 		try {
 			return JSON.stringify(value.value ?? null);
@@ -171,6 +172,7 @@ function isToolResultError(resultText: string, explicitError = false): boolean {
 	if (explicitError) return true;
 	const parsed = parseJsonValue(resultText);
 	if (!parsed || typeof parsed !== "object") return false;
+	if (parsed.type === "error-text") return true;
 	if (parsed.ok === false || parsed.error) return true;
 	if (Array.isArray(parsed.results) && parsed.results.some((item: any) => item?.status === "error")) return true;
 	const keys = Object.keys(parsed);
@@ -216,7 +218,8 @@ function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection
 		return { category: "change", action: "append", id: input.parentID, label: input.parentID || toolName, meta: i18n.t("tool.appendBlock.metaSimple"), open: true };
 	}
 	if (toolName === "create_document") {
-		return { category: "change", action: "create", id: input.id, path: input.path, label: input.path || input.id || toolName, meta: i18n.t("tool.createDocument.meta"), open: Boolean(input.id) };
+		const resultId = typeof parsed?.id === "string" && parsed.id ? parsed.id : undefined;
+		return { category: "change", action: "create", id: resultId || input.id, path: input.path, label: input.path || resultId || input.id || toolName, meta: i18n.t("tool.createDocument.meta"), open: Boolean(resultId || input.id) };
 	}
 	if (toolName === "move_document") {
 		const count = Array.isArray(input.fromIDs) ? input.fromIDs.length : undefined;
@@ -321,10 +324,11 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 	}
 
 	if (tool.toolName === "create_document") {
+		const resultId = typeof parsed?.id === "string" && parsed.id ? parsed.id : undefined;
 		return {
 			...base,
-			label: base.label === tool.toolName ? (args?.path || args?.id || tool.toolName) : base.label,
-			id: base.id || args?.id,
+			label: base.label === tool.toolName ? (args?.path || resultId || args?.id || tool.toolName) : base.label,
+			id: base.id || resultId || args?.id,
 			path: base.path || args?.path,
 			added: 1,
 		};
@@ -377,8 +381,9 @@ function buildChangeSummary(turnMessages: UiMessage[], i18n: Translator): RunCha
 		const item = makeChangeItemFromTool(m, argsByToolCallId.get(m.toolCallId), i18n);
 		if (item) items.push(item);
 	}
-	if (!items.length) return null;
-	return { type: "run_change_summary_ui", items, total: items.length };
+	const okCount = items.filter((item) => item.status !== "error").length;
+	if (!okCount) return null;
+	return { type: "run_change_summary_ui", items, total: okCount };
 }
 
 function collapseTurn(
@@ -640,7 +645,8 @@ export function buildMessagesViewFromParts(
 					input: part.input ?? tc?.input ?? tc?.args ?? {},
 				};
 				const result = getToolResultText(part);
-				builder.onToolResult(tcId, part?.type === "tool-error" || part?.error !== undefined, result, enrichedPart);
+				const outputType = part?.output && typeof part.output === "object" ? part.output.type : undefined;
+				builder.onToolResult(tcId, part?.type === "tool-error" || part?.error !== undefined || outputType === "error-text", result, enrichedPart);
 			}
 			continue;
 		}

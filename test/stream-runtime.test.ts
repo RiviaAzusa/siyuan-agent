@@ -444,7 +444,7 @@ describe("buildMessagesView", () => {
 		});
 	});
 
-	it("derives change tool display from tool-call input instead of successful tool result", () => {
+	it("uses create_document result id for openable change links while keeping input path label", () => {
 		const state = {
 			messages: [
 				{ role: "user", content: "create doc" },
@@ -482,13 +482,19 @@ describe("buildMessagesView", () => {
 			activity: {
 				category: "change",
 				action: "create",
+				id: "result-doc",
 				label: "/Test/AI工具测试文档",
 				path: "/Test/AI工具测试文档",
 				meta: "Created document",
-				open: false,
+				open: true,
 			},
 		});
-		expect(tool.activity.id).toBeUndefined();
+
+		const summary = buildMessagesView(state).find((m: any) => m.type === "run_change_summary_ui") as any;
+		expect(summary).toMatchObject({
+			total: 1,
+			items: [{ action: "create", toolName: "create_document", id: "result-doc", path: "/Test/AI工具测试文档", status: "ok", added: 1 }],
+		});
 	});
 
 	it("uses edit_blocks input for the friendly activity and keeps failed result text", () => {
@@ -537,6 +543,51 @@ describe("buildMessagesView", () => {
 		});
 		expect(tool.activity.id).toBeUndefined();
 		expect(tool.result).toContain("boom");
+	});
+
+	it("marks validation error-text tool results as failed and omits all-failed change summaries", () => {
+		const state = {
+			messages: [
+				{ role: "user", content: "edit blocks" },
+				{
+					role: "assistant",
+					content: [{
+						type: "tool-call",
+						toolCallId: "call-1",
+						toolName: "edit_blocks",
+						input: {
+							blocks: "[{\"id\":\"block-1\",\"content\":\"updated\"}]",
+						},
+					}],
+				},
+				{
+					role: "tool",
+					content: [{
+						type: "tool-result",
+						toolCallId: "call-1",
+						toolName: "edit_blocks",
+						output: { type: "error-text", value: "Invalid input for tool edit_blocks: expected array, received string" },
+					}],
+				},
+				{ role: "assistant", content: [{ type: "text", text: "failed" }] },
+			],
+		};
+
+		const view = buildMessagesView(state);
+		const processing = view.find((m: any) => m.type === "processing_summary_ui") as any;
+		const tool = processing.details.find((m: any) => m.type === "tool_message_ui");
+		expect(tool).toMatchObject({
+			toolName: "edit_blocks",
+			status: "error",
+			result: "Invalid input for tool edit_blocks: expected array, received string",
+			activity: {
+				category: "change",
+				action: "edit",
+				label: "edit_blocks",
+				open: false,
+			},
+		});
+		expect(view.find((m: any) => m.type === "run_change_summary_ui")).toBeUndefined();
 	});
 
 	it("marks call_error tool results as failed when the result is a plain error object", () => {

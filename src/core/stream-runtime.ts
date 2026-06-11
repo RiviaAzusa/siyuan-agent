@@ -113,6 +113,9 @@ function stringifyToolOutput(output: unknown): string {
 	if (output && typeof output === "object" && (output as any).type === "text" && typeof (output as any).value === "string") {
 		return (output as any).value;
 	}
+	if (output && typeof output === "object" && (output as any).type === "error-text" && typeof (output as any).value === "string") {
+		return (output as any).value;
+	}
 	return JSON.stringify(output);
 }
 
