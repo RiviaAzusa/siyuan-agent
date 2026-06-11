@@ -230,12 +230,11 @@
 }
 
 .chat-msg__approval-summary {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 8px;
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 6px;
 	margin: 0;
-	padding: 4px;
+	padding: 6px;
 	border: 1px solid var(--agent-border, var(--b3-border-color));
 	border-radius: 8px;
 	background: color-mix(in srgb, var(--agent-surface, var(--b3-theme-surface)) 80%, transparent);
@@ -248,7 +247,7 @@
 
 .chat-msg__approval-summary--tool {
 	margin: 8px 0 0 20px;
-	width: fit-content;
+	width: calc(100% - 20px);
 	max-width: calc(100% - 20px);
 }
 
@@ -260,12 +259,14 @@
 }
 
 .chat-msg__approval-actions {
-	display: inline-flex;
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
 	align-items: center;
 	gap: 6px;
-	margin-left: auto;
+	width: 100%;
 
 	.b3-button {
+		width: 100%;
 		min-height: 28px;
 		padding: 3px 12px;
 		font-size: 12px;

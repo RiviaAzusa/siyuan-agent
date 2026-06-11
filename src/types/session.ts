@@ -1,4 +1,4 @@
-import type { AgentRunMeta, PendingToolApproval } from "./tool-events";
+import type { AgentRunMeta, PendingToolApproval, ToolApprovalRiskLevel } from "./tool-events";
 import type { ReasoningEffort } from "./model-config";
 
 /* ── TodoList (agent plan management) ────────────────────────────────── */
@@ -35,6 +35,7 @@ export type AgentState = Record<string, any> & {
 	todos?: TodoList;
 	runMeta?: AgentRunMeta[];
 	pendingApprovals?: PendingToolApproval[];
+	sessionApprovedToolRiskLevels?: ToolApprovalRiskLevel[];
 };
 
 /* ── Session types ──────────────────────────────────────────────────── */

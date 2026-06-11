@@ -71,6 +71,7 @@ export class SettingsView {
 			defaultModelId: config.defaultModelId || "",
 			subAgentModelId: config.subAgentModelId || "",
 			mcpServers: Array.isArray(config.mcpServers) ? config.mcpServers.map((item) => ({ ...item })) : [],
+			toolPermissionMode: config.toolPermissionMode === "autoApprove" ? "autoApprove" : "requestApproval",
 			notebookOptions,
 		};
 		this.draft = draft;
@@ -154,6 +155,19 @@ export class SettingsView {
 							</select>
 						</label>
 						<div class="settings-panel__meta-grid">${notebookMeta}</div>
+						<div class="settings-panel__section-title">${escapeHtml(this.t("settings.permissions.title"))}</div>
+						<div class="settings-panel__radio-group" role="radiogroup" aria-label="${escapeHtml(this.t("settings.permissions.title"))}">
+							<label class="settings-panel__radio-card${draft.toolPermissionMode === "requestApproval" ? " settings-panel__radio-card--active" : ""}">
+								<input type="radio" name="toolPermissionMode" value="requestApproval"${draft.toolPermissionMode === "requestApproval" ? " checked" : ""} />
+								<span class="settings-panel__radio-main">${escapeHtml(this.t("settings.permissions.requestApproval.title"))}</span>
+								<span class="settings-panel__radio-copy">${escapeHtml(this.t("settings.permissions.requestApproval.desc"))}</span>
+							</label>
+							<label class="settings-panel__radio-card${draft.toolPermissionMode === "autoApprove" ? " settings-panel__radio-card--active" : ""}">
+								<input type="radio" name="toolPermissionMode" value="autoApprove"${draft.toolPermissionMode === "autoApprove" ? " checked" : ""} />
+								<span class="settings-panel__radio-main">${escapeHtml(this.t("settings.permissions.autoApprove.title"))}</span>
+								<span class="settings-panel__radio-copy">${escapeHtml(this.t("settings.permissions.autoApprove.desc"))}</span>
+							</label>
+						</div>
 					</section>
 
 					<section class="settings-panel__section${this.currentSection === "model-services" ? " settings-panel__section--active" : ""}" data-settings-panel="model-services">
@@ -254,6 +268,7 @@ export class SettingsView {
 			defaultModelId: String(formData.get("defaultModelId") || "").trim(),
 			subAgentModelId: String(formData.get("subAgentModelId") || "").trim(),
 			mcpServers: draft.mcpServers.map((item) => ({ ...item })),
+			toolPermissionMode: formData.get("toolPermissionMode") === "autoApprove" ? "autoApprove" : "requestApproval",
 		};
 		this.ctx.plugin.data[CONFIG_STORAGE] = nextConfig;
 		await this.ctx.plugin.saveData(CONFIG_STORAGE, nextConfig);
@@ -267,6 +282,7 @@ export class SettingsView {
 			defaultModelId: nextConfig.defaultModelId || "",
 			subAgentModelId: nextConfig.subAgentModelId || "",
 			mcpServers: (nextConfig.mcpServers || []).map((item) => ({ ...item })),
+			toolPermissionMode: nextConfig.toolPermissionMode === "autoApprove" ? "autoApprove" : "requestApproval",
 			notebookOptions: draft.notebookOptions,
 		};
 		await this.ctx.refreshModelSelector();

@@ -38,6 +38,8 @@ export type ModelProviderType = "openai-compatible" | "deepseek" | "anthropic";
 
 export type ReasoningEffort = "default" | "off" | "low" | "high";
 
+export type ToolPermissionMode = "requestApproval" | "autoApprove";
+
 export const DEEPSEEK_API_BASE_URL = "https://api.deepseek.com";
 export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 
@@ -76,6 +78,8 @@ export interface AgentConfig {
 	subAgentModelId?: string;
 	/** MCP server configurations */
 	mcpServers?: McpServerConfig[];
+	/** Tool approval behavior */
+	toolPermissionMode?: ToolPermissionMode;
 }
 
 /* ── Default config ──────────────────────────────────────────────────── */
@@ -91,6 +95,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
 	models: [],
 	defaultModelId: "",
 	subAgentModelId: "",
+	toolPermissionMode: "requestApproval",
 };
 
 export const BUILTIN_MODEL_SERVICES: ModelServiceConfig[] = [
@@ -209,6 +214,7 @@ export function normalizeAgentConfig(raw?: Partial<AgentConfig> | null): AgentCo
 		...(raw || {}),
 		modelServices: finalServices,
 		models: [],
+		toolPermissionMode: raw?.toolPermissionMode === "autoApprove" ? "autoApprove" : "requestApproval",
 	};
 }
 

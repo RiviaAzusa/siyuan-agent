@@ -27,6 +27,7 @@ export interface SiyuanToolConfig<INPUT> {
     description: string;
     parameters: z.ZodType<INPUT>;
     category?: ToolCategory;
+    needsApproval?: Tool<INPUT, string>["needsApproval"];
     execute: SiyuanToolExecute<INPUT>;
 }
 
@@ -35,7 +36,7 @@ export function createTool<INPUT>(config: SiyuanToolConfig<INPUT>): Tool<INPUT, 
     const t = tool({
         description: config.description,
         inputSchema: config.parameters,
-        needsApproval: config.category === "change" ? true : undefined,
+        needsApproval: config.needsApproval ?? (config.category === "change" ? true : undefined),
         metadata: config.category ? { category: config.category } : undefined,
         execute: async (input, options) => {
             return config.execute(input, options as SiyuanToolOptions);

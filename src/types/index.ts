@@ -2,6 +2,7 @@ export {
 	type ModelConfig,
 	type ModelProviderType,
 	type ReasoningEffort,
+	type ToolPermissionMode,
 	type ModelServiceModelConfig,
 	type ModelServiceConfig,
 	type McpServerConfig,
@@ -22,6 +23,7 @@ export {
 
 export {
 	type ToolActivityAction,
+	type ToolApprovalRiskLevel,
 	type ChunkParserState,
 	type AgentStreamUiEvent,
 	type RunAgentStreamResult,

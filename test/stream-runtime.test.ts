@@ -124,6 +124,14 @@ describe("mergeState", () => {
 		expect(result.messages[0].content).toContain("Build feature");
 	});
 
+	it("preserves session-approved tool risk levels", () => {
+		const result = mergeState({
+			messages: [],
+			sessionApprovedToolRiskLevels: ["change", "invalid", "delete"],
+		});
+		expect(result.sessionApprovedToolRiskLevels).toEqual(["change", "delete"]);
+	});
+
 });
 
 describe("stripSiyuanBlockAttrs", () => {

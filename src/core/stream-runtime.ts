@@ -8,6 +8,7 @@ import type {
 	PendingToolApproval,
 	RunAgentStreamResult,
 	TodoList,
+	ToolApprovalRiskLevel,
 } from "../types";
 import { COMPACTION_SUMMARY_LABEL, TASK_PLAN_LABEL } from "../types";
 import type { ToolContext } from "./tool-types";
@@ -274,7 +275,7 @@ async function nextWithTimeout<T>(
 export function mergeState(
 	savedState: Record<string, any> | null,
 	inputMsgStr?: string,
-): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[]; pendingApprovals?: PendingToolApproval[] } {
+): { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[]; pendingApprovals?: PendingToolApproval[]; sessionApprovedToolRiskLevels?: ToolApprovalRiskLevel[] } {
 	let messages: Record<string, any>[] = [];
 
 	const compaction = savedState?.compaction ? { ...savedState.compaction } : undefined;
@@ -300,14 +301,17 @@ export function mergeState(
 
 	const runMeta = Array.isArray(savedState?.runMeta) ? [...savedState.runMeta] : undefined;
 	const pendingApprovals = Array.isArray(savedState?.pendingApprovals) ? savedState.pendingApprovals.map((item: any) => ({ ...item })) : undefined;
-	return { messages, compaction, todos, runMeta, pendingApprovals };
+	const sessionApprovedToolRiskLevels = Array.isArray(savedState?.sessionApprovedToolRiskLevels)
+		? savedState.sessionApprovedToolRiskLevels.filter((item: any) => item === "change" || item === "delete")
+		: undefined;
+	return { messages, compaction, todos, runMeta, pendingApprovals, sessionApprovedToolRiskLevels };
 }
 
 /* ── Agent stream ──────────────────────────────────────────────────── */
 
 interface RunAgentStreamParams {
 	setup: AgentSetup;
-	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[]; pendingApprovals?: PendingToolApproval[] };
+	input: { messages: Record<string, any>[]; compaction?: any; todos?: TodoList; runMeta?: AgentRunMeta[]; pendingApprovals?: PendingToolApproval[]; sessionApprovedToolRiskLevels?: ToolApprovalRiskLevel[] };
 	signal?: AbortSignal;
 	recursionLimit?: number;
 	approvalResponses?: Array<{ approvalId: string; approved: boolean; reason?: string }>;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sessionTitle, shouldSendComposerOnKeydown } from "../src/ui/chat-helpers";
+import { applyApprovedRiskLevelsToApprovals, getToolApprovalRiskLevel, sessionTitle, shouldSendComposerOnKeydown } from "../src/ui/chat-helpers";
 
 describe("shouldSendComposerOnKeydown", () => {
 	it("sends on plain Enter", () => {
@@ -49,5 +49,30 @@ describe("sessionTitle", () => {
 				{ role: "assistant", content: "answer" },
 			],
 		})).toBe("New Chat");
+	});
+});
+
+describe("getToolApprovalRiskLevel", () => {
+	it("classifies normal change tools separately from delete tools", () => {
+		expect(getToolApprovalRiskLevel("edit_blocks")).toBe("change");
+		expect(getToolApprovalRiskLevel("create_document")).toBe("change");
+		expect(getToolApprovalRiskLevel("delete_document")).toBe("delete");
+		expect(getToolApprovalRiskLevel("delete_scheduled_task")).toBe("delete");
+		expect(getToolApprovalRiskLevel("get_document")).toBeUndefined();
+	});
+});
+
+describe("applyApprovedRiskLevelsToApprovals", () => {
+	it("approves only approvals in the selected risk level", () => {
+		const result = applyApprovedRiskLevelsToApprovals([
+			{ approvalId: "a", toolCallId: "call-a", toolName: "edit_blocks", status: "pending" },
+			{ approvalId: "b", toolCallId: "call-b", toolName: "delete_document", status: "pending" },
+		], ["change"]);
+
+		expect(result.changed).toBe(true);
+		expect(result.approvals).toEqual([
+			{ approvalId: "a", toolCallId: "call-a", toolName: "edit_blocks", status: "approved" },
+			{ approvalId: "b", toolCallId: "call-b", toolName: "delete_document", status: "pending" },
+		]);
 	});
 });

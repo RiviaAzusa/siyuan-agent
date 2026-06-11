@@ -72,14 +72,14 @@ describe("tool definitions", () => {
 		expect(names).toContain("write_todos");
 	});
 
-	it("delete_document is not in default tools", () => {
+	it("default tools include delete_document", () => {
 		const names = getDefaultTools(() => ({
 			apiBaseURL: "https://example.com/v1",
 			apiKey: "key",
 			model: "model",
 			customInstructions: "",
 		})).map(t => t.name);
-		expect(names).not.toContain("delete_document");
+		expect(names).toContain("delete_document");
 	});
 
 	it("default tools include scheduled task tools", () => {
@@ -95,16 +95,41 @@ describe("tool definitions", () => {
 		expect(names).toContain("delete_scheduled_task");
 	});
 
-	it("default tools include call_error for debug failure rendering", async () => {
+	it("default tools do not include call_error", () => {
+		const names = getDefaultTools(() => ({
+			apiBaseURL: "https://example.com/v1",
+			apiKey: "key",
+			model: "model",
+			customInstructions: "",
+		})).map(t => t.name);
+		expect(names).not.toContain("call_error");
+	});
+
+	it("requestApproval requires approval for change and delete tools", () => {
 		const tools = getDefaultTools(() => ({
 			apiBaseURL: "https://example.com/v1",
 			apiKey: "key",
 			model: "model",
 			customInstructions: "",
+			toolPermissionMode: "requestApproval",
 		}));
-		const callError = tools.find(t => t.name === "call_error");
-		expect(callError).toBeDefined();
-		await expect((callError as any).execute({ message: "debug boom" }, {})).rejects.toThrow("debug boom");
+		expect((tools.find(t => t.name === "edit_blocks") as any)?.needsApproval).toBe(true);
+		expect((tools.find(t => t.name === "delete_document") as any)?.needsApproval).toBe(true);
+		expect((tools.find(t => t.name === "delete_scheduled_task") as any)?.needsApproval).toBe(true);
+	});
+
+	it("autoApprove only requires approval for delete tools", () => {
+		const tools = getDefaultTools(() => ({
+			apiBaseURL: "https://example.com/v1",
+			apiKey: "key",
+			model: "model",
+			customInstructions: "",
+			toolPermissionMode: "autoApprove",
+		}));
+		expect((tools.find(t => t.name === "edit_blocks") as any)?.needsApproval).toBe(false);
+		expect((tools.find(t => t.name === "create_document") as any)?.needsApproval).toBe(false);
+		expect((tools.find(t => t.name === "delete_document") as any)?.needsApproval).toBe(true);
+		expect((tools.find(t => t.name === "delete_scheduled_task") as any)?.needsApproval).toBe(true);
 	});
 });
 

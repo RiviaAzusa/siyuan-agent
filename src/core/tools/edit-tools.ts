@@ -5,6 +5,13 @@ import { siyuanFetch } from "./siyuan-api";
 import { TOOL_DESC } from "../../types";
 import { defaultTranslator, type Translator } from "../../i18n";
 import { stripSiyuanBlockAttrs } from "../siyuan-markdown";
+import type { Tool } from "@ai-sdk/provider-utils";
+
+type ToolApprovalPolicy = Tool<any, string>["needsApproval"];
+
+interface ChangeToolOptions {
+	needsApproval?: ToolApprovalPolicy;
+}
 
 function extractOperationBlockIds(data: any): string[] {
 	if (!Array.isArray(data)) return [];
@@ -42,11 +49,12 @@ function displayOriginal(original: string | undefined): string | undefined {
 	return typeof original === "string" ? stripSiyuanBlockAttrs(original) : original;
 }
 
-export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
+export function createEditBlocksTool(i18n: Translator = defaultTranslator, options: ChangeToolOptions = {}) {
 	const desc = TOOL_DESC.edit_blocks;
 	return createTool({
 		name: "edit_blocks",
 		category: "change",
+		needsApproval: options.needsApproval,
 		description: desc.description,
 		parameters: z.object({
 			blocks: z.array(z.object({
@@ -180,11 +188,12 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 	});
 }
 
-export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
+export function createAppendBlockTool(i18n: Translator = defaultTranslator, options: ChangeToolOptions = {}) {
 	const desc = TOOL_DESC.append_block;
 	return createTool({
 		name: "append_block",
 		category: "change",
+		needsApproval: options.needsApproval,
 		description: desc.description,
 		parameters: z.object({
 			parentID: z.string().describe(desc.params.parentID),
@@ -201,11 +210,12 @@ export function createAppendBlockTool(i18n: Translator = defaultTranslator) {
 	});
 }
 
-export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
+export function createCreateDocumentTool(i18n: Translator = defaultTranslator, options: ChangeToolOptions = {}) {
 	const desc = TOOL_DESC.create_document;
 	return createTool({
 		name: "create_document",
 		category: "change",
+		needsApproval: options.needsApproval,
 		description: desc.description,
 		parameters: z.object({
 			notebook: z.string().describe(desc.params.notebook),
@@ -224,11 +234,12 @@ export function createCreateDocumentTool(i18n: Translator = defaultTranslator) {
 	});
 }
 
-export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
+export function createMoveDocumentTool(i18n: Translator = defaultTranslator, options: ChangeToolOptions = {}) {
 	const desc = TOOL_DESC.move_document;
 	return createTool({
 		name: "move_document",
 		category: "change",
+		needsApproval: options.needsApproval,
 		description: desc.description,
 		parameters: z.object({
 			fromIDs: z.array(z.string()).describe(desc.params.fromIDs),
@@ -241,11 +252,12 @@ export function createMoveDocumentTool(i18n: Translator = defaultTranslator) {
 	});
 }
 
-export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
+export function createRenameDocumentTool(i18n: Translator = defaultTranslator, options: ChangeToolOptions = {}) {
 	const desc = TOOL_DESC.rename_document;
 	return createTool({
 		name: "rename_document",
 		category: "change",
+		needsApproval: options.needsApproval,
 		description: desc.description,
 		parameters: z.object({
 			id: z.string().describe(desc.params.id),
@@ -258,19 +270,23 @@ export function createRenameDocumentTool(i18n: Translator = defaultTranslator) {
 	});
 }
 
-// deleteDocumentTool is intentionally NOT in defaultTools (safety) — export for opt-in use
-export const deleteDocumentTool = createTool({
-	name: "delete_document",
-	category: "change",
-	description: TOOL_DESC.delete_document.description,
-	parameters: z.object({
-		id: z.string().describe(TOOL_DESC.delete_document.params.id),
-	}),
-	async execute({ id }) {
-		await siyuanFetch("/api/filetree/removeDocByID", { id });
-		return JSON.stringify({ ok: true, id });
-	},
-});
+export function createDeleteDocumentTool(options: ChangeToolOptions = {}) {
+	return createTool({
+		name: "delete_document",
+		category: "change",
+		needsApproval: options.needsApproval,
+		description: TOOL_DESC.delete_document.description,
+		parameters: z.object({
+			id: z.string().describe(TOOL_DESC.delete_document.params.id),
+		}),
+		async execute({ id }) {
+			await siyuanFetch("/api/filetree/removeDocByID", { id });
+			return JSON.stringify({ ok: true, id });
+		},
+	});
+}
+
+export const deleteDocumentTool = createDeleteDocumentTool();
 
 export const editBlocksTool = createEditBlocksTool();
 export const appendBlockTool = createAppendBlockTool();

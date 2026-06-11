@@ -12,6 +12,8 @@ export type ToolActivityAction =
 	| "delete"
 	| "other";
 
+export type ToolApprovalRiskLevel = "change" | "delete";
+
 export interface ChunkParserState {
 	inputState: AgentState;
 	contentBuffer: string;

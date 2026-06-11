@@ -30,6 +30,7 @@ import {
 	type ToolApprovalUi,
 	type PendingToolApproval,
 	type ChangePreview,
+	type ToolApprovalRiskLevel,
 } from "../types";
 import { defaultTranslator, localizeErrorMessage, type Translator } from "../i18n";
 import { prepareAgent } from "../core/agent";
@@ -51,6 +52,7 @@ import {
 	getMessageToolCallId, getToolCallId, setMessageContent, setMessageToolCalls,
 	normalizeMessagesForDisplay, escapeHtml, getToolCategory, getToolAction,
 	getToolDisplayTitle, getActionLabel, shouldSendComposerOnKeydown,
+	getToolApprovalRiskLevel, applyApprovedRiskLevelsToApprovals,
 	type AssistantMessageShell, type ActivityBlockRefs,
 } from "./chat-helpers";
 const CONFIG_STORAGE = "agent-config";
@@ -935,6 +937,7 @@ export class ChatPanel {
 		let reasoningBuffer = "";
 		const pendingToolEls: HTMLElement[] = [];
 		let streamHadError = false;
+		let autoResumeApprovals: PendingToolApproval[] | null = null;
 
 		const removePending = (): void => {
 			if (this.pendingEl) {
@@ -1088,6 +1091,12 @@ export class ChatPanel {
 			});
 
 			latestState = result.lastState;
+			if (!result.error && latestState.pendingApprovals?.length) {
+				this.applySessionApprovalGrants(latestState);
+				if (latestState.pendingApprovals.length > 0 && latestState.pendingApprovals.every((item) => item.status !== "pending")) {
+					autoResumeApprovals = latestState.pendingApprovals.map((item) => ({ ...item }));
+				}
+			}
 			if (result.error && !result.aborted) {
 				streamHadError = true;
 				showStreamError(result.error);
@@ -1145,6 +1154,9 @@ export class ChatPanel {
 			this.abortCtrl = null;
 			this.approvalResumeInFlight = false;
 			this.setLoading(false);
+			if (autoResumeApprovals && !streamHadError) {
+				await this.resumeAfterToolApprovals(autoResumeApprovals);
+			}
 		}
 	}
 
@@ -1583,16 +1595,51 @@ export class ChatPanel {
 		}
 	}
 
-	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement): Promise<void> {
+	private getSessionApprovedRiskLevels(state: AgentState | undefined): ToolApprovalRiskLevel[] {
+		const raw = Array.isArray(state?.sessionApprovedToolRiskLevels) ? state?.sessionApprovedToolRiskLevels : [];
+		return raw.filter((item: unknown): item is ToolApprovalRiskLevel => item === "change" || item === "delete");
+	}
+
+	private addSessionApprovedRiskLevel(state: AgentState, riskLevel: ToolApprovalRiskLevel): void {
+		const levels = new Set(this.getSessionApprovedRiskLevels(state));
+		levels.add(riskLevel);
+		state.sessionApprovedToolRiskLevels = Array.from(levels);
+	}
+
+	private applySessionApprovalGrants(state: AgentState): boolean {
+		const approvals: PendingToolApproval[] = Array.isArray(state.pendingApprovals)
+			? state.pendingApprovals.map((item) => ({ ...item }))
+			: [];
+		if (approvals.length === 0) return false;
+		const approvedLevels = new Set(this.getSessionApprovedRiskLevels(state));
+		if (approvedLevels.size === 0) return false;
+		const { approvals: nextApprovals, changed } = applyApprovedRiskLevelsToApprovals(approvals, Array.from(approvedLevels));
+		if (changed) state.pendingApprovals = nextApprovals;
+		return changed;
+	}
+
+	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement, scope: "single" | "session" = "single"): Promise<void> {
 		if (this.approvalResumeInFlight) return;
 		const s = this.activeSession;
+		if (!s.state) s.state = {};
 		const approvals: PendingToolApproval[] = Array.isArray(s.state?.pendingApprovals)
 			? s.state.pendingApprovals.map((item) => ({ ...item }))
 			: [];
 		const target = approvals.find((item) => item.approvalId === approvalId);
 		if (!target || target.status !== "pending") return;
-		target.status = approved ? "approved" : "denied";
-		if (!approved) target.reason = this.t("chat.approval.deniedByUser", undefined, "Denied by user");
+		const targetRiskLevel = getToolApprovalRiskLevel(target.toolName);
+		if (approved && scope === "session" && targetRiskLevel) {
+			this.addSessionApprovedRiskLevel(s.state, targetRiskLevel);
+			for (const approval of approvals) {
+				if (approval.status !== "pending") continue;
+				if (getToolApprovalRiskLevel(approval.toolName) === targetRiskLevel) {
+					approval.status = "approved";
+				}
+			}
+		} else {
+			target.status = approved ? "approved" : "denied";
+			if (!approved) target.reason = this.t("chat.approval.deniedByUser", undefined, "Denied by user");
+		}
 		s.state = {
 			...(s.state || {}),
 			pendingApprovals: approvals,
@@ -1606,7 +1653,9 @@ export class ChatPanel {
 				...target,
 			});
 		}
-		this.updateApprovalElements(target);
+		for (const approval of approvals) {
+			this.updateApprovalElements(approval);
+		}
 
 		if (approvals.some((item) => item.status === "pending")) return;
 		await this.resumeAfterToolApprovals(approvals);
@@ -1633,8 +1682,9 @@ export class ChatPanel {
 		return `<div class="chat-msg__approval-summary${extraClass}" data-approval-id="${escapeHtml(approvalId)}" data-approval-status="pending">
 			<span class="chat-msg__approval-status">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>
 			<div class="chat-msg__approval-actions">
-				<button class="b3-button b3-button--text" data-action="deny-approval">${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
-				<button class="b3-button b3-button--primary" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+				<button class="b3-button b3-button--text" type="button" data-action="deny-approval">${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
+				<button class="b3-button b3-button--primary" type="button" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+				<button class="b3-button b3-button--outline" type="button" data-action="approve-session-approval">${escapeHtml(this.t("chat.approval.approveSession", undefined, "Approve for this chat"))}</button>
 			</div>
 		</div>`;
 	}
@@ -1643,6 +1693,9 @@ export class ChatPanel {
 		const approvalId = approvalEl.dataset.approvalId || "";
 		approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-approval']")?.addEventListener("click", () => {
 			void this.handleToolApprovalDecision(approvalId, true, toolEl);
+		});
+		approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-session-approval']")?.addEventListener("click", () => {
+			void this.handleToolApprovalDecision(approvalId, true, toolEl, "session");
 		});
 		approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
 			void this.handleToolApprovalDecision(approvalId, false, toolEl);
@@ -1836,13 +1889,7 @@ export class ChatPanel {
 		const primaryPendingApproval = pendingApprovalItems.length === 1 ? pendingApprovalItems[0] : null;
 		const renderApprovalActions = (item: RunChangeSummaryItemUi, compact = false) => {
 			if (!item.approvalId || item.status !== "pending") return "";
-			return `<div class="chat-msg__approval-summary${compact ? " chat-msg__approval-summary--compact" : ""}" data-approval-id="${escapeHtml(item.approvalId)}" data-approval-status="${escapeHtml(item.status)}">
-				<span class="chat-msg__approval-status">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>
-				<div class="chat-msg__approval-actions">
-					<button class="b3-button b3-button--text" data-action="deny-approval">${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
-					<button class="b3-button b3-button--primary" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
-				</div>
-			</div>`;
+			return this.renderApprovalActionsHtml(item.approvalId, compact ? " chat-msg__approval-summary--compact" : "");
 		};
 		const visibleItems = summary.items.slice(0, 3);
 		const hiddenItems = summary.items.slice(3);
@@ -1913,6 +1960,9 @@ export class ChatPanel {
 			const approvalId = approvalEl.dataset.approvalId || "";
 			approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-approval']")?.addEventListener("click", () => {
 				void this.handleToolApprovalDecision(approvalId, true);
+			});
+			approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-session-approval']")?.addEventListener("click", () => {
+				void this.handleToolApprovalDecision(approvalId, true, undefined, "session");
 			});
 			approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
 				void this.handleToolApprovalDecision(approvalId, false);

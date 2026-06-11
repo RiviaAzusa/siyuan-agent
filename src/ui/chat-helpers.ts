@@ -3,9 +3,9 @@
  * Extracted from chat-panel.ts for maintainability.
  */
 
-import type { AgentState, UiMessage, ToolMessageUi } from "../types";
+import type { AgentState, UiMessage, ToolMessageUi, PendingToolApproval } from "../types";
 import { isToolMessageUi } from "../types";
-import type { ModelServiceConfig, McpServerConfig } from "../types";
+import type { ModelServiceConfig, McpServerConfig, ToolPermissionMode, ToolApprovalRiskLevel } from "../types";
 import { defaultTranslator, type Translator } from "../i18n";
 
 /* ── Interfaces ──────────────────────────────────────────────────────── */
@@ -41,6 +41,7 @@ export interface SettingsDraft {
 	defaultModelId: string;
 	subAgentModelId: string;
 	mcpServers: McpServerConfig[];
+	toolPermissionMode: ToolPermissionMode;
 	notebookOptions: Array<{ id: string; name: string }>;
 }
 
@@ -237,6 +238,37 @@ export function getToolAction(toolName?: string): string {
 		delete_scheduled_task: "delete",
 	};
 	return map[toolName || ""] || "other";
+}
+
+export function getToolApprovalRiskLevel(toolName?: string): ToolApprovalRiskLevel | undefined {
+	if (toolName === "delete_document" || toolName === "delete_scheduled_task") return "delete";
+	const changeTools = [
+		"append_block",
+		"edit_blocks",
+		"create_document",
+		"move_document",
+		"rename_document",
+		"create_scheduled_task",
+		"update_scheduled_task",
+	];
+	return changeTools.includes(toolName || "") ? "change" : undefined;
+}
+
+export function applyApprovedRiskLevelsToApprovals(
+	approvals: PendingToolApproval[],
+	approvedRiskLevels: ToolApprovalRiskLevel[],
+): { approvals: PendingToolApproval[]; changed: boolean } {
+	const approvedLevels = new Set(approvedRiskLevels);
+	if (approvedLevels.size === 0) return { approvals, changed: false };
+	let changed = false;
+	const nextApprovals = approvals.map((approval) => {
+		if (approval.status !== "pending") return { ...approval };
+		const riskLevel = getToolApprovalRiskLevel(approval.toolName);
+		if (!riskLevel || !approvedLevels.has(riskLevel)) return { ...approval };
+		changed = true;
+		return { ...approval, status: "approved" as const };
+	});
+	return { approvals: nextApprovals, changed };
 }
 
 export function getToolDisplayTitle(toolName: string, i18n: Translator = defaultTranslator): string {

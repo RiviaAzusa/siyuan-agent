@@ -3,10 +3,22 @@ import { z } from "zod";
 import type { ScheduledTaskManager } from "../scheduled-task-manager";
 import { TOOL_DESC } from "../../types";
 import { defaultTranslator, type Translator } from "../../i18n";
+import type { Tool } from "@ai-sdk/provider-utils";
+
+type ToolApprovalPolicy = Tool<any, string>["needsApproval"];
+
+interface ScheduledToolOptions {
+	needsApproval?: {
+		create?: ToolApprovalPolicy;
+		update?: ToolApprovalPolicy;
+		delete?: ToolApprovalPolicy;
+	};
+}
 
 export function createScheduledTaskTools(
 	getTaskManager: () => ScheduledTaskManager | null,
 	i18n: Translator = defaultTranslator,
+	options: ScheduledToolOptions = {},
 ) {
 	const requireTaskManager = (): ScheduledTaskManager => {
 		const manager = getTaskManager();
@@ -20,6 +32,7 @@ export function createScheduledTaskTools(
 	const createScheduledTaskTool = createTool({
 		name: "create_scheduled_task",
 		category: "change",
+		needsApproval: options.needsApproval?.create,
 		description: createDesc.description,
 		parameters: z.object({
 			title: z.string().min(1).describe(createDesc.params.title),
@@ -58,6 +71,7 @@ export function createScheduledTaskTools(
 	const updateScheduledTaskTool = createTool({
 		name: "update_scheduled_task",
 		category: "change",
+		needsApproval: options.needsApproval?.update,
 		description: updateDesc.description,
 		parameters: z.object({
 			taskId: z.string().describe(updateDesc.params.taskId),
@@ -87,6 +101,7 @@ export function createScheduledTaskTools(
 	const deleteScheduledTaskTool = createTool({
 		name: "delete_scheduled_task",
 		category: "change",
+		needsApproval: options.needsApproval?.delete,
 		description: deleteDesc.description,
 		parameters: z.object({
 			taskId: z.string().describe(deleteDesc.params.taskId),

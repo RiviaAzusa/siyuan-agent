@@ -199,6 +199,53 @@
 	color: var(--agent-text, var(--b3-theme-on-surface));
 }
 
+.settings-panel__radio-group {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.settings-panel__radio-card {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	grid-template-areas:
+		"input main"
+		"input copy";
+	column-gap: 8px;
+	row-gap: 3px;
+	align-items: start;
+	padding: 10px 12px;
+	border: 1px solid var(--agent-border, var(--b3-border-color));
+	border-radius: 8px;
+	background: rgba(127, 127, 127, 0.04);
+	cursor: pointer;
+	transition: border-color 0.16s ease, background-color 0.16s ease;
+
+	input {
+		grid-area: input;
+		margin-top: 2px;
+	}
+}
+
+.settings-panel__radio-card--active {
+	border-color: color-mix(in srgb, var(--agent-accent, var(--b3-theme-primary)) 55%, var(--agent-border, var(--b3-border-color)) 45%);
+	background: color-mix(in srgb, var(--agent-accent-soft, var(--b3-theme-primary-lightest)) 72%, transparent);
+}
+
+.settings-panel__radio-main {
+	grid-area: main;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--agent-text, var(--b3-theme-on-surface));
+}
+
+.settings-panel__radio-copy {
+	grid-area: copy;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--agent-text-muted, var(--b3-theme-on-surface));
+}
+
 .settings-panel__meta-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));

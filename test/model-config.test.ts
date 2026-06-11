@@ -129,6 +129,16 @@ describe("resolveModelConfig", () => {
 	});
 });
 
+describe("normalizeAgentConfig tool permissions", () => {
+	it("defaults old configs to requestApproval", () => {
+		expect(normalizeAgentConfig({}).toolPermissionMode).toBe("requestApproval");
+	});
+
+	it("preserves autoApprove when configured", () => {
+		expect(normalizeAgentConfig({ toolPermissionMode: "autoApprove" }).toolPermissionMode).toBe("autoApprove");
+	});
+});
+
 describe("resolveSubAgentModelConfig", () => {
 	it("returns sub-agent model when configured", () => {
 		const config = makeConfig({
