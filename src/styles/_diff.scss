@@ -4,11 +4,23 @@
 }
 
 .chat-msg__change-preview {
+	position: relative;
 	margin: 8px 0 0 20px;
-	padding: 0;
+	padding: 0 0 0 14px;
 	border: none;
 	border-radius: 0;
 	background: transparent;
+
+	&::before {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: 1px;
+		bottom: 1px;
+		width: 1px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 68%, transparent);
+	}
 }
 
 .chat-msg__preview-head {

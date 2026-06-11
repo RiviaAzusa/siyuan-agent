@@ -232,12 +232,12 @@
 .chat-msg__approval-summary {
 	display: grid;
 	grid-template-columns: 1fr;
-	gap: 6px;
+	gap: 4px;
 	margin: 0;
-	padding: 6px;
-	border: 1px solid var(--agent-border, var(--b3-border-color));
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--agent-surface, var(--b3-theme-surface)) 80%, transparent);
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
 }
 
 .chat-msg__approval-summary--compact {
@@ -246,9 +246,23 @@
 }
 
 .chat-msg__approval-summary--tool {
-	margin: 8px 0 0 20px;
-	width: calc(100% - 20px);
+	position: relative;
+	margin: 6px 0 0 20px;
+	padding-left: 14px;
+	width: min(100% - 20px, 420px);
 	max-width: calc(100% - 20px);
+	box-sizing: border-box;
+
+	&::before {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: 1px;
+		bottom: 1px;
+		width: 1px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--agent-border, var(--b3-border-color)) 68%, transparent);
+	}
 }
 
 .chat-msg__approval-status {
@@ -260,18 +274,50 @@
 
 .chat-msg__approval-actions {
 	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	align-items: center;
-	gap: 6px;
+	grid-template-columns: minmax(0, 1fr);
+	justify-items: start;
+	gap: 2px;
 	width: 100%;
+	padding: 0;
 
 	.b3-button {
+		justify-content: flex-start;
 		width: 100%;
-		min-height: 28px;
-		padding: 3px 12px;
+		max-width: 100%;
+		min-height: 30px;
+		padding: 4px 10px;
 		font-size: 12px;
-		border-radius: 7px;
+		color: var(--agent-text, var(--b3-theme-on-surface));
+		background: transparent;
+		border: 0;
+		border-radius: 6px;
+		box-shadow: none;
+		text-align: left;
+
+		&:hover {
+			color: var(--agent-text, var(--b3-theme-on-surface));
+			background: rgba(127, 127, 127, 0.08);
+		}
+
+		&[data-action="deny-approval"] {
+			color: var(--agent-text-muted, var(--b3-theme-on-surface-light));
+
+			&:hover {
+				color: var(--agent-text, var(--b3-theme-on-surface));
+			}
+		}
 	}
+}
+
+.chat-msg__approval-reason {
+	width: 100%;
+	box-sizing: border-box;
+	min-height: 30px;
+	margin-top: 2px;
+	padding: 4px 10px;
+	font-size: 12px;
+	border-radius: 6px;
+	background: rgba(127, 127, 127, 0.055);
 }
 
 .chat-msg__error {

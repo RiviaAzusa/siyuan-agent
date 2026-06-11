@@ -1618,7 +1618,7 @@ export class ChatPanel {
 		return changed;
 	}
 
-	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement, scope: "single" | "session" = "single"): Promise<void> {
+	private async handleToolApprovalDecision(approvalId: string, approved: boolean, toolEl?: HTMLElement, scope: "single" | "session" = "single", reason?: string): Promise<void> {
 		if (this.approvalResumeInFlight) return;
 		const s = this.activeSession;
 		if (!s.state) s.state = {};
@@ -1638,7 +1638,7 @@ export class ChatPanel {
 			}
 		} else {
 			target.status = approved ? "approved" : "denied";
-			if (!approved) target.reason = this.t("chat.approval.deniedByUser", undefined, "Denied by user");
+			if (!approved) target.reason = reason?.trim() || this.t("chat.approval.deniedByUser", undefined, "Denied by user");
 		}
 		s.state = {
 			...(s.state || {}),
@@ -1675,6 +1675,9 @@ export class ChatPanel {
 			el.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
 				button.disabled = approval.status !== "pending";
 			});
+			el.querySelectorAll<HTMLInputElement>("input").forEach((input) => {
+				input.disabled = approval.status !== "pending";
+			});
 		});
 	}
 
@@ -1682,9 +1685,10 @@ export class ChatPanel {
 		return `<div class="chat-msg__approval-summary${extraClass}" data-approval-id="${escapeHtml(approvalId)}" data-approval-status="pending">
 			<span class="chat-msg__approval-status">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>
 			<div class="chat-msg__approval-actions">
+				<button class="b3-button b3-button--text" type="button" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+				<button class="b3-button b3-button--text" type="button" data-action="approve-session-approval">${escapeHtml(this.t("chat.approval.approveSession", undefined, "Approve for this chat"))}</button>
 				<button class="b3-button b3-button--text" type="button" data-action="deny-approval">${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
-				<button class="b3-button b3-button--primary" type="button" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
-				<button class="b3-button b3-button--outline" type="button" data-action="approve-session-approval">${escapeHtml(this.t("chat.approval.approveSession", undefined, "Approve for this chat"))}</button>
+				<input class="chat-msg__approval-reason b3-text-field" data-role="approval-reason" type="text" aria-label="${escapeHtml(this.t("chat.approval.reasonLabel", undefined, "Reason"))}" placeholder="${escapeHtml(this.t("chat.approval.reasonPlaceholder", undefined, "Optional reason"))}" />
 			</div>
 		</div>`;
 	}
@@ -1698,7 +1702,14 @@ export class ChatPanel {
 			void this.handleToolApprovalDecision(approvalId, true, toolEl, "session");
 		});
 		approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
-			void this.handleToolApprovalDecision(approvalId, false, toolEl);
+			const reason = approvalEl.querySelector<HTMLInputElement>("[data-role='approval-reason']")?.value || "";
+			void this.handleToolApprovalDecision(approvalId, false, toolEl, "single", reason);
+		});
+		approvalEl.querySelector<HTMLInputElement>("[data-role='approval-reason']")?.addEventListener("keydown", (event) => {
+			if (event.key !== "Enter" || event.isComposing) return;
+			event.preventDefault();
+			const reason = (event.currentTarget as HTMLInputElement).value || "";
+			void this.handleToolApprovalDecision(approvalId, false, toolEl, "single", reason);
 		});
 	}
 
@@ -1731,8 +1742,10 @@ export class ChatPanel {
 		this.setLoading(true);
 		this.abortCtrl = new AbortController();
 
+		const turnList = this.getLastTurnList();
+		turnList.querySelectorAll<HTMLElement>(".chat-msg__action-bar").forEach((el) => el.remove());
 		const shell = this.createAssistantMessageShell();
-		this.getLastTurnList().appendChild(shell.el);
+		turnList.appendChild(shell.el);
 		this.pendingEl = document.createElement("div");
 		this.pendingEl.className = "chat-msg__pending";
 		this.pendingEl.innerHTML = `<span class="chat-msg__pending-spinner"></span><span class="chat-msg__pending-text">${escapeHtml(this.t("chat.pending"))}</span>`;
@@ -1965,7 +1978,14 @@ export class ChatPanel {
 				void this.handleToolApprovalDecision(approvalId, true, undefined, "session");
 			});
 			approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
-				void this.handleToolApprovalDecision(approvalId, false);
+				const reason = approvalEl.querySelector<HTMLInputElement>("[data-role='approval-reason']")?.value || "";
+				void this.handleToolApprovalDecision(approvalId, false, undefined, "single", reason);
+			});
+			approvalEl.querySelector<HTMLInputElement>("[data-role='approval-reason']")?.addEventListener("keydown", (event) => {
+				if (event.key !== "Enter" || event.isComposing) return;
+				event.preventDefault();
+				const reason = (event.currentTarget as HTMLInputElement).value || "";
+				void this.handleToolApprovalDecision(approvalId, false, undefined, "single", reason);
 			});
 		});
 		shell.stackEl.appendChild(card);
@@ -2072,7 +2092,8 @@ export class ChatPanel {
 
 	private appendActionBar(shell: AssistantMessageShell, rawContent: string): void {
 		if (!shell.stackEl.querySelector(".chat-msg__text")) return;
-		shell.contentEl.querySelector(".chat-msg__action-bar")?.remove();
+		const turnList = shell.el.closest<HTMLElement>(".chat-turn__messages");
+		(turnList || shell.contentEl).querySelectorAll<HTMLElement>(".chat-msg__action-bar").forEach((el) => el.remove());
 
 		const bar = document.createElement("div");
 		bar.className = "chat-msg__action-bar";
@@ -2102,7 +2123,7 @@ export class ChatPanel {
 
 		bar.appendChild(copyBtn);
 		bar.appendChild(regenBtn);
-		shell.contentEl.appendChild(bar);
+		shell.stackEl.appendChild(bar);
 	}
 
 	private appendAssistantSegment(

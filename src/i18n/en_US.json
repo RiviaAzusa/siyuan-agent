@@ -54,6 +54,8 @@
   "chat.approval.approve": "Approve",
   "chat.approval.approveSession": "Approve for this chat",
   "chat.approval.deny": "Deny",
+  "chat.approval.reasonLabel": "Improvement note",
+  "chat.approval.reasonPlaceholder": "Deny with improvement note",
   "chat.approval.approved": "Approved",
   "chat.approval.denied": "Denied",
   "chat.approval.deniedByUser": "Denied by user",
