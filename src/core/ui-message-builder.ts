@@ -307,7 +307,7 @@ function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection
 		const { firstOk, blockIds } = extractEditOkResults(parsed);
 		const blockId = blockIds[0];
 		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
-		return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: getEditBlocksExcerpt(input, parsed) || inputId || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: Boolean(blockId || rootDocId) };
+		return { category: "change", action: "edit", id: rootDocId || blockId, blockId, blockIds, label: getEditBlocksExcerpt(input, parsed) || inputId || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: Boolean(rootDocId || blockId) };
 	}
 	if (toolName === "append_block") {
 		return { category: "change", action: "append", id: input.parentID, label: input.parentID || toolName, meta: i18n.t("tool.appendBlock.metaSimple"), open: true };
@@ -404,7 +404,7 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 		return {
 			...base,
 			label: getEditBlocksExcerpt(args, parsed) || (base.label === tool.toolName ? (args?.blocks?.[0]?.id || tool.toolName) : base.label),
-			id: blockId || rootDocId,
+			id: rootDocId || blockId,
 			blockId: blockId || base.blockId,
 			blockIds: blockIds.length ? blockIds : base.blockIds,
 			meta: base.meta || (count ? i18n.t("tool.editBlocks.meta", { count }) : undefined),

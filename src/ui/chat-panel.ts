@@ -1,4 +1,4 @@
-import { Plugin, showMessage, openTab } from "siyuan";
+import { Plugin, showMessage, openTab, type TProtyleAction } from "siyuan";
 import {
 	AgentConfig,
 	AgentState,
@@ -57,6 +57,7 @@ const CONFIG_STORAGE = "agent-config";
 const INIT_NOTEBOOK_NAME = "SiYuan-Agent";
 const INIT_DOC_TITLE = "SiYuan-Agent-Init";
 const INIT_DOC_PATH = `/${INIT_DOC_TITLE}`;
+const OPEN_DOCUMENT_CONTEXT_ACTIONS: TProtyleAction[] = ["cb-get-hl", "cb-get-context", "cb-get-rootscroll"];
 
 export class ChatPanel {
 	private container: HTMLElement;
@@ -303,7 +304,7 @@ export class ChatPanel {
 				const blockId = blockIds[0];
 				const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 				if (blockId || rootDocId) {
-					return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: this.getEditBlocksExcerpt(args, parsed) || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
+					return { category: "change", action: "edit", id: rootDocId || blockId, blockId, blockIds, label: this.getEditBlocksExcerpt(args, parsed) || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
 				}
 			}
 			return { category: "change", action: "edit", id: inputId, label: this.getEditBlocksExcerpt(args) || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: false };
@@ -1810,7 +1811,13 @@ export class ChatPanel {
 	}
 
 	private openDocumentLink(docId: string, blockIds: string[] = []): void {
-		const opened = openTab({ app: (globalThis as any).siyuanApp, doc: { id: docId } });
+		const opened = openTab({
+			app: (globalThis as any).siyuanApp,
+			doc: {
+				id: blockIds[0] || docId,
+				action: OPEN_DOCUMENT_CONTEXT_ACTIONS,
+			},
+		});
 		void Promise.resolve(opened).then(() => this.highlightBlocksAfterOpen(blockIds));
 	}
 
@@ -1862,7 +1869,7 @@ export class ChatPanel {
 			const approvalActions = item === primaryPendingApproval ? "" : renderApprovalActions(item, true);
 			const previewHtml = item.preview ? this.renderChangePreviewHtml(item.preview) : "";
 			return `<div class="chat-msg__tool chat-msg__change-item" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" || item.status === "denied" ? "error" : item.status === "pending" ? "pending" : "done"}">
-				<details open>
+				<details>
 					<summary>
 						<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.tool.badge.change"))}</span>
 						<span class="chat-msg__tool-title">${actionText}</span>

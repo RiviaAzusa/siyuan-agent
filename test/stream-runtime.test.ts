@@ -604,7 +604,7 @@ describe("buildMessagesView", () => {
 		expect(summary).toMatchObject({
 			type: "run_change_summary_ui",
 			total: 1,
-			items: [{ action: "edit", toolName: "edit_blocks", id: "b2", blockId: "b2", blockIds: ["b2", "b4"], status: "ok" }],
+			items: [{ action: "edit", toolName: "edit_blocks", id: "doc1", blockId: "b2", blockIds: ["b2", "b4"], status: "ok" }],
 		});
 		expect(summary.items[0].preview).toMatchObject({
 			kind: "edit_blocks",
