@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import { isProcessingSummaryUi, isRunChangeSummaryUi, isToolApprovalUi, isToolMessageUi } from "../types";
 import { defaultTranslator, type Translator } from "../i18n";
+import { stripSiyuanBlockAttrs } from "./siyuan-markdown";
 
 function msgType(m: any): string {
 	if (typeof m?._getType === "function") return m._getType();
@@ -231,6 +232,21 @@ function countInputBlocks(value: any): number | undefined {
 	return Array.isArray(value) ? value.length : undefined;
 }
 
+function makeContentExcerpt(value: unknown, fallback = ""): string {
+	const text = stripSiyuanBlockAttrs(typeof value === "string" ? value : fallback);
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (!normalized) return "";
+	return normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized;
+}
+
+function getEditBlocksExcerpt(input: any, parsed: any): string {
+	const firstResult = Array.isArray(parsed?.results) ? parsed.results[0] : undefined;
+	const firstInputBlock = Array.isArray(input?.blocks) ? input.blocks[0] : undefined;
+	return makeContentExcerpt(
+		firstResult?.updated ?? firstResult?.original ?? firstInputBlock?.content,
+	);
+}
+
 export function extractEditOkResults(parsed: any): { firstOk: any | undefined; blockIds: string[] } {
 	if (!Array.isArray(parsed?.results)) return { firstOk: undefined, blockIds: [] };
 	let firstOk: any | undefined;
@@ -291,7 +307,7 @@ function deriveToolActivity(part: any, i18n: Translator): ToolActivityProjection
 		const { firstOk, blockIds } = extractEditOkResults(parsed);
 		const blockId = blockIds[0];
 		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
-		return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: blockId || inputId || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: Boolean(blockId || rootDocId) };
+		return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: getEditBlocksExcerpt(input, parsed) || inputId || toolName, meta: count === undefined ? i18n.t("tool.editBlocks.metaUnknown") : i18n.t("tool.editBlocks.meta", { count }), open: Boolean(blockId || rootDocId) };
 	}
 	if (toolName === "append_block") {
 		return { category: "change", action: "append", id: input.parentID, label: input.parentID || toolName, meta: i18n.t("tool.appendBlock.metaSimple"), open: true };
@@ -387,7 +403,7 @@ function makeChangeItemFromTool(tool: ToolMessageUi, args: any, i18n: Translator
 		const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 		return {
 			...base,
-			label: blockId || (base.label === tool.toolName ? (args?.blocks?.[0]?.id || tool.toolName) : base.label),
+			label: getEditBlocksExcerpt(args, parsed) || (base.label === tool.toolName ? (args?.blocks?.[0]?.id || tool.toolName) : base.label),
 			id: blockId || rootDocId,
 			blockId: blockId || base.blockId,
 			blockIds: blockIds.length ? blockIds : base.blockIds,
@@ -533,6 +549,7 @@ function buildChangeSummary(turnMessages: UiMessage[], i18n: Translator): RunCha
 	const approvalToolCallIds = new Set(
 		turnMessages
 			.filter(isToolApprovalUi)
+			.filter((approval) => approval.status === "pending" || approval.status === "denied")
 			.map((approval) => approval.toolCallId),
 	);
 	for (const m of turnMessages) {
@@ -540,11 +557,11 @@ function buildChangeSummary(turnMessages: UiMessage[], i18n: Translator): RunCha
 		const item = isToolMessageUi(m)
 			? makeChangeItemFromTool(m, argsByToolCallId.get(m.toolCallId), i18n)
 			: isToolApprovalUi(m)
-				? makeChangeItemFromApproval(m, argsByToolCallId.get(m.toolCallId), i18n)
+				? m.status === "approved" ? null : makeChangeItemFromApproval(m, argsByToolCallId.get(m.toolCallId), i18n)
 				: null;
 		if (item) items.push(item);
 	}
-	const visibleCount = items.filter((item) => item.status !== "error" && item.status !== "denied").length;
+	const visibleCount = items.filter((item) => item.status !== "error" && item.status !== "denied" && item.status !== "approved").length;
 	if (!visibleCount) return null;
 	return { type: "run_change_summary_ui", items, total: visibleCount };
 }
@@ -560,6 +577,11 @@ function collapseTurn(
 	if (isInternalUiMessage(first) || (msgType(first) !== "human" && msgType(first) !== "user")) {
 		return turnMessages;
 	}
+	const meta = getRunMetaForUser(runMeta, userMessageIndex);
+	const hasPendingApproval = turnMessages.some((m) => isToolApprovalUi(m) && m.status === "pending");
+	if (meta?.status === "running" || hasPendingApproval) {
+		return turnMessages;
+	}
 
 	let finalAiIndex = -1;
 	for (let i = turnMessages.length - 1; i >= 1; i--) {
@@ -570,7 +592,6 @@ function collapseTurn(
 		}
 	}
 	if (finalAiIndex < 0) {
-		const meta = getRunMetaForUser(runMeta, userMessageIndex);
 		const collapsed: UiMessage[] = [first];
 		if (turnMessages.length > 1) {
 			collapsed.push({
@@ -599,7 +620,6 @@ function collapseTurn(
 		detailMessages.push(turnMessages[i]);
 	}
 
-	const meta = getRunMetaForUser(runMeta, userMessageIndex);
 	const collapsed: UiMessage[] = [first];
 	if (detailMessages.length > 0 || getMessageReasoning(finalAi)) {
 		collapsed.push({

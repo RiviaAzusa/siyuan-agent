@@ -3,6 +3,7 @@ import { z } from "zod";
 import { openTab } from "siyuan";
 import { siyuanFetch } from "./siyuan-api";
 import { defaultTranslator, type Translator } from "../../i18n";
+import { stripSiyuanBlockAttrs } from "../siyuan-markdown";
 
 function extractOperationBlockIds(data: any): string[] {
 	if (!Array.isArray(data)) return [];
@@ -36,6 +37,10 @@ function resolveRootDocId(blockId: string, treeInfos: Record<string, any>): stri
 	return getRootDocId(treeInfos[blockId]);
 }
 
+function displayOriginal(original: string | undefined): string | undefined {
+	return typeof original === "string" ? stripSiyuanBlockAttrs(original) : original;
+}
+
 export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 	return createTool({
 		name: "edit_blocks",
@@ -64,7 +69,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						rootDocId: resolveRootDocId(block.id, treeInfos),
 						status: "error",
 						error: `edit_blocks cannot edit blocks across multiple documents in one call. Split this into separate calls per document. Root document IDs: ${existingRootDocIds.join(", ")}`,
-						original: originals[block.id],
+						original: displayOriginal(originals[block.id]),
 					})),
 				});
 			}
@@ -89,7 +94,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 							newIds: [block.id],
 							rootDocId: resolveRootDocId(block.id, treeInfos),
 							status: "ok",
-							original: originals[block.id],
+							original: displayOriginal(originals[block.id]),
 							updated: block.content,
 						})),
 					});
@@ -101,7 +106,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 							rootDocId: resolveRootDocId(block.id, treeInfos),
 							status: "error",
 							error: err.message,
-							original: originals[block.id],
+							original: displayOriginal(originals[block.id]),
 						})),
 					});
 				}
@@ -154,7 +159,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						newIds,
 						rootDocId,
 						status: "ok",
-						original,
+						original: displayOriginal(original),
 						updated: block.content,
 					});
 				} catch (err: any) {
@@ -163,7 +168,7 @@ export function createEditBlocksTool(i18n: Translator = defaultTranslator) {
 						rootDocId,
 						status: "error",
 						error: err.message,
-						original,
+						original: displayOriginal(original),
 					});
 				}
 			}

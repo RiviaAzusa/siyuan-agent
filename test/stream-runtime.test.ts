@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mergeState, runAgentStream } from "../src/core/stream-runtime";
 import { buildMessagesView } from "../src/core/ui-message-builder";
+import { normalizeSiyuanPreviewText, stripSiyuanBlockAttrs } from "../src/core/siyuan-markdown";
 
 vi.mock("siyuan", () => ({
 	fetchPost: vi.fn(),
@@ -123,6 +124,27 @@ describe("mergeState", () => {
 		expect(result.messages[0].content).toContain("Build feature");
 	});
 
+});
+
+describe("stripSiyuanBlockAttrs", () => {
+	it("removes multi-line Siyuan block attrs while keeping list content", () => {
+		const text = [
+			"- {:",
+			"id=\"20260611202952-3825fr4\"",
+			"updated=\"20260611202952\"}[] 测试创建文档",
+			"- {:",
+			"id=\"20260611202952-2qyejvi\"",
+			"updated=\"20260611202952\"}[ ] 测试编辑内容",
+		].join("\n");
+
+		expect(stripSiyuanBlockAttrs(text)).toBe("- [ ] 测试创建文档\n- [ ] 测试编辑内容");
+	});
+
+	it("normalizes blank lines between adjacent preview list items", () => {
+		const text = "- [ ] 测试创建文档\n\n- [ ] 测试编辑内容\n\n段落\n\n下一段";
+
+		expect(normalizeSiyuanPreviewText(text)).toBe("- [ ] 测试创建文档\n- [ ] 测试编辑内容\n\n段落\n\n下一段");
+	});
 });
 
 describe("runAgentStream", () => {
@@ -338,13 +360,9 @@ describe("runAgentStream", () => {
 		expect(result.lastState.runMeta?.[0].status).toBe("running");
 		expect(seen).toHaveLength(1);
 		const view = buildMessagesView(result.lastState);
-		const processing = view.find((m: any) => m.type === "processing_summary_ui") as any;
-		expect(processing.details.some((m: any) => m.type === "tool_approval_ui" && m.approvalId === "approval-edit")).toBe(true);
-		const summary = view.find((m: any) => m.type === "run_change_summary_ui") as any;
-		expect(summary).toMatchObject({
-			total: 1,
-			items: [{ approvalId: "approval-edit", toolName: "edit_blocks", status: "pending", label: "b1" }],
-		});
+		expect(view.find((m: any) => m.type === "processing_summary_ui")).toBeUndefined();
+		expect(view.find((m: any) => m.type === "run_change_summary_ui")).toBeUndefined();
+		expect(view.some((m: any) => m.type === "tool_approval_ui" && m.approvalId === "approval-edit")).toBe(true);
 	});
 
 	it("projects pending approval previews from state", () => {
@@ -371,17 +389,12 @@ describe("runAgentStream", () => {
 		};
 
 		const view = buildMessagesView(state);
-		const processing = view.find((m: any) => m.type === "processing_summary_ui") as any;
-		const approval = processing.details.find((m: any) => m.type === "tool_approval_ui");
+		const approval = view.find((m: any) => m.type === "tool_approval_ui");
 		expect(approval.preview).toMatchObject({
 			kind: "edit_blocks",
 			items: [{ id: "b1", before: "original", after: "updated" }],
 		});
-		const summary = view.find((m: any) => m.type === "run_change_summary_ui") as any;
-		expect(summary.items[0].preview).toMatchObject({
-			kind: "edit_blocks",
-			items: [{ id: "b1", before: "original", after: "updated" }],
-		});
+		expect(view.find((m: any) => m.type === "run_change_summary_ui")).toBeUndefined();
 	});
 
 	it("resumes after two approved change tool approvals", async () => {
@@ -603,6 +616,34 @@ describe("buildMessagesView", () => {
 		});
 	});
 
+	it("does not duplicate approved edit approvals in the final change summary", () => {
+		const editResult = JSON.stringify({
+			__tool_type: "edit_blocks",
+			results: [
+				{ oldId: "b1", newIds: ["b2"], rootDocId: "doc1", status: "ok", original: "old", updated: "new" },
+			],
+		});
+		const state = {
+			messages: [
+				{ role: "user", content: "edit this" },
+				{ role: "assistant", content: [
+					{ type: "tool-call", toolCallId: "call-1", toolName: "edit_blocks", input: { blocks: [{ id: "b1", content: "new" }] } },
+					{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+				] },
+				{ role: "tool", content: [{ type: "tool-approval-response", approvalId: "approval-1", approved: true }] },
+				{ role: "tool", content: [{ type: "tool-result", toolCallId: "call-1", toolName: "edit_blocks", output: { type: "text", value: editResult } }] },
+				{ role: "assistant", content: [{ type: "text", text: "done" }] },
+			],
+		};
+
+		const summary = buildMessagesView(state).find((m: any) => m.type === "run_change_summary_ui") as any;
+		expect(summary).toMatchObject({
+			total: 1,
+			items: [{ toolName: "edit_blocks", status: "ok" }],
+		});
+		expect(summary.items).toHaveLength(1);
+	});
+
 	it("uses create_document result id for openable change links while keeping input path label", () => {
 		const state = {
 			messages: [
@@ -700,7 +741,7 @@ describe("buildMessagesView", () => {
 			activity: {
 				category: "change",
 				action: "edit",
-				label: "20260524230326-dx2xwl8",
+				label: "- [x] 完成 CRUD 功能测试...",
 				meta: "Edited 1 block(s)",
 				open: false,
 			},

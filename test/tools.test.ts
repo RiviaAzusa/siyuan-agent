@@ -233,7 +233,10 @@ describe("edit_blocks tool", () => {
 			const body = JSON.parse(String(init?.body || "{}"));
 			if (url === "/api/block/getBlockKramdowns") {
 				expect(body.ids).toEqual(["block-1", "block-2"]);
-				return mockFetchResponse({ "block-1": "old 1", "block-2": "old 2" }) as any;
+				return mockFetchResponse({
+					"block-1": "- {:\nid=\"block-1\"\nupdated=\"20260611202952\"}[] old 1",
+					"block-2": "old 2",
+				}) as any;
 			}
 			if (url === "/api/block/getBlockTreeInfos") {
 				return mockFetchResponse({
@@ -266,7 +269,7 @@ describe("edit_blocks tool", () => {
 		expect(JSON.parse(raw)).toEqual({
 			__tool_type: "edit_blocks",
 			results: [
-				{ oldId: "block-1", newIds: ["block-1"], rootDocId: "root-doc", status: "ok", original: "old 1", updated: "---" },
+				{ oldId: "block-1", newIds: ["block-1"], rootDocId: "root-doc", status: "ok", original: "- [ ] old 1", updated: "---" },
 				{ oldId: "block-2", newIds: ["block-2"], rootDocId: "root-doc", status: "ok", original: "old 2", updated: "updated paragraph" },
 			],
 		});

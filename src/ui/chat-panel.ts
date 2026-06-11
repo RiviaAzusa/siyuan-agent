@@ -38,6 +38,7 @@ import { renderMarkdown } from "./markdown";
 import { SessionStore } from "../core/session-store";
 import { ScheduledTaskManager } from "../core/scheduled-task-manager";
 import { buildMessagesView, extractEditOkResults } from "../core/ui-message-builder";
+import { normalizeSiyuanPreviewText, stripSiyuanBlockAttrs } from "../core/siyuan-markdown";
 import { compactMessages, shouldCompact } from "../core/compaction";
 import { createModel } from "../llms/ai-sdk-provider";
 import { getDefaultTools, type SiyuanTool } from "../core/tools";
@@ -276,7 +277,9 @@ export class ChatPanel {
 			this.renderToolApproval(toolEl, { type: "tool_approval_ui", ...approval, preview });
 		}
 		this.messagesEl.querySelectorAll<HTMLElement>(`.chat-msg__change-summary [data-approval-id="${this.cssEscape(approval.approvalId)}"]`).forEach((approvalEl) => {
-			const toolItem = approvalEl.closest<HTMLElement>(".chat-msg__tool");
+			const card = approvalEl.closest<HTMLElement>(".chat-msg__change-summary");
+			const toolItem = approvalEl.closest<HTMLElement>(".chat-msg__tool")
+				|| card?.querySelector<HTMLElement>(".chat-msg__change-item[data-tool-status='pending']");
 			const details = toolItem?.querySelector<HTMLElement>("details");
 			if (details && !details.querySelector(".chat-msg__change-preview")) {
 				const actions = details.querySelector<HTMLElement>(".chat-msg__approval-summary");
@@ -300,10 +303,10 @@ export class ChatPanel {
 				const blockId = blockIds[0];
 				const rootDocId = typeof firstOk?.rootDocId === "string" && firstOk.rootDocId ? firstOk.rootDocId : undefined;
 				if (blockId || rootDocId) {
-					return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: blockId || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
+					return { category: "change", action: "edit", id: blockId || rootDocId, blockId, blockIds, label: this.getEditBlocksExcerpt(args, parsed) || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: true };
 				}
 			}
-			return { category: "change", action: "edit", id: inputId, label: inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: false };
+			return { category: "change", action: "edit", id: inputId, label: this.getEditBlocksExcerpt(args) || inputId || toolName, meta: count === undefined ? this.t("tool.editBlocks.metaUnknown") : this.t("tool.editBlocks.meta", { count }), open: false };
 		}
 		if (toolName === "append_block") {
 			return { category: "change", action: "append", id: args.parentID, label: args.parentID || toolName, meta: this.t("tool.appendBlock.metaSimple"), open: true };
@@ -1071,14 +1074,6 @@ export class ChatPanel {
 							});
 							void this.refreshApprovalPreviewInUi(event.approval, toolEl);
 						}
-						const item = this.makeApprovalChangeItem(event.approval);
-						if (item) {
-							this.renderRunChangeSummary({
-								type: "run_change_summary_ui",
-								items: [item],
-								total: 1,
-							}, shell);
-						}
 						this.scrollToBottom();
 						return;
 					}
@@ -1354,6 +1349,7 @@ export class ChatPanel {
 		let currentListEl: HTMLElement | null = null;
 		let currentAssistantShell: AssistantMessageShell | null = null;
 		let lastAiContent = "";
+		let currentTurnHasPendingApproval = false;
 
 		/* Build toolCallId → args map from AI messages */
 		const toolCallArgsMap = new Map<string, unknown>();
@@ -1411,6 +1407,7 @@ export class ChatPanel {
 					this.attachToolElementToShell(currentAssistantShell, toolEl);
 				}
 				this.renderToolApproval(toolEl, m);
+				if (m.status === "pending") currentTurnHasPendingApproval = true;
 				this.scrollToBottom();
 				continue;
 			}
@@ -1469,7 +1466,7 @@ export class ChatPanel {
 			const toolCalls = getMessageToolCalls(m);
 
 			if (type === "human" || type === "user") {
-				if (showActionBar && currentAssistantShell && lastAiContent) {
+				if (showActionBar && currentAssistantShell && lastAiContent && !currentTurnHasPendingApproval) {
 					this.appendActionBar(currentAssistantShell, lastAiContent);
 				}
 				const { listEl } = this.createConversationTurn(
@@ -1479,6 +1476,7 @@ export class ChatPanel {
 				currentListEl = listEl;
 				currentAssistantShell = null;
 				lastAiContent = "";
+				currentTurnHasPendingApproval = false;
 				continue;
 			}
 
@@ -1516,7 +1514,7 @@ export class ChatPanel {
 
 		if (currentAssistantShell) {
 			this.compactCompletedActivityBlocks(currentAssistantShell, "lookup");
-			if (showActionBar && lastAiContent) this.appendActionBar(currentAssistantShell, lastAiContent);
+			if (showActionBar && lastAiContent && !currentTurnHasPendingApproval) this.appendActionBar(currentAssistantShell, lastAiContent);
 		}
 	}
 
@@ -1559,20 +1557,28 @@ export class ChatPanel {
 
 		const details = toolEl.querySelector("details");
 		if (!details) return;
-		const statusText = approval.status === "approved"
-			? this.t("chat.approval.approved", undefined, "Approved")
-			: approval.status === "denied"
-				? this.t("chat.approval.denied", undefined, "Denied")
-				: this.t("chat.approval.pending", undefined, "Approval required");
+		const statusText = approval.status === "denied"
+			? this.t("chat.approval.denied", undefined, "Denied")
+			: approval.status === "pending"
+				? this.t("chat.approval.pending", undefined, "Approval required")
+				: "";
 		details.querySelector<HTMLElement>(".chat-msg__approval")?.remove();
+		details.querySelector<HTMLElement>(".chat-msg__tool-args")?.remove();
 		const summary = details.querySelector("summary");
 		if (summary) {
 			summary.querySelector<HTMLElement>(".chat-msg__approval-inline")?.remove();
-			summary.insertAdjacentHTML("beforeend", `<span class="chat-msg__doc-meta chat-msg__approval-inline">${escapeHtml(statusText)}</span>`);
+			if (statusText) {
+				summary.insertAdjacentHTML("beforeend", `<span class="chat-msg__doc-meta chat-msg__approval-inline">${escapeHtml(statusText)}</span>`);
+			}
 		}
 		details.querySelector<HTMLElement>(".chat-msg__change-preview")?.remove();
 		if (approval.preview) {
 			details.insertAdjacentHTML("beforeend", this.renderChangePreviewHtml(approval.preview));
+		}
+		if (approval.status === "pending") {
+			details.insertAdjacentHTML("beforeend", this.renderApprovalActionsHtml(approval.approvalId, " chat-msg__approval-summary--tool"));
+			const approvalEl = details.querySelector<HTMLElement>(`.chat-msg__approval-summary[data-approval-id="${this.cssEscape(approval.approvalId)}"]`);
+			if (approvalEl) this.bindApprovalActions(approvalEl, toolEl);
 		}
 	}
 
@@ -1606,18 +1612,39 @@ export class ChatPanel {
 	}
 
 	private updateApprovalElements(approval: PendingToolApproval): void {
-		const statusText = approval.status === "approved"
-			? this.t("chat.approval.approved", undefined, "Approved")
-			: approval.status === "denied"
-				? this.t("chat.approval.denied", undefined, "Denied")
-				: this.t("chat.approval.pending", undefined, "Approval required");
 		this.messagesEl.querySelectorAll<HTMLElement>(`.chat-msg__approval-summary[data-approval-id="${this.cssEscape(approval.approvalId)}"]`).forEach((el) => {
 			el.dataset.approvalStatus = approval.status;
+			if (approval.status === "approved") {
+				el.remove();
+				return;
+			}
 			const statusEl = el.querySelector<HTMLElement>(".chat-msg__approval-status");
-			if (statusEl) statusEl.textContent = statusText;
+			if (statusEl) statusEl.textContent = approval.status === "denied"
+				? this.t("chat.approval.denied", undefined, "Denied")
+				: this.t("chat.approval.pending", undefined, "Approval required");
 			el.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
 				button.disabled = approval.status !== "pending";
 			});
+		});
+	}
+
+	private renderApprovalActionsHtml(approvalId: string, extraClass = ""): string {
+		return `<div class="chat-msg__approval-summary${extraClass}" data-approval-id="${escapeHtml(approvalId)}" data-approval-status="pending">
+			<span class="chat-msg__approval-status">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>
+			<div class="chat-msg__approval-actions">
+				<button class="b3-button b3-button--text" data-action="deny-approval">${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
+				<button class="b3-button b3-button--primary" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+			</div>
+		</div>`;
+	}
+
+	private bindApprovalActions(approvalEl: HTMLElement, toolEl?: HTMLElement): void {
+		const approvalId = approvalEl.dataset.approvalId || "";
+		approvalEl.querySelector<HTMLButtonElement>("[data-action='approve-approval']")?.addEventListener("click", () => {
+			void this.handleToolApprovalDecision(approvalId, true, toolEl);
+		});
+		approvalEl.querySelector<HTMLButtonElement>("[data-action='deny-approval']")?.addEventListener("click", () => {
+			void this.handleToolApprovalDecision(approvalId, false, toolEl);
 		});
 	}
 
@@ -1678,27 +1705,30 @@ export class ChatPanel {
 		return parts.join("");
 	}
 
-	private buildSimpleLineDiff(before = "", after = ""): string {
-		const beforeLines = before.split(/\r?\n/);
-		const afterLines = after.split(/\r?\n/);
-		const max = Math.max(beforeLines.length, afterLines.length);
-		const lines: string[] = [];
-		for (let i = 0; i < max; i++) {
-			const oldLine = beforeLines[i];
-			const newLine = afterLines[i];
-			if (oldLine === newLine) {
-				if (oldLine !== undefined) lines.push(`<div class="diff-line diff-line--context"> ${escapeHtml(oldLine)}</div>`);
-				continue;
-			}
-			if (oldLine !== undefined) lines.push(`<div class="diff-line diff-line--del">- ${escapeHtml(oldLine)}</div>`);
-			if (newLine !== undefined) lines.push(`<div class="diff-line diff-line--add">+ ${escapeHtml(newLine)}</div>`);
-		}
-		return lines.join("") || `<div class="diff-line diff-line--context">${escapeHtml(this.t("common.noContent", undefined, "No content"))}</div>`;
+	private renderPreviewText(value?: string): string {
+		const text = normalizeSiyuanPreviewText(value ?? "");
+		return text ? escapeHtml(text) : `<span class="chat-msg__preview-empty">${escapeHtml(this.t("common.noContent", undefined, "No content"))}</span>`;
 	}
 
-	private renderPreviewText(value?: string): string {
-		const text = value ?? "";
-		return text ? escapeHtml(text) : `<span class="chat-msg__preview-empty">${escapeHtml(this.t("common.noContent", undefined, "No content"))}</span>`;
+	private makeContentExcerpt(value: unknown, fallback = ""): string {
+		const text = stripSiyuanBlockAttrs(typeof value === "string" ? value : fallback);
+		const normalized = text.replace(/\s+/g, " ").trim();
+		if (!normalized) return "";
+		return normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized;
+	}
+
+	private getEditBlocksExcerpt(input: any, parsed?: any): string {
+		const firstResult = Array.isArray(parsed?.results) ? parsed.results[0] : undefined;
+		const firstInputBlock = Array.isArray(input?.blocks) ? input.blocks[0] : undefined;
+		return this.makeContentExcerpt(
+			firstResult?.updated ?? firstResult?.original ?? firstInputBlock?.content,
+		);
+	}
+
+	private getChangeItemDisplayLabel(item: RunChangeSummaryItemUi): string {
+		if (item.toolName !== "edit_blocks") return item.path || item.label || item.id || "";
+		const firstPreview = item.preview?.items?.[0];
+		return this.makeContentExcerpt(firstPreview?.after ?? firstPreview?.before, item.label || "");
 	}
 
 	private renderChangePreviewHtml(preview: ChangePreview): string {
@@ -1708,30 +1738,26 @@ export class ChatPanel {
 		const error = preview.error
 			? `<div class="chat-msg__preview-error">${escapeHtml(this.t("chat.preview.loadFailed", { error: preview.error }, `Preview unavailable: ${preview.error}`))}</div>`
 			: "";
-		const blocks = preview.items.map((item, index) => {
-			const label = escapeHtml(item.label || item.id || `${index + 1}`);
+		const blocks = preview.items.map((item) => {
 			const itemError = item.error ? `<div class="chat-msg__preview-error">${escapeHtml(item.error)}</div>` : "";
 			const before = this.renderPreviewText(item.before);
 			const after = this.renderPreviewText(item.after);
-			const diff = this.buildSimpleLineDiff(item.before || "", item.after || "");
-			return `<div class="chat-msg__preview-item" data-preview-status="${escapeHtml(item.status || "ok")}">
-				<div class="chat-msg__preview-item-head">${label}</div>
-				${itemError}
-				<div class="chat-msg__preview-columns">
-					<div class="chat-msg__preview-column">
-						<div class="chat-msg__preview-label">${escapeHtml(this.t("chat.preview.before", undefined, "Original"))}</div>
+			const content = preview.kind === "create_document"
+				? `<div class="chat-msg__preview-created">
+					<pre class="chat-msg__preview-text chat-msg__preview-text--created">${after}</pre>
+				</div>`
+				: `<div class="chat-msg__preview-columns">
+					<div class="chat-msg__preview-column chat-msg__preview-column--before">
 						<pre class="chat-msg__preview-text">${before}</pre>
 					</div>
-					<div class="chat-msg__preview-arrow" aria-hidden="true">&rarr;</div>
-					<div class="chat-msg__preview-column">
-						<div class="chat-msg__preview-label">${escapeHtml(this.t("chat.preview.after", undefined, "New"))}</div>
+					<div class="chat-msg__preview-arrow" aria-hidden="true"></div>
+					<div class="chat-msg__preview-column chat-msg__preview-column--after">
 						<pre class="chat-msg__preview-text">${after}</pre>
 					</div>
-				</div>
-				<details class="chat-msg__preview-diff">
-					<summary>${escapeHtml(this.t("chat.preview.showDiff", undefined, "Show line diff"))}</summary>
-					<div class="chat-msg__edit-lines">${diff}</div>
-				</details>
+				</div>`;
+			return `<div class="chat-msg__preview-item" data-preview-status="${escapeHtml(item.status || "ok")}">
+				${itemError}
+				${content}
 			</div>`;
 		}).join("");
 		return `<div class="chat-msg__change-preview" data-preview-kind="${escapeHtml(preview.kind)}" data-preview-status="${escapeHtml(preview.status)}">
@@ -1742,24 +1768,6 @@ export class ChatPanel {
 			${error}
 			${blocks}
 		</div>`;
-	}
-
-	private makeApprovalChangeItem(approval: PendingToolApproval): RunChangeSummaryItemUi | null {
-		const activity = this.getFriendlyToolActivity(approval.toolName, approval.input);
-		if (activity?.category !== "change") return null;
-		return {
-			action: (activity.action || "other") as RunChangeSummaryItemUi["action"],
-			toolName: approval.toolName,
-			label: activity.label || activity.path || activity.id || approval.toolName,
-			id: activity.id,
-			blockId: activity.blockId,
-			blockIds: activity.blockIds,
-			path: activity.path,
-			meta: activity.meta,
-			status: approval.status,
-			approvalId: approval.approvalId,
-			preview: approval.preview,
-		};
 	}
 
 	private cssEscape(value: string): string {
@@ -1809,19 +1817,31 @@ export class ChatPanel {
 	private renderRunChangeSummary(summary: RunChangeSummaryUi, shell: AssistantMessageShell): void {
 		const card = document.createElement("div");
 		card.className = "chat-msg__change-summary";
-		const activeItems = summary.items.filter((item) => item.status !== "error" && item.status !== "denied");
+		const activeItems = summary.items.filter((item) => item.status !== "error" && item.status !== "denied" && item.status !== "approved");
 		const errorItems = summary.items.filter((item) => item.status === "error").length;
-		const pendingItems = summary.items.filter((item) => item.status === "pending").length;
-		const subtitle = pendingItems > 0
+		const pendingApprovalItems = summary.items.filter((item) => item.status === "pending" && item.approvalId);
+		const pendingItems = pendingApprovalItems.length;
+		const subtitleText = pendingItems > 0
 			? this.t("chat.changes.subtitleWithApprovals", { count: pendingItems })
 			: errorItems > 0
 				? this.t("chat.changes.subtitleWithErrors", { count: activeItems.length, errors: errorItems })
 				: this.t("chat.changes.subtitle", { count: activeItems.length });
+		const primaryPendingApproval = pendingApprovalItems.length === 1 ? pendingApprovalItems[0] : null;
+		const renderApprovalActions = (item: RunChangeSummaryItemUi, compact = false) => {
+			if (!item.approvalId || item.status !== "pending") return "";
+			return `<div class="chat-msg__approval-summary${compact ? " chat-msg__approval-summary--compact" : ""}" data-approval-id="${escapeHtml(item.approvalId)}" data-approval-status="${escapeHtml(item.status)}">
+				<span class="chat-msg__approval-status">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>
+				<div class="chat-msg__approval-actions">
+					<button class="b3-button b3-button--text" data-action="deny-approval">${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
+					<button class="b3-button b3-button--primary" data-action="approve-approval">${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
+				</div>
+			</div>`;
+		};
 		const visibleItems = summary.items.slice(0, 3);
 		const hiddenItems = summary.items.slice(3);
 		const renderItem = (item: RunChangeSummaryItemUi) => {
 			const actionText = escapeHtml(this.getChangeActionText(item));
-			const displayLabel = escapeHtml(item.path || item.label || item.id || "");
+			const displayLabel = escapeHtml(this.getChangeItemDisplayLabel(item));
 			const docId = item.id || "";
 			const canOpen = Boolean(docId);
 			const blockAttr = item.blockId ? ` data-block-id="${escapeHtml(item.blockId)}"` : "";
@@ -1830,46 +1850,40 @@ export class ChatPanel {
 			const linkHtml = docId
 				? `<a class="chat-msg__doc-link${canOpen ? " chat-msg__doc-link--open" : ""}" data-id="${escapeHtml(docId)}"${blockAttr}${blockIdsAttr} href="javascript:void(0)">${displayLabel}</a>`
 				: `<span class="chat-msg__doc-label">${displayLabel}</span>`;
+			const targetHtml = linkHtml;
 			const meta = item.meta ? `<span class="chat-msg__doc-meta">${escapeHtml(item.meta)}</span>` : "";
 			const status = item.status === "error"
 				? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.changes.status.error"))}</span>`
-				: item.status === "pending"
+				: item.status === "pending" && item !== primaryPendingApproval
 					? `<span class="chat-msg__change-status chat-msg__change-status--pending">${escapeHtml(this.t("chat.approval.pending", undefined, "Approval required"))}</span>`
-					: item.status === "approved"
-						? `<span class="chat-msg__change-status chat-msg__change-status--approved">${escapeHtml(this.t("chat.approval.approved", undefined, "Approved"))}</span>`
-						: item.status === "denied"
-							? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.approval.denied", undefined, "Denied"))}</span>`
-							: "";
-			const approvalActions = item.approvalId
-				? `<div class="chat-msg__approval-summary" data-approval-id="${escapeHtml(item.approvalId)}" data-approval-status="${escapeHtml(item.status)}">
-					<div class="chat-msg__approval-status">${escapeHtml(item.status === "approved"
-						? this.t("chat.approval.approved", undefined, "Approved")
-						: item.status === "denied"
-							? this.t("chat.approval.denied", undefined, "Denied")
-							: this.t("chat.approval.pending", undefined, "Approval required"))}</div>
-					<div class="chat-msg__approval-actions">
-						<button class="b3-button b3-button--text" data-action="deny-approval" ${item.status === "pending" ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.deny", undefined, "Deny"))}</button>
-						<button class="b3-button b3-button--primary" data-action="approve-approval" ${item.status === "pending" ? "" : "disabled"}>${escapeHtml(this.t("chat.approval.approve", undefined, "Approve"))}</button>
-					</div>
-				</div>`
-				: "";
+					: item.status === "denied"
+						? `<span class="chat-msg__change-status chat-msg__change-status--error">${escapeHtml(this.t("chat.approval.denied", undefined, "Denied"))}</span>`
+						: "";
+			const approvalActions = item === primaryPendingApproval ? "" : renderApprovalActions(item, true);
 			const previewHtml = item.preview ? this.renderChangePreviewHtml(item.preview) : "";
-			return `<div class="chat-msg__tool" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" || item.status === "denied" ? "error" : item.status === "pending" ? "pending" : "done"}">
+			return `<div class="chat-msg__tool chat-msg__change-item" data-tool-category="change" data-tool-action="${escapeHtml(item.action)}" data-tool-status="${item.status === "error" || item.status === "denied" ? "error" : item.status === "pending" ? "pending" : "done"}">
 				<details open>
 					<summary>
 						<span class="chat-msg__tool-prefix"><span class="chat-msg__tool-dot" aria-hidden="true"></span>${escapeHtml(this.t("chat.tool.badge.change"))}</span>
 						<span class="chat-msg__tool-title">${actionText}</span>
-						${linkHtml}${meta}${status}
+						${targetHtml}${meta}${status}
 					</summary>
 					${previewHtml}
 					${approvalActions}
 				</details>
 			</div>`;
 		};
+		const headActions = primaryPendingApproval ? renderApprovalActions(primaryPendingApproval) : "";
 		card.innerHTML = `
 			<div class="chat-msg__change-summary-head">
-				<span class="chat-msg__change-title-main">${escapeHtml(this.t("chat.changes.title", { count: summary.total }))}</span>
-				<span class="chat-msg__change-subtitle">${escapeHtml(subtitle)}</span>
+				<div class="chat-msg__change-heading">
+					<span class="chat-msg__change-icon" aria-hidden="true">
+						<svg><use xlink:href="#iconEdit"></use></svg>
+					</span>
+					<span class="chat-msg__change-title-main">${escapeHtml(this.t("chat.changes.title", { count: summary.total }))}</span>
+					<span class="chat-msg__change-subtitle">${escapeHtml(subtitleText)}</span>
+				</div>
+				${headActions}
 			</div>
 			<div class="chat-msg__change-list">
 				${visibleItems.map(renderItem).join("")}
